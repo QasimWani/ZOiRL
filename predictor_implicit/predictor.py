@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import torch
 
 # transform state from array to dictionary for convenience
-def to_dic(state):
-    state = state[0]    # bdg 1
+def to_dic(state, building_idx:int=0):
+    state = state[building_idx]    # bdg 1
     s = {
     "month": state[0],
     "day": state[1],
