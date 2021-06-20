@@ -14,7 +14,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Select the climate zone and load environment
-climate_zone = 5
+climate_zone = 1
 sim_period = (0, 8760*4-1)
 params = {'data_path':Path("data/Climate_Zone_5_Optim"),
         'building_attributes':'building_attributes.json',
@@ -40,7 +40,7 @@ weather_data = weather_data['Outdoor Drybulb Temperature [C]']
 
 def parse_data(data: dict, current_data: dict):
         """ Parses `current_data` for optimization and loads into `data` """
-        assert len(current_data) == 27, "Invalid number of parameters. Can't run basic (root) agent optimization"
+        assert len(current_data) == 28, "Invalid number of parameters. Can't run basic (root) agent optimization"
 
         for key, value in current_data.items():
                 if key not in data:
@@ -65,21 +65,12 @@ def get_dimensions(data:dict):
                         building_data[key] = np.array(data[key])[:, building_id - 1]
                 return building_data
 
-def convert_to_numpy(params:dict):
-    """ Converts dic[key] to nd.array """
-    for key in params:
-        if key == 'c_bat_end' or key == 'c_Csto_end' or key == 'c_Hsto_end':
-            params[key] = np.array([params[key][-1], params[key][-1]])
-            params[key][1] = 0.1
-        else:
-            params[key] = np.array(params[key])
 
 def convert_to_numpy(params:dict):
     """ Converts dic[key] to nd.array """
     for key in params:
-        if key == 'c_bat_end' or key == 'c_Csto_end' or key == 'c_Hsto_end':
-            params[key] = np.array([params[key][-1], params[key][-1]])
-            params[key][1] = 0.1
+        if key == 'c_bat_init' or key == 'c_Csto_init' or key == 'c_Hsto_init':
+            params[key] = np.array(params[key][0])
         else:
             params[key] = np.array(params[key])
 
@@ -167,37 +158,37 @@ def get_current_data_oracle(env, t):
         C_p_bat = [60] * _num_buildings  # P (range: [20, 200])
         eta_bat = [1] * _num_buildings  # P
         # current hour soc. normalized
-        c_bat_end = [None] * _num_buildings  # can't get future data since action dependent
+        c_bat_init = [None] * _num_buildings  # can't get future data since action dependent
         for i in range(1, 10):
                 building = env.buildings['Building_' + str(i)].electrical_storage
                 try:
-                        c_bat_end[i - 1] = building.soc[t] / building.capacity
+                        c_bat_init[i - 1] = building.soc[t-1] / building.capacity
                 except:
-                        c_bat_end[i - 1] = 0
+                        c_bat_init[i - 1] = 0
         # Heat (Energy->dhw) Storage
         C_f_Hsto = [0.00] * _num_buildings  # P
-        C_p_Hsto = [2 * H_max[i] for i in range(_num_buildings)]  # P
+        C_p_Hsto = [3 * H_max[i] for i in range(_num_buildings)]  # P
         eta_Hsto = [1] * _num_buildings  # P
         # current hour soc. normalized
-        c_Hsto_end = [None] * _num_buildings  # can't get future data since action dependent
+        c_Hsto_init = [None] * _num_buildings  # can't get future data since action dependent
         for i in range(1, 10):
                 building = env.buildings['Building_' + str(i)].dhw_storage
                 try:
-                        c_Hsto_end[i - 1] = building.soc[t] / building.capacity
+                        c_Hsto_init[i - 1] = building.soc[t-1] / building.capacity
                 except:
-                        c_Hsto_end[i - 1] = 0
+                        c_Hsto_init[i - 1] = 0
                 # Cooling (Energy->cooling) Storage
         C_f_Csto = [0.00] * _num_buildings  # P
         C_p_Csto = [2 * C_max[i] for i in range(_num_buildings)]  # P
         eta_Csto = [1] * _num_buildings  # P
         # current hour soc. normalized
-        c_Csto_end = [None] * _num_buildings  # can't get future data since action dependent
+        c_Csto_init = [None] * _num_buildings  # can't get future data since action dependent
         for i in range(1, 10):
                 building = env.buildings['Building_' + str(i)].cooling_storage
                 try:
-                        c_Csto_end[i - 1] = building.soc[t] / building.capacity
+                        c_Csto_init[i - 1] = building.soc[t-1] / building.capacity
                 except:
-                        c_Csto_end[i - 1] = 0
+                        c_Csto_init[i - 1] = 0
         # fill data
         observation_data['p_ele'] = p_ele
         observation_data['ramping_cost_coeff'] = ramping_cost_coeff
@@ -222,17 +213,18 @@ def get_current_data_oracle(env, t):
         observation_data['C_f_bat'] = C_f_bat
         observation_data['C_p_bat'] = C_p_bat
         observation_data['eta_bat'] = eta_bat
-        observation_data['c_bat_end'] = c_bat_end
+        observation_data['c_bat_init'] = c_bat_init
+        observation_data['c_bat_end'] = [0.1] * _num_buildings
 
         observation_data['C_f_Hsto'] = C_f_Hsto
         observation_data['C_p_Hsto'] = C_p_Hsto
         observation_data['eta_Hsto'] = eta_Hsto
-        observation_data['c_Hsto_end'] = c_Hsto_end
+        observation_data['c_Hsto_init'] = c_Hsto_init
 
         observation_data['C_f_Csto'] = C_f_Csto
         observation_data['C_p_Csto'] = C_p_Csto
         observation_data['eta_Csto'] = eta_Csto
-        observation_data['c_Csto_end'] = c_Csto_end
+        observation_data['c_Csto_init'] = c_Csto_init
 
         return observation_data
 class Optim:
@@ -274,10 +266,10 @@ class Optim:
                 ### --- Parameters ---
                 p_ele = cp.Parameter(name='p_ele', shape=(window), value=parameters['p_ele'][t:, building_id])
                 E_grid_prevhour = cp.Parameter(name='E_grid_prevhour',
-                                               value=parameters['E_grid_past'][min(t - 1, 0), building_id])
+                                               value=0)
 
                 E_grid_pkhist = cp.Parameter(name='E_grid_pkhist',
-                                             value=parameters['E_grid_past'][:(t + 1), building_id].max())
+                                             value=0)
 
                 # max-min normalization of ramping_cost to downplay E_grid_sell weight.
                 ramping_cost_coeff = cp.Parameter(name='ramping_cost_coeff',
@@ -304,20 +296,20 @@ class Optim:
                 C_p_bat = parameters['C_p_bat'][
                         t, building_id]  # cp.Parameter(name='C_p_bat', value=parameters['C_p_bat'][t, building_id])
                 eta_bat = cp.Parameter(name='eta_bat', value=parameters['eta_bat'][t, building_id])
-                soc_bat_init = cp.Parameter(name='soc_bat_init', value=parameters['c_bat_end'][0, building_id])
-                soc_bat_norm_end = cp.Parameter(name='soc_bat_norm_end', value=parameters['c_bat_end'][1, building_id])
+                soc_bat_init = cp.Parameter(name='soc_bat_init', value=parameters['c_bat_init'][building_id])
+                soc_bat_norm_end = cp.Parameter(name='soc_bat_norm_end', value=parameters['c_bat_end'][t,building_id])
 
                 # Heat (Energy->dhw) Storage
                 C_f_Hsto = cp.Parameter(name='C_f_Hsto', value=parameters['C_f_Hsto'][t, building_id])  # make constant.
                 C_p_Hsto = cp.Parameter(name='C_p_Hsto', value=parameters['C_p_Hsto'][t, building_id])
                 eta_Hsto = cp.Parameter(name='eta_Hsto', value=parameters['eta_Hsto'][t, building_id])
-                soc_Hsto_init = cp.Parameter(name='soc_Hsto_init', value=parameters['c_Hsto_end'][0, building_id])
+                soc_Hsto_init = cp.Parameter(name='soc_Hsto_init', value=parameters['c_Hsto_init'][building_id])
 
                 # Cooling (Energy->cooling) Storage
                 C_f_Csto = cp.Parameter(name='C_f_Csto', value=parameters['C_f_Csto'][t, building_id])
                 C_p_Csto = cp.Parameter(name='C_p_Csto', value=parameters['C_p_Csto'][t, building_id])
                 eta_Csto = cp.Parameter(name='eta_Csto', value=parameters['eta_Csto'][t, building_id])
-                soc_Csto_init = cp.Parameter(name='soc_Csto_init', value=parameters['c_Csto_end'][0, building_id])
+                soc_Csto_init = cp.Parameter(name='soc_Csto_init', value=parameters['c_Csto_init'][building_id])
 
                 ### --- Variables ---
 
@@ -366,7 +358,7 @@ class Optim:
                 SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
 
                 self.costs.append(ramping_cost_coeff.value * ramping_cost +
-                                  peak_net_electricity_cost + electricity_cost + selling_cost +
+                                  peak_net_electricity_cost + 0*electricity_cost + selling_cost +
                                   E_bal_relax_cost * 1e4 + H_bal_relax_cost * 1e4 + C_bal_relax_cost * 1e4
                                   + SOC_Brelax_cost * 1e4 + SOC_Crelax_cost * 1e4 + SOC_Hrelax_cost * 1e4)
 
@@ -466,14 +458,17 @@ class Optim:
 
         def solve(self, debug=False, dispatch=False):
                 prob = self.get_problem()  # Form and solve problem
-                status = prob.solve(verbose=debug)  # Returns the optimal value.
-
+                actions = {}
+                try:
+                        status = prob.solve(verbose=debug)  # Returns the optimal value.
+                except:
+                        return [0,0,0], 0 if dispatch else None, actions
                 if float('-inf') < status < float('inf'):
                         pass
                 else:
                         return "Unbounded Solution"
 
-                actions = {}
+
                 for var in prob.variables():
                         if dispatch:
                                 actions[var.name()] = np.array(
@@ -533,15 +528,15 @@ def init_values(data: dict, update_values: dict = None):
         """ Loads eod values for SOC and E_grid_past before(after) wiping data cache """
         if update_values:
                 # assign previous day's end socs.
-                data['c_bat_end'][0] = update_values['c_bat_end']
-                data['c_Hsto_end'][0] = update_values['c_Hsto_end']
-                data['c_Csto_end'][0] = update_values['c_Csto_end']
+                data['c_bat_init'][0] = update_values['c_bat_init']
+                data['c_Hsto_init'][0] = update_values['c_Hsto_init']
+                data['c_Csto_init'][0] = update_values['c_Csto_init']
 
                 # assign previous day's end E_grid.
                 data['E_grid_past'][0] = update_values['E_grid_past']
         else:
-                update_values = {'c_bat_end': data['c_bat_end'][-1], 'c_Hsto_end': data['c_Hsto_end'][-1],
-                                 'c_Csto_end': data['c_Csto_end'][-1], 'E_grid_past': data['E_grid_past'][-1]}
+                update_values = {'c_bat_init': data['c_bat_init'][-1], 'c_Hsto_init': data['c_Hsto_init'][-1],
+                                 'c_Csto_init': data['c_Csto_init'][-1], 'E_grid_past': data['E_grid_past'][-1]}
 
         return data, update_values
 
@@ -578,7 +573,6 @@ debug_item = ['E_grid','E_bal_relax','H_bal_relax','C_bal_relax','E_grid_sell','
               'SOC_H','SOC_Hrelax','action_H','SOC_C','SOC_Crelax','action_C']
 for key in debug_item:
         check_data[key] = []
-
 check_params = {}
 debug_params = ['E_ns','H_bd','C_bd']
 for  key in debug_params:
@@ -678,8 +672,9 @@ for i in range(3):
         for j in range(3):
                 bid = i*3+j
                 axs[i,j].set_title(f"Building {bid + 1}")
-                axs[i,j].plot(E_grid[bid][week:],label='True E grid')  # plot true E grid
+                axs[i,j].plot(E_grid[bid][week:],label='True E grid: Optim')  # plot true E grid
                 axs[i,j].plot(E_grid_pred[bid][week:]+E_grid_sell_pred[bid][week:], 'gx', label='Optim predicted E grid')  # plots per month
+                axs[i, j].plot(RBC_Egrid[bid][week:], label='True E grid: RBC')  # plot true E grid
                 axs[i, j].grid()
                 if j == 0:
                         axs[i, j].set_ylabel("E grid")
@@ -705,6 +700,62 @@ for key in debug_item:
                                 axs[i, j].set_xlabel("Hour")
         plt.legend()
         fig.savefig(f"images/{key}_plot.pdf", bbox_inches='tight')
+
+# Plot variables Edhw, Ehp
+
+env_comp_item = ['electric_consumption_cooling','electric_consumption_dhw']
+env_comp_item_check = ['E_hpC','E_ehH']
+week = end_time - 24*3  # plots last week of the month data
+for key_i in range(len(env_comp_item)):
+        data_np = np.array(check_data[env_comp_item_check[key_i]]).T
+
+        fig, axs = plt.subplots(3, 3,figsize=(15,15))
+        for i in range(3):
+                for j in range(3):
+                        bid = i*3+j
+                        data_env = np.array(getattr(env.buildings['Building_' + str(bid+1)],env_comp_item[key_i]))
+                        axs[i,j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+                        axs[i,j].plot(data_np[bid][week:],label="optimization")  # plot true E grid
+                        axs[i, j].plot(data_env[week:], label="environment")  # plot true E grid
+                        axs[i, j].grid()
+                        if j == 0:
+                                axs[i, j].set_ylabel(key)
+                        if i == 0:
+                                axs[i, j].set_xlabel("Hour")
+        plt.legend()
+        fig.savefig(f"images/{env_comp_item_check[key_i]}_optim_env_plot.pdf", bbox_inches='tight')
+
+# Plot energy balance
+
+env_comp_item = ['electrical_storage','cooling_storage','dhw_storage']
+env_comp_item_check = ['action_bat','action_C','action_H']
+env_comp_item_check2 = ['SOC_bat','SOC_C','SOC_H']
+env_comp_item_check3 = ['C_p_bat','C_p_Csto','C_p_Hsto']
+
+week = end_time - 24*3  # plots last week of the month data
+for key_i in range(len(env_comp_item)):
+        data_np = np.array(check_data[env_comp_item_check[key_i]]).T
+        data_np2 = np.array(check_data[env_comp_item_check2[key_i]]).T
+        fig, axs = plt.subplots(3, 3,figsize=(15,15))
+        for i in range(3):
+                for j in range(3):
+                        bid = i*3+j
+                        data_env = np.array(getattr(getattr(env.buildings['Building_' + str(bid+1)],env_comp_item[key_i]),'energy_balance'))
+                        data_env2 = np.array(getattr(getattr(env.buildings['Building_' + str(bid + 1)], env_comp_item[key_i]),
+                                        'soc'))
+                        axs[i,j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+                        axs[i,j].plot(data_np[bid][week:]*data_est[env_comp_item_check3[key_i]][0,bid],label="optimization")  # plot true E grid
+                        axs[i, j].plot(data_np2[bid][week:] *data_est[env_comp_item_check3[key_i]][0,bid],label="optimization SOC")
+                        axs[i, j].plot(data_env[week:], label="environment")  # plot true E grid
+                        axs[i, j].plot(data_env2[week:], label="environment SOC")  # plot true E grid
+
+                        axs[i, j].grid()
+                        if j == 0:
+                                axs[i, j].set_ylabel(key)
+                        if i == 0:
+                                axs[i, j].set_xlabel("Hour")
+        plt.legend()
+        fig.savefig(f"images/{env_comp_item_check[key_i]}_optim_env_plot.pdf", bbox_inches='tight')
 
 # Plot loads
 week = end_time - 24*3  # plots last week of the month data
@@ -744,65 +795,67 @@ for i in range(3):
 plt.legend()
 fig.savefig("images/Actions_compare.pdf", bbox_inches='tight')
 
+# Compare the ramping, peak electricity costs
+week = end_time - 24 * 10  # plots last week of the month data
 
-if len(x) == 2:
-        list_actions = ['action_C', 'action_bat']
+ramping_cost_optim = []
+ramping_cost_RBC = []
+peak_electricity_cost_optim = []
+peak_electricity_cost_RBC = []
 
-for i, actions in enumerate(x):
-        plt.plot(actions, label=list_actions[i])
+for i in range((end_time-week)//24):
+        t_start = week+i*24
+        t_end = week+(i+1)*24
+        ramping_cost_optim_t = []
+        ramping_cost_RBC_t = []
+        peak_electricity_cost_optim_t = []
+        peak_electricity_cost_RBC_t = []
+        for bid in range(9):
+                E_grid_t = E_grid[bid][t_start:t_end]
+                RBC_Egrid_t = RBC_Egrid[bid][t_start:t_end]
+                ramping_cost_optim_t.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))
+                ramping_cost_RBC_t.append(np.sum(np.abs(RBC_Egrid_t[1:] - RBC_Egrid_t[:-1])))
+                peak_electricity_cost_optim_t.append(np.max(E_grid_t))
+                peak_electricity_cost_RBC_t.append(np.max(RBC_Egrid_t))
+        ramping_cost_optim.append(ramping_cost_optim_t)
+        ramping_cost_RBC.append(ramping_cost_RBC_t)
+        peak_electricity_cost_optim.append(peak_electricity_cost_optim_t)
+        peak_electricity_cost_RBC.append(peak_electricity_cost_RBC_t)
 
+Optim_cost = {'ramping_cost':np.array(ramping_cost_optim).T,
+              'peak_electricity_cost':np.array(peak_electricity_cost_optim).T,
+              'total_cost':np.array(ramping_cost_optim).T+np.array(peak_electricity_cost_optim).T}
+RBC_cost = {'ramping_cost':np.array(ramping_cost_RBC).T,
+              'peak_electricity_cost':np.array(peak_electricity_cost_RBC).T,
+            'total_cost':np.array(ramping_cost_RBC).T+np.array(peak_electricity_cost_RBC).T}
+
+item_cost = ['ramping_cost','peak_electricity_cost','total_cost']
+for k in range(len(item_cost)):
+        fig, axs = plt.subplots(3, 3,figsize=(15,15))
+        for i in range(3):
+                for j in range(3):
+                        bid = i*3+j
+                        axs[i,j].set_title(f"Building {bid + 1}: {item_cost[k]}")
+                        axs[i, j].plot(Optim_cost[item_cost[k]][bid,:], label=f"Optim: {item_cost[k]}")  # plot true E grid
+                        axs[i, j].plot(RBC_cost[item_cost[k]][bid,:], label=f"RBC: {item_cost[k]}")
+                        axs[i, j].grid()
+                        if j == 0:
+                                axs[i, j].set_ylabel("Cost")
+                        if i == 0:
+                                axs[i, j].set_xlabel("Day")
+        plt.legend()
+        fig.savefig(f"images/{item_cost[k]}_compare.pdf", bbox_inches='tight')
+
+fig, axs = plt.subplots(3, 3,figsize=(15,15))
+for i in range(3):
+        for j in range(3):
+                bid = i*3+j
+                axs[i,j].set_title(f"Building {bid + 1}: total cost Optim/RBC")
+                axs[i, j].plot(Optim_cost['total_cost'][bid,:]/RBC_cost['total_cost'][bid,:], label=f"Optim/RBC")  # plot true E grid
+                axs[i, j].grid()
+                if j == 0:
+                        axs[i, j].set_ylabel("Cost (Ratio)")
+                if i == 0:
+                        axs[i, j].set_xlabel("Day")
 plt.legend()
-plt.grid()
-# plt.ylim([-1, 1])
-plt.title(f"Building {bid + 1}")
-plt.xlabel("Timestep (hour)")
-plt.ylabel("Action")
-plt.show()
-
-bid = 0
-
-week = end_time - 24 * 7  # plots last week of the month data
-# pred = np.transpose(look_ahead_cost, [1,2,0])[bid].flatten()[week - end_time:] ### uncomment this for E^grid + E^sell (this is for hourly)
-pred = np.array(look_ahead_cost).T[bid][
-       (week - end_time) // 24:]  ### comment this for hourly cost (E^grid + E^sell) [this is for daily]
-
-true = get_virtual_electricity_rbc(E_grid[bid][week:])
-true_rbc = get_virtual_electricity_rbc(RBC_cost[bid][week:])
-
-# true = np.mean(true.reshape(-1, 24), axis=1)
-
-# pred = np.mean(pred.reshape(-1, 24), axis=1)
-
-plt.plot(true, label='True consumption')  # plots per month
-plt.plot(pred, label='Optim consumption')  # plots per month
-plt.plot(true_rbc, label='RBC consumption')  # plots per month
-
-plt.grid()
-plt.legend()
-plt.title(f"Building {bid + 1}")
-plt.xlabel("Day")
-plt.ylabel("Virtual Electricity Cost")
-plt.show()
-
-# ### Shouldn't have to normalize. But cost is in the order of 1e-9. that's why.
-# ### See test documentation for more details
-
-bid = 0
-x = E_grid[bid][rbc_threshold:]
-true = np.mean(x.reshape(-1, 24), axis=1)
-
-pred = np.array(look_ahead_cost).T[bid].astype(np.float)
-
-plt.plot(true, label='True consumption') #plots per month
-plt.plot(pred, label='Predicted consumption') #plots per month
-
-plt.legend()
-plt.grid()
-
-plt.title(f"Building {bid + 1} costs")
-plt.xlabel("day")
-plt.ylabel("Cost")
-
-plt.show()
-
-print(f"MSE: {np.sum(np.square(pred - true))}")
+fig.savefig(f"images/total_cost_ratio.pdf", bbox_inches='tight')
