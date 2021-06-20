@@ -57,13 +57,13 @@ def get_dimensions(data:dict):
     for key in data.keys():
         print(data[key].shape)
 
-        def get_building(data: dict, building_id: int):
-                """ Loads data (dict) from a particular building. 1-based indexing for building """
-                assert building_id > 0, "building_id is 1-based indexing."
-                building_data = {}
-                for key in data.keys():
-                        building_data[key] = np.array(data[key])[:, building_id - 1]
-                return building_data
+def get_building(data: dict, building_id: int):
+        """ Loads data (dict) from a particular building. 1-based indexing for building """
+        assert building_id > 0, "building_id is 1-based indexing."
+        building_data = {}
+        for key in data.keys():
+                building_data[key] = np.array(data[key])[:, building_id - 1]
+        return building_data
 
 
 def convert_to_numpy(params:dict):
@@ -159,7 +159,7 @@ def get_current_data_oracle(env, t):
         eta_bat = [1] * _num_buildings  # P
         # current hour soc. normalized
         c_bat_init = [None] * _num_buildings  # can't get future data since action dependent
-        for i in range(1, 10):
+        for i in range(1, _num_buildings + 1):
                 building = env.buildings['Building_' + str(i)].electrical_storage
                 try:
                         c_bat_init[i - 1] = building.soc[t-1] / building.capacity
@@ -171,7 +171,7 @@ def get_current_data_oracle(env, t):
         eta_Hsto = [1] * _num_buildings  # P
         # current hour soc. normalized
         c_Hsto_init = [None] * _num_buildings  # can't get future data since action dependent
-        for i in range(1, 10):
+        for i in range(1, _num_buildings + 1):
                 building = env.buildings['Building_' + str(i)].dhw_storage
                 try:
                         c_Hsto_init[i - 1] = building.soc[t-1] / building.capacity
@@ -183,7 +183,7 @@ def get_current_data_oracle(env, t):
         eta_Csto = [1] * _num_buildings  # P
         # current hour soc. normalized
         c_Csto_init = [None] * _num_buildings  # can't get future data since action dependent
-        for i in range(1, 10):
+        for i in range(1, _num_buildings + 1):
                 building = env.buildings['Building_' + str(i)].cooling_storage
                 try:
                         c_Csto_init[i - 1] = building.soc[t-1] / building.capacity
@@ -227,6 +227,7 @@ def get_current_data_oracle(env, t):
         observation_data['c_Csto_init'] = c_Csto_init
 
         return observation_data
+
 class Optim:
         """ Define Differential Optimization framework for CL. """
 
@@ -644,8 +645,6 @@ while not done and t_idx < end_time:
                         check_params[key].append(data_est[key][t_idx % 24,:])
         state = next_state
         E_grid.append([x[28] for x in state])  # E_Grid
-
-        #     state = next_state
 
         if t_idx >= rbc_threshold - 24:  # start collecting data
                 data = parse_data(data, get_current_data_oracle(env, t_idx))
