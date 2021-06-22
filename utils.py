@@ -11,8 +11,7 @@ import random
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
-# update rule is as simple as... (https://towardsdatascience.com/how-to-implement-an-adam-optimizer-from-scratch-76e7b217f1cc)
-# > w_0 = adam.update(t,w=w_0, b=b_0, dw=dw, db=db)
+# > w_0 = adam.update(t,w=w_0, dw=dw)
 class Adam:
     def __init__(self, eta=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
         self.m_dw, self.v_dw = 0, 0
@@ -40,8 +39,8 @@ class Adam:
         return w
 
 
-BUFFER_SIZE = 24 * 2  # max number of experiences in a buffer - length of meta-episode
-MINI_BATCH = 24  # number of samples to collect from buffer (current day)
+BUFFER_SIZE = 24 * 7  # max number of experiences in a buffer - length of meta-episode
+MINI_BATCH = 24 * 2  # number of samples to collect from buffer (current day)
 
 
 class ReplayBuffer:
@@ -55,8 +54,8 @@ class ReplayBuffer:
         Initializes the buffer.
         @Param:
         1. action_size: env.action_space.shape[0]
-        2. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories. default - 1e6 (Source: DeepMind)
-        3. batch_size: size of mini-batch to train on. default = 64.
+        2. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories.
+        3. batch_size: size of mini-batch to train on.
         """
         self.replay_memory = deque(
             maxlen=buffer_size
@@ -74,11 +73,13 @@ class ReplayBuffer:
 
     def sample(self, is_random=False):
         """Picks all samples within the replay_buffer"""
-        experiences = (
-            random.sample(self.replay_memory, k=self.batch_size)
-            if is_random
-            else self.replay_memory[-self.batch_size :]
-        )
+        # critic 1 last 4*n days - sequential
+        # critic 2 last n days - random
+        if is_random:  # critic 2
+            experiences = self.replay_memory[-self.batch_size :]
+            random.shuffle(experiences)
+        else:  # critic 1
+            experiences = self.replay_memory[-self.batch_size :]
 
         states = (
             torch.from_numpy(np.vstack([e.state for e in experiences if e is not None]))

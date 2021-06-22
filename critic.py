@@ -351,7 +351,7 @@ class Critic:
             ]  ## takes past rewards nd.array of shape T (24)
             Gt_lambda = (1 - self.lambda_) * np.sum(
                 [
-                    self.lambda_ ** (len(Gt_tn) - 1) * Gt_tn[t : t + i]
+                    self.lambda_ ** (24 - t - 1) * Gt_tn[t : t + i]
                     for i in range(len(Gt_tn))
                 ]
             ) + self.lambda_ ** (24 - t - 1) * Gt_tn[t]
@@ -370,7 +370,7 @@ class Critic:
             len(alphas_new) == 3
         ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas_new)}"
         ### main target update
-        weights = optim_adaptive.update(t, self.get_alphas(), np.array(alphas_new))
+        # weights = optim_adaptive.update(t, self.get_alphas(), np.array(alphas_new))
 
         alpha_ramp, alpha_peak1, alpha_peak2 = (
             self.rho * np.array(alphas_new) + (1 - self.rho) * weights
