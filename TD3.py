@@ -7,17 +7,12 @@ import torch.nn.functional as F
 from cvxpylayers.torch import CvxpyLayer
 import cvxpy as cp
 
+from utils import ReplayBuffer
 
 ## local imports
 from predictor import Predictor
 from actor import Actor
-from critic import Critic
-
-from utils import *
-
-from collections import deque
-
-replay_buffer = deque(list, maxlen=48)  ### define in utils.py
+from critic import Critic, OptimCritic
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
@@ -35,14 +30,15 @@ class TD3(object):
         noise_clip=0.5,
         meta_episode=2,
     ):
+        self.total_it = 0
 
-        self.actor = Actor(...)
+        self.actor = Actor(
+            ...
+        )  # instead of initializing actor class every iteration, add setter within Actor
         self.actor_target = copy.deepcopy(self.actor)
-        self.actor_optimizer = torch.optim.Adam(
-            self.actor.parameters(), lr=3e-4
-        )  # backward pass TODO -- .parameters should be called from Cvxpylayers().
 
         self.critic = Critic(...)
+        self.critic_optimizer = OptimCritic(...)
         self.critic_target = copy.deepcopy(self.critic)
 
         self.discount = discount
@@ -51,13 +47,12 @@ class TD3(object):
         self.noise_clip = noise_clip
         self.meta_episode = meta_episode
 
-        self.total_it = 0
-
     def select_action(self, state):
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-        return self.actor(state).cpu().data.numpy().flatten()
+        ### supply w/ param and building info before calling forward
+        return self.actor.forward()
 
-    def train(self, replay_buffer: deque, batch_size=2 * 24):
+    def train(self, replay_buffer: ReplayBuffer, batch_size=2 * 24):
         # Methods called only on Delayed policy updates
         self.total_it += 1
 
@@ -65,7 +60,16 @@ class TD3(object):
             return
 
         # Sample replay buffer
-        state, action, next_state, reward, not_done = replay_buffer.sample(batch_size)
+        (
+            state_1,
+            action_1,
+            next_state_1,
+            reward_1,
+            not_done_1,
+        ) = replay_buffer.sample()  # critic 1
+        (state_2, action_2, next_state_2, reward_2, not_done_2,) = replay_buffer.sample(
+            True
+        )  # critic 2
 
         with torch.no_grad():
             ### @jinming - Are we using noise?
@@ -76,25 +80,10 @@ class TD3(object):
 
             next_action = self.actor_target(next_state) + noise
 
-            # Compute the target Q value
-            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
-            target_Q = torch.min(target_Q1, target_Q2)  # y_t  -> flowchart
-            target_Q = (
-                reward + not_done * self.discount * target_Q
-            )  # line 13 from TD3 spinning up
-
-        # Get current Q estimates
-        current_Q1, current_Q2 = self.critic(state, action)
-
-        # Compute critic loss
-        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(
-            current_Q2, target_Q
-        )
-
-        # Optimize the critic
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        self.critic_optimizer.step()
+            self.critic.forward(replay_buffer, self.total_it)
+            alphas = self.critic_optimizer.backward(
+                ..., self.critic, self.critic_target
+            )  # end of critic update
 
         # Compute actor loss
         actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
@@ -105,19 +94,19 @@ class TD3(object):
         self.actor_optimizer.step()
 
         # Update the frozen target models
-        for param, target_param in zip(
-            self.critic.parameters(), self.critic_target.parameters()
-        ):
-            target_param.data.copy_(
-                self.tau * param.data + (1 - self.tau) * target_param.data
-            )
+        # for param, target_param in zip(
+        #     self.critic.parameters(), self.critic_target.parameters()
+        # ):
+        #     target_param.data.copy_(
+        #         self.tau * param.data + (1 - self.tau) * target_param.data
+        #     )
 
-        for param, target_param in zip(
-            self.actor.parameters(), self.actor_target.parameters()
-        ):
-            target_param.data.copy_(
-                self.tau * param.data + (1 - self.tau) * target_param.data
-            )
+        # for param, target_param in zip(
+        #     self.actor.parameters(), self.actor_target.parameters()
+        # ):
+        #     target_param.data.copy_(
+        #         self.tau * param.data + (1 - self.tau) * target_param.data
+        #     )
 
     def save(self, filename):
         torch.save(self.critic.state_dict(), filename + "_critic")
@@ -136,3 +125,12 @@ class TD3(object):
         self.actor.load_state_dict(torch.load(filename + "_actor"))
         self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
         self.actor_target = copy.deepcopy(self.actor)
+
+
+### What's done
+# 1. Actor :-> forward + backward
+# 2. Critic :-> forward + backward
+
+### What's IP
+# 1. Loading data
+# 2. Fixing
