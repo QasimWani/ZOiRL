@@ -28,6 +28,9 @@ class Actor:
         self.t = t
         self.num_actions = num_actions
 
+        ### for use in backward
+        self.params, self.vars = None, None
+
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
             [actions_spaces[building_id].high, actions_spaces[building_id].low]
@@ -242,11 +245,9 @@ class Actor:
             E_ehH * eta_ehH + H_bal_relax == action_H * C_p_Hsto + H_bd
         )  # heat balance
 
-        # !!!!! Problem Child !!!!!
         self.constraints.append(
             E_hpC * COP_C + C_bal_relax == action_C * C_p_Csto + C_bd
         )  # cooling balance
-        # !!!!! Problem Child !!!!!
 
         # heat pump constraints
         self.constraints.append(E_hpC <= E_hpC_max)  # maximum cooling
@@ -256,13 +257,12 @@ class Actor:
         self.constraints.append(E_ehH <= E_ehH_max)  # maximum limit
 
         # electric battery constraints
-
         self.constraints.append(
             SOC_bat[0]
             == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):  # 1 = t + 1
+        for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
@@ -308,8 +308,6 @@ class Actor:
         self.constraints.append(SOC_C <= 1)  # battery SOC bounds
 
         #### action constraints (limit to action-space)
-        # format: AS[building_id][0/1 (high/low)][heat, cool, battery]
-
         heat_high, cool_high, battery_high = bounds_high
         heat_low, cool_low, battery_low = bounds_low
 
@@ -369,9 +367,8 @@ class Actor:
                     0
                 ]  # no need to clip... automatically restricts range
 
-        # Temporary... needs fixing!
         ## compute dispatch cost
-        params = {x.name(): x.value for x in prob.parameters()}
+        params = {x.name(): x for x in prob.parameters()}
 
         if dispatch:
             ramping_cost = np.sum(
@@ -383,9 +380,11 @@ class Actor:
                 )
             )
             net_peak_electricity_cost = np.max(actions["E_grid"])
-            virtual_electricity_cost = np.sum(params["p_ele"] * actions["E_grid"])
+            virtual_electricity_cost = np.sum(params["p_ele"].value * actions["E_grid"])
             dispatch_cost = virtual_electricity_cost  # ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
 
+        self.get_parameters_and_variables(params, {var.name() : var for var in prob.variables()}) ### set values for later use in backward pass.
+        
         if self.num_actions == 2:
             return [
                 actions["action_H"],
@@ -394,44 +393,56 @@ class Actor:
         return (
             [actions["action_C"], actions["action_H"], actions["action_bat"]],
             dispatch_cost if dispatch else None,
-            actions,
         )
 
-    def backward(self, problem_optim1, zeta, alphas, variables_actor):  # actor-update
-        """Computes the gradient for optimization given parameters `params`"""
-        ## TODO: implement this... see elastic-net (https://github.com/cvxgrp/cvxpylayers/blob/master/examples/torch/tutorial.ipynb)
+    def get_parameters_and_variables(self, params=None, vars=None):
+        """ Does what it says (except it's also a setter!) """
+        if not params or not vars:
+            return self.param, self.vars
+        self.params = params if params else self.params
+        self.vars = vars if vars else self.vars
 
-        ## this function calculates math: \nabla_\zeta Q(s, \mu(s, \zeta), w)
-        ## Step 1. Solve Actor optimization w/ actions this time as parameters, whose values were obtained in Actor forward pass.
-        ## Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
-        ## Step 3. Take backward pass of (2) with parameters \zeta.
+    def backward(self, alphas:list):
+        """
+        Computes the gradient first for optimization given parameters `params`.
+        Updates actor parameters accordingly.
 
-        # Actor forward pass  - Step 1
+        This function calculates math: \nabla_\zeta Q(s, \mu(s, \zeta), w) - see section 1.3.1
+        Step 1. Solve Actor optimization w/ actions this time as parameters, whose values were obtained in Actor forward pass.
+        Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
+        Step 3. Take backward pass of (2) with parameters \zeta.
+        """
+        zeta, variables_actor = self.get_parameters_and_variables() #note they're both dictionaries
+        
         def convert_to_torch_tensor(params: list):
-            var_arr = []
-            for var in params:
-                var_arr += [torch.tensor(var, requires_grad=True)]
-            return var_arr
+            """Converts cp.param to torch.tensor"""
+            param_arr = []
+            for param in params:
+                param_arr.append(
+                    torch.tensor(float(var.value), requires_grad=True).float()
+                )
+            return param_arr
 
+        # Actor forward pass - Step 1
         fit_actor = CvxpyLayer(
-            problem_optim1, parameters=zeta, variables=variables_actor
+            , parameters=list(zeta.values()), variables=list(variables_actor.values())
         )
-
-        # zeta_tch = torch.tensor([zeta], requires_grads=True) #potential bug
-
-        # zeta_tech.grad = None
-        zeta = convert_to_torch_tensor(zeta)
-        E_grid, *_ = fit_actor(*zeta)
+        # fetch params in loss calculation
+        E_grid_prevhour = zeta['E_grid_prevhour'].value
+        E_grid_pkhist = zeta['E_grid_pkhist'].value
+        
+        zeta = convert_to_torch_tensor(zeta) #typecast each param to tensor for autograd later
+        E_grid, *_ = fit_actor(zeta) #use E_grid in loss func.
 
         # Q function forward pass - Step 2
-        alpha_ramp, alpha_peak1, alpha_peak2 = alphas  ### parameters from Critic update
+        alpha_ramp, alpha_peak1, alpha_peak2 = alphas  ### parameters at end of Critic update
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
             torch.abs(E_grid[1:] - E_grid[:-1])
         )  # E_grid_t+1 - E_grid_t
         peak_net_electricity_cost = torch.max(
-            E_grid, E_grid_peakhist
-        )  # max(E_grid, E_gridpkhist)
+            E_grid, E_grid_pkhist
+        )  # max(E_grid, E_grid_pkhist)
 
         reward_warping_loss = (
             alpha_ramp * ramping_cost
@@ -445,5 +456,5 @@ class Actor:
         ### @jinming --- mean taken across all timesteps and updated for each timestep, i.e, we update each timestep w/ same gradient
         for i, param in enumerate(zeta):
             zeta[i] = param + np.mean(param.grad, axis=1)
+        self.get_parameters_and_variables(zeta)
 
-        return zeta  # updated actor params
