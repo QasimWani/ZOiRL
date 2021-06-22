@@ -41,7 +41,7 @@ class Adam:
 
 
 BUFFER_SIZE = 24 * 2  # max number of experiences in a buffer - length of meta-episode
-MINI_BATCH = 100  # number of samples to collect from buffer (current day)
+MINI_BATCH = 24  # number of samples to collect from buffer (current day)
 
 
 class ReplayBuffer:
