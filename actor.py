@@ -1,4 +1,5 @@
 import copy
+from utils import Adam
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,29 +8,38 @@ import torch.nn.functional as F
 from cvxpylayers.torch import CvxpyLayer
 import cvxpy as cp
 
+from critic import Critic
+
 
 class Actor:
-    """Define Differential Optimization framework for CL."""
+    def __init__(self, num_actions: int, rho: float = 0.9):
+        """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
+        self.num_actions = num_actions
+        self.rho = rho
+        # Optim specific
+        self.constraints = []
+        self.costs = []
 
-    def __init__(self, t: int, parameters: dict, building_id: int, num_actions: int):
+        self.params = None
+
+    def create_problem(self, t: int, building_id: int, actions_spaces: list):
         """
         @Param:
         - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
         - `t` : hour to solve optimization for.
         - `building_id`: building index number (0-based)
-        - `num_actions`: Number of actions for building
+        - `action_spaces`: action space for agent in CL evn. Changes over time.
         NOTE: right now, this is an integer, but will be checked programmatically.
         Solves per building as specified by `building_id`. Note: 0 based.
         """
         T = 24
         window = T - t
+        # Reset data
         self.constraints = []
         self.costs = []
         self.t = t
-        self.num_actions = num_actions
 
-        ### for use in backward
-        self.params, self.vars = None, None
+        parameters = self.get_parameters()
 
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
@@ -308,9 +318,6 @@ class Actor:
         self.constraints.append(SOC_C <= 1)  # battery SOC bounds
 
         #### action constraints (limit to action-space)
-        heat_high, cool_high, battery_high = bounds_high
-        heat_low, cool_low, battery_low = bounds_low
-
         assert (
             len(bounds_high) == 3
         ), "Invalid number of bounds for actions - see dict defined in `Optim`"
@@ -345,7 +352,13 @@ class Actor:
         """Returns constraints for problem"""
         return self.constraints
 
-    def forward(self, debug=False, dispatch=False):
+    def forward(
+        self, t: int, parameters: dict, building_id: int, debug=False, dispatch=False
+    ):
+        """Actor Optimization"""
+        self.create_problem(
+            t, parameters, building_id
+        )  # problem formulation for Actor optimizaiton
         prob = self.get_problem()  # Form and solve problem
         actions = {}
         try:
@@ -381,10 +394,12 @@ class Actor:
             )
             net_peak_electricity_cost = np.max(actions["E_grid"])
             virtual_electricity_cost = np.sum(params["p_ele"].value * actions["E_grid"])
-            dispatch_cost = virtual_electricity_cost  # ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
+            dispatch_cost = (
+                ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
+            )  # ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
 
-        self.get_parameters_and_variables(params, {var.name() : var for var in prob.variables()}) ### set values for later use in backward pass.
-        
+        self.get_parameters(params)  ### set values for later use in backward pass.
+
         if self.num_actions == 2:
             return [
                 actions["action_H"],
@@ -395,14 +410,20 @@ class Actor:
             dispatch_cost if dispatch else None,
         )
 
-    def get_parameters_and_variables(self, params=None, vars=None):
-        """ Does what it says (except it's also a setter!) """
-        if not params or not vars:
-            return self.param, self.vars
+    def get_parameters(self, params=None):
+        """Does what it says (except it's also a setter!)"""
+        if not params:
+            return self.param
         self.params = params if params else self.params
-        self.vars = vars if vars else self.vars
 
-    def backward(self, alphas:list):
+    def backward(
+        self,
+        t: int,
+        critic_local: Critic,
+        critic_target: Critic,
+        is_target: bool,
+        optim: Adam,
+    ):
         """
         Computes the gradient first for optimization given parameters `params`.
         Updates actor parameters accordingly.
@@ -412,30 +433,38 @@ class Actor:
         Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
         Step 3. Take backward pass of (2) with parameters \zeta.
         """
-        zeta, variables_actor = self.get_parameters_and_variables() #note they're both dictionaries
-        
+        prob = critic_target.get_problem() if is_target else critic_local.get_problem()
+        (zeta, variables_actor,) = (
+            prob.parameters(),
+            prob.variables(),
+        )
+
         def convert_to_torch_tensor(params: list):
             """Converts cp.param to torch.tensor"""
             param_arr = []
             for param in params:
                 param_arr.append(
-                    torch.tensor(float(var.value), requires_grad=True).float()
+                    torch.tensor(float(param.value), requires_grad=True).float()
                 )
             return param_arr
 
         # Actor forward pass - Step 1
         fit_actor = CvxpyLayer(
-            , parameters=list(zeta.values()), variables=list(variables_actor.values())
+            prob, parameters=list(zeta), variables=list(variables_actor)
         )
         # fetch params in loss calculation
-        E_grid_prevhour = zeta['E_grid_prevhour'].value
-        E_grid_pkhist = zeta['E_grid_pkhist'].value
-        
-        zeta = convert_to_torch_tensor(zeta) #typecast each param to tensor for autograd later
-        E_grid, *_ = fit_actor(zeta) #use E_grid in loss func.
+        E_grid_prevhour = zeta["E_grid_prevhour"].value
+        E_grid_pkhist = zeta["E_grid_pkhist"].value
+
+        zeta = convert_to_torch_tensor(
+            zeta
+        )  # typecast each param to tensor for autograd later
+        E_grid, *_ = fit_actor(zeta)  # use E_grid in loss func. (solves optim)
 
         # Q function forward pass - Step 2
-        alpha_ramp, alpha_peak1, alpha_peak2 = alphas  ### parameters at end of Critic update
+        (alpha_ramp, alpha_peak1, alpha_peak2,) = (
+            critic_target.get_alphas() if is_target else critic_local.get_alphas()
+        )  ### parameters at end of Critic update
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
             torch.abs(E_grid[1:] - E_grid[:-1])
@@ -453,8 +482,19 @@ class Actor:
         # Gradient w.r.t parameters (math: \zeta) - Step 3
         reward_warping_loss.backward()
 
-        ### @jinming --- mean taken across all timesteps and updated for each timestep, i.e, we update each timestep w/ same gradient
-        for i, param in enumerate(zeta):
-            zeta[i] = param + np.mean(param.grad, axis=1)
-        self.get_parameters_and_variables(zeta)
+        if is_target:
+            for i, param in enumerate(zeta):
+                ### prune out params from Critic.
+                zeta[i] = param + np.mean(
+                    param.grad, axis=1
+                )  # this will be incorrect. need to collect data across days. this will collect only across 1 day. must make use of replay buffer.
+                zeta[i] = (
+                    self.rho * zeta[i]
+                    + (1 - self.rho)
+                    * critic_local.get_problem().parameters()[param].value
+                )
+        else:
+            # updated via Adam
+            optim.update(t, zeta, zeta.grad)
 
+        self.get_parameters(zeta)  # pruned_zeta
