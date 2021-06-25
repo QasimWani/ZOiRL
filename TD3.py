@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cvxpylayers.torch import CvxpyLayer
-import cvxpy as cp
 
 from utils import ReplayBuffer
 
@@ -92,45 +90,3 @@ class TD3(object):
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
-
-        # Update the frozen target models
-        # for param, target_param in zip(
-        #     self.critic.parameters(), self.critic_target.parameters()
-        # ):
-        #     target_param.data.copy_(
-        #         self.tau * param.data + (1 - self.tau) * target_param.data
-        #     )
-
-        # for param, target_param in zip(
-        #     self.actor.parameters(), self.actor_target.parameters()
-        # ):
-        #     target_param.data.copy_(
-        #         self.tau * param.data + (1 - self.tau) * target_param.data
-        #     )
-
-    def save(self, filename):
-        torch.save(self.critic.state_dict(), filename + "_critic")
-        torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
-
-        torch.save(self.actor.state_dict(), filename + "_actor")
-        torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
-
-    def load(self, filename):
-        self.critic.load_state_dict(torch.load(filename + "_critic"))
-        self.critic_optimizer.load_state_dict(
-            torch.load(filename + "_critic_optimizer")
-        )
-        self.critic_target = copy.deepcopy(self.critic)
-
-        self.actor.load_state_dict(torch.load(filename + "_actor"))
-        self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
-        self.actor_target = copy.deepcopy(self.actor)
-
-
-### What's done
-# 1. Actor :-> forward + backward
-# 2. Critic :-> forward + backward
-
-### What's IP
-# 1. Loading data
-# 2. Fixing
