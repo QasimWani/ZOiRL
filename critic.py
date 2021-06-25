@@ -351,7 +351,7 @@ class Critic:
 
         Gt_tn = 0.0
         for n in range(1, 24 - t):
-            Gt_tn += np.sum(rewards[t + 1 : t + n]) + self.solve(
+            Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + self.solve(
                 t + n, parameters, building_id, debug
             )
         Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(
@@ -373,7 +373,8 @@ class Critic:
 
         ### main target update
         alpha_ramp, alpha_peak1, alpha_peak2 = (
-            self.rho * np.array(alphas_new) + (1 - self.rho) * self.get_alphas()
+            self.rho * np.array(alphas_new)  # alphas_new comes from LS optim sol.
+            + (1 - self.rho) * self.get_alphas()
         )
 
         self.set_alphas(
@@ -402,7 +403,7 @@ class Optim:
 
     def backward(
         self,
-        parameters: dict,
+        parameters: dict,  # data collected within actor forward pass
         t: int,
         building_id: int,
         rewards: torch.Tensor,
