@@ -1,10 +1,7 @@
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
 from collections import deque, namedtuple
 import torch
-import random
 
 
 # Set to cuda (gpu) instance if compute available
@@ -39,17 +36,17 @@ class Adam:
         return w
 
 
-BUFFER_SIZE = 24 * 7  # max number of experiences in a buffer - length of meta-episode
-MINI_BATCH = 24 * 2  # number of samples to collect from buffer (current day)
+META_EPISODE = 7  # number of days in a meta-episode
+MINI_BATCH = 2  # number of days to sample
 
 
 class ReplayBuffer:
     """
-    Implementation of a fixed size replay buffer as used in DQN algorithms.
+    Implementation of a fixed size replay buffer.
     The goal of a replay buffer is to unserialize relationships between sequential experiences, gaining a better temporal understanding.
     """
 
-    def __init__(self, buffer_size=BUFFER_SIZE, batch_size=MINI_BATCH):
+    def __init__(self, buffer_size=META_EPISODE, batch_size=MINI_BATCH):
         """
         Initializes the buffer.
         @Param:
@@ -68,57 +65,86 @@ class ReplayBuffer:
 
     def add(self, state, action, reward, next_state, done):
         """Adds an experience to existing memory"""
+        if (
+            len(self.replay_memory) == 0 or len(self.replay_memory[-1]) == 24
+        ):  # empty buffer or full day, create new day
+            self.replay_memory.append([])
+
         trajectory = self.experience(state, action, reward, next_state, done)
-        self.replay_memory.append(trajectory)
+        self.replay_memory[-1].append(trajectory)
 
     def sample(self, is_random=False):
         """Picks all samples within the replay_buffer"""
         # critic 1 last 4*n days - sequential
-        # critic 2 last n days - random
+        # critic 2 last 4*n days - random
+        assert (
+            len(self.get(len(self) - 1)) == 24
+        ), f"Meta-episode not reached yet! Current hour {len(self.replay_memory[-1])}"
+
         if is_random:  # critic 2
-            experiences = self.replay_memory[-self.batch_size :]
-            random.shuffle(experiences)
+            indices = np.random.choice(
+                np.arange(len(self)), size=self.batch_size, replace=False
+            )
+            days = [self.get(index) for index in indices]  # get all random experiences
+
         else:  # critic 1
-            experiences = self.replay_memory[-self.batch_size :]
+            indices = np.arange(len(self) - self.batch_size, len(self))
+            days = [self.get(index) for index in indices]  # get all random experiences
 
         states = (
-            torch.from_numpy(np.vstack([e.state for e in experiences if e is not None]))
+            torch.from_numpy(
+                np.vstack([[e.state for e in experiences] for experiences in days])
+            )
             .float()
             .to(device)
         )
+
         actions = (
             torch.from_numpy(
-                np.vstack([e.action for e in experiences if e is not None])
+                np.vstack(
+                    np.vstack([[e.action for e in experiences] for experiences in days])
+                )
             )
             .float()
             .to(device)
         )
         rewards = (
             torch.from_numpy(
-                np.vstack([e.reward for e in experiences if e is not None])
+                np.vstack(
+                    np.vstack([[e.reward for e in experiences] for experiences in days])
+                )
             )
             .float()
             .to(device)
         )
         next_states = (
             torch.from_numpy(
-                np.vstack([e.next_state for e in experiences if e is not None])
+                np.vstack(
+                    np.vstack(
+                        [[e.next_state for e in experiences] for experiences in days]
+                    )
+                )
             )
             .float()
             .to(device)
         )
         dones = (
             torch.from_numpy(
-                np.vstack([e.done for e in experiences if e is not None]).astype(
-                    np.uint8
-                )
+                np.vstack(
+                    np.vstack([[e.done for e in experiences] for experiences in days])
+                ).astype(np.uint8)
             )
             .float()
             .to(device)
         )
 
-        return states, actions, rewards, next_states, dones
+        return states, actions, rewards, next_states, dones, indices
 
     def __len__(self):  # override default __len__ operator
         """Return the current size of internal memory."""
         return len(self.replay_memory)
+
+    def get(self, index):
+        """Returns an element from deque specified by `index`"""
+        assert 0 <= index < len(self.replay_memory), "Invalid index specified"
+        return self.replay_memory[index]
