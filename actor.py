@@ -12,7 +12,7 @@ from critic import Critic
 
 
 class Actor:
-    def __init__(self, num_actions: int, rho: float = 0.9):
+    def __init__(self, num_actions: list, rho: float = 0.9):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
         self.rho = rho
@@ -20,13 +20,14 @@ class Actor:
         self.constraints = []
         self.costs = []
 
-        self.params = None
+        self.zeta = None
+        self.optim = Adam()
 
-    def create_problem(self, t: int, building_id: int, actions_spaces: list):
+    def create_problem(self, t: int, parameters: dict, building_id: int):
         """
         @Param:
-        - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
         - `t` : hour to solve optimization for.
+        - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
         - `building_id`: building index number (0-based)
         - `action_spaces`: action space for agent in CL evn. Changes over time.
         NOTE: right now, this is an integer, but will be checked programmatically.
@@ -38,12 +39,9 @@ class Actor:
         self.constraints = []
         self.costs = []
         self.t = t
-
-        parameters = self.get_parameters()
-
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
-            [actions_spaces[building_id].high, actions_spaces[building_id].low]
+            [self.num_actions[building_id].high, self.num_actions[building_id].low]
         )
         # parse to dictionary --- temp... need to check w/ state-action-dictionary.json !!! @Zhaiyao !!!
         if len(bounds_high) == 2:  # bug
@@ -353,7 +351,12 @@ class Actor:
         return self.constraints
 
     def forward(
-        self, t: int, parameters: dict, building_id: int, debug=False, dispatch=False
+        self,
+        t: int,
+        parameters: dict,
+        building_id: int,
+        debug=False,
+        dispatch=False,
     ):
         """Actor Optimization"""
         self.create_problem(
@@ -396,25 +399,26 @@ class Actor:
             virtual_electricity_cost = np.sum(params["p_ele"].value * actions["E_grid"])
             dispatch_cost = (
                 ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
-            )  # ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
+            )
 
         self.get_parameters(params)  ### set values for later use in backward pass.
 
-        if self.num_actions == 2:
+        if self.num_actions[building_id].shape[0] == 2:
             return [
                 actions["action_H"],
                 actions["action_bat"],
             ], dispatch_cost if dispatch else None
-        return (
-            [actions["action_C"], actions["action_H"], actions["action_bat"]],
-            dispatch_cost if dispatch else None,
-        )
+        return [
+            actions["action_C"],
+            actions["action_H"],
+            actions["action_bat"],
+        ], dispatch_cost if dispatch else None
 
     def get_parameters(self, params=None):
         """Does what it says (except it's also a setter!)"""
         if not params:
-            return self.param
-        self.params = params if params else self.params
+            return self.zeta
+        self.zeta = params if params else self.zeta
 
     def backward(
         self,
@@ -422,7 +426,6 @@ class Actor:
         critic_local: Critic,
         critic_target: Critic,
         is_target: bool,
-        optim: Adam,
     ):
         """
         Computes the gradient first for optimization given parameters `params`.
@@ -495,6 +498,6 @@ class Actor:
                 )
         else:
             # updated via Adam
-            optim.update(t, zeta, zeta.grad)
+            self.optim.update(t, zeta, zeta.grad)
 
         self.get_parameters(zeta)  # pruned_zeta
