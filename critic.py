@@ -360,11 +360,6 @@ class Critic:
 
         return Gt_lambda
 
-    def Q(self, replay_buffer: ReplayBuffer, t: int):
-        """Returns Q value and E_grid for Critic"""
-        ### input data for target_{1/2} critic
-        return self.forward(replay_buffer, t)  ### G_t_lambda_target, E_grid_target
-
     def target_update(self, alphas_new: list):
         """Updates alphas given from least squares optimization"""
         assert (
@@ -392,7 +387,7 @@ class Optim:
         t: int,
         parameters: dict,
         building_id: int,
-        rewards: torch.Tensor,
+        rewards: list,
         debug: bool = False,
     ):
         """Computes min Q"""
