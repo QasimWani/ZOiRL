@@ -5,12 +5,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-from utils import ReplayBuffer
+from utils import ReplayBuffer, RBC
 
 ## local imports
-from predictor import Predictor
+from predictor import *
 from actor import Actor
-from critic import Critic, OptimCritic
+from critic import Critic, Optim
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
@@ -20,73 +20,115 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class TD3(object):
     def __init__(
         self,
-        state_dim,
-        action_dim,
-        discount=0.99,
-        tau=0.005,
-        policy_noise=0.2,
-        noise_clip=0.5,
-        meta_episode=2,
-    ):
+        num_actions: list,
+        num_buildings: int,
+        rbc_threshold: int = 336,  # 2 weeks by default
+        env: CityLearn = None,
+        is_oracle: bool = True,
+        meta_episode: int = 2,
+    ) -> None:
+        """Initialize Actor + Critic for weekday and weekends"""
+        self.buildings = num_buildings
+        self.num_actions = num_actions
         self.total_it = 0
-
-        self.actor = Actor(
-            ...
-        )  # instead of initializing actor class every iteration, add setter within Actor
-        self.actor_target = copy.deepcopy(self.actor)
-
-        self.critic = Critic(...)
-        self.critic_optimizer = OptimCritic(...)
-        self.critic_target = copy.deepcopy(self.critic)
-
-        self.discount = discount
-        self.tau = tau
-        self.policy_noise = policy_noise
-        self.noise_clip = noise_clip
+        self.rbc_threshold = rbc_threshold
         self.meta_episode = meta_episode
+        self.agent_rbc = RBC(
+            num_actions
+        )  # runs for first 2 weeks (by default) to collect data
 
-    def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(device)
-        ### supply w/ param and building info before calling forward
-        return self.actor.forward()
+        self.actor = Actor(num_actions)
+        self.actor_target = Actor(num_actions)
 
-    def train(self, replay_buffer: ReplayBuffer, batch_size=2 * 24):
-        # Methods called only on Delayed policy updates
+        self.critic = Critic()
+        self.critic_target = Critic()
+
+        self.memory = ReplayBuffer()
+
+        ## initialize predictor for loading and synthesizing data passed into actor and critic
+        self.data_loader = DataLoader(is_oracle, num_actions, env)
+
+        # day-ahead dispatch actions
+        self.action_planned_day = None
+        self.init_updates = None
+
+    def select_action(
+        self,
+        state,
+        env: CityLearn = None,
+        day_ahead: bool = True,
+    ):
+        """Returns epsilon-greedy action from RBC/Optimization"""
+        if self.total_it < self.rbc_threshold:
+            return self.agent_rbc.select_action(state)
+
+        if day_ahead:
+            if self.total_it % 24 == 0:
+                data = deepcopy(
+                    self.memory.get_recent()
+                )  # should return an empty dictionary
+                self.day_ahead_dispatch(env, data)
+
+            actions = [
+                np.array(self.action_planned_day[idx])[:, self.total_it % 24]
+                for idx in range(len(self.num_actions))
+            ]
+        else:
+            actions = None  # will throw an error!
+
+        return actions
+
+    def day_ahead_dispatch(self, env: CityLearn, data: dict):
+        """Computes action for the current day (24hrs) in advance"""
+        data_est = self.data_loader.model.estimate_data(
+            env, data, self.total_it, self.init_updates
+        )
+        self.data_loader.model.convert_to_numpy(data_est)
+
+        self.action_planned_day, cost_dispatch = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
+
+        assert (
+            len(self.action_planned_day[0][0]) == 24
+        ), "Invalid number of observations for Optimization actions"
+
+    def train(self):
+        """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
+        data = deepcopy(self.memory.get(-1))  # should return an empty dictionary
+        self.data_loader.model.convert_to_numpy(data)
+
+        Q_value = [
+            self.critic.forward(
+                self.total_it % 24, data, id, data["rewards"][id]
+            )  # add data->rewards
+            for id in range(self.buildings)
+        ]
+
+    def add_to_buffer(self, state, action, reward, next_state, done):
+        """Add to replay buffer"""
+        raise NotImplementedError
+
+    def add_to_buffer_oracle(self, env: CityLearn, action):
+        """Add to replay buffer"""
+        if (
+            self.total_it % 24 == 0 and self.total_it >= self.rbc_threshold - 24
+        ):  # reset values every day
+            if type(self.data_loader.model) == Oracle:
+                _, self.init_updates = self.data_loader.model.init_values(
+                    self.memory.get(-1)
+                )
+            else:
+                pass  # implement way to load previous eod SOC values into current days' 1st hour.
+
+        self.data_loader.upload_data(self.memory, action, env, self.total_it)
         self.total_it += 1
 
-        if self.total_it % self.meta_episode != 0:
-            return
-
-        # Sample replay buffer
-        (
-            state_1,
-            action_1,
-            next_state_1,
-            reward_1,
-            not_done_1,
-        ) = replay_buffer.sample()  # critic 1
-        (state_2, action_2, next_state_2, reward_2, not_done_2,) = replay_buffer.sample(
-            True
-        )  # critic 2
-
-        with torch.no_grad():
-            ### @jinming - Are we using noise?
-            # Select action according to policy and add clipped noise
-            noise = (torch.randn_like(action) * self.policy_noise).clamp(
-                -self.noise_clip, self.noise_clip
-            )
-
-            next_action = self.actor_target(next_state) + noise
-
-            self.critic.forward(replay_buffer, self.total_it)
-            alphas = self.critic_optimizer.backward(
-                ..., self.critic, self.critic_target
-            )  # end of critic update
-
-        # Compute actor loss
-        actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-
-        # Optimize the actor
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        self.actor_optimizer.step()
+        if (
+            self.total_it % self.meta_episode * 24 == 0
+            and self.total_it > self.rbc_threshold
+        ):
+            self.train()
