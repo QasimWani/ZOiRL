@@ -1,3 +1,4 @@
+from citylearn import CityLearn
 import numpy as np
 
 from collections import deque, namedtuple
@@ -58,87 +59,39 @@ class ReplayBuffer:
             maxlen=buffer_size
         )  # Experience replay memory object
         self.batch_size = batch_size
-        self.experience = namedtuple(
-            "Experience",
-            field_names=["state", "action", "reward", "next_state", "done"],
-        )  # standard S,A,R,S',done
 
-    def add(self, state, action, reward, next_state, done):
-        """Adds an experience to existing memory"""
-        if (
-            len(self.replay_memory) == 0 or len(self.replay_memory[-1]) == 24
-        ):  # empty buffer or full day, create new day
-            self.replay_memory.append([])
+        self.total_it = 0
+        self.max_it = buffer_size * 24
 
-        trajectory = self.experience(state, action, reward, next_state, done)
-        self.replay_memory[-1].append(trajectory)
+    def add(self, data: dict):
+        """Adds an experience to existing memory - Oracle"""
+        if self.total_it % 24 == 0:
+            self.replay_memory.append({})
+        self.replay_memory[-1] = data
+        self.total_it += 1
+
+    def get_recent(self):
+        """Returns most recent data from memory"""
+        return (
+            self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
+        )
 
     def sample(self, is_random=False):
         """Picks all samples within the replay_buffer"""
-        # critic 1 last 4*n days - sequential
-        # critic 2 last 4*n days - random
-        assert (
-            len(self.get(len(self) - 1)) == 24
-        ), f"Meta-episode not reached yet! Current hour {len(self.replay_memory[-1])}"
+        # critic 1 last n days - sequential
+        # critic 2 last n days - random
 
         if is_random:  # critic 2
             indices = np.random.choice(
                 np.arange(len(self)), size=self.batch_size, replace=False
             )
-            days = [self.get(index) for index in indices]  # get all random experiences
 
         else:  # critic 1
             indices = np.arange(len(self) - self.batch_size, len(self))
-            days = [self.get(index) for index in indices]  # get all random experiences
 
-        states = (
-            torch.from_numpy(
-                np.vstack([[e.state for e in experiences] for experiences in days])
-            )
-            .float()
-            .to(device)
-        )
-
-        actions = (
-            torch.from_numpy(
-                np.vstack(
-                    np.vstack([[e.action for e in experiences] for experiences in days])
-                )
-            )
-            .float()
-            .to(device)
-        )
-        rewards = (
-            torch.from_numpy(
-                np.vstack(
-                    np.vstack([[e.reward for e in experiences] for experiences in days])
-                )
-            )
-            .float()
-            .to(device)
-        )
-        next_states = (
-            torch.from_numpy(
-                np.vstack(
-                    np.vstack(
-                        [[e.next_state for e in experiences] for experiences in days]
-                    )
-                )
-            )
-            .float()
-            .to(device)
-        )
-        dones = (
-            torch.from_numpy(
-                np.vstack(
-                    np.vstack([[e.done for e in experiences] for experiences in days])
-                ).astype(np.uint8)
-            )
-            .float()
-            .to(device)
-        )
-
-        return states, actions, rewards, next_states, dones, indices
+        days = [self.get(index) for index in indices]  # get all random experiences
+        # combine all days together from predictor.py
+        return days
 
     def __len__(self):  # override default __len__ operator
         """Return the current size of internal memory."""
@@ -146,5 +99,75 @@ class ReplayBuffer:
 
     def get(self, index):
         """Returns an element from deque specified by `index`"""
-        assert 0 <= index < len(self.replay_memory), "Invalid index specified"
-        return self.replay_memory[index]
+        try:
+            return self.replay_memory[index]
+        except IndexError:
+            print("Trying to access invalid index in replay buffer!")
+            return None
+
+
+class RBC:
+    def __init__(self, actions_spaces):
+        """Rule based controller. Source: https://github.com/QasimWani/CityLearn/blob/master/agents/rbc.py"""
+        self.actions_spaces = actions_spaces
+
+    def select_action(self, states):
+        hour_day = states[0][0]
+        multiplier = 0.4
+        # Daytime: release stored energy  2*0.08 + 0.1*7 + 0.09
+        a = [
+            [0.0 for _ in range(len(self.actions_spaces[i].sample()))]
+            for i in range(len(self.actions_spaces))
+        ]
+        if hour_day >= 7 and hour_day <= 11:
+            a = [
+                [
+                    -0.05 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 12 and hour_day <= 15:
+            a = [
+                [
+                    -0.05 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 16 and hour_day <= 18:
+            a = [
+                [
+                    -0.11 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 19 and hour_day <= 22:
+            a = [
+                [
+                    -0.06 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+
+        # Early nightime: store DHW and/or cooling energy
+        if hour_day >= 23 and hour_day <= 24:
+            a = [
+                [
+                    0.085 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 1 and hour_day <= 6:
+            a = [
+                [
+                    0.1383 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+
+        return np.array(a, dtype="object")
