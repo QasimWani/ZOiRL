@@ -33,11 +33,12 @@ class DataLoader:
         self,
         replay_buffer: ReplayBuffer,
         action: list,
+        reward: list,
         env: CityLearn = None,
         t_idx: int = -1,
     ):
         """Upload to memory"""
-        self.model.upload_data(replay_buffer, action, env, t_idx)
+        self.model.upload_data(replay_buffer, action, reward, env, t_idx)
 
     def load_data(self):
         """Sample from Memory"""
@@ -70,6 +71,7 @@ class Oracle:
         self,
         replay_buffer: ReplayBuffer,
         actions: list,
+        rewards: list,
         env: CityLearn = None,
         t_idx: int = -1,
     ):
@@ -81,7 +83,7 @@ class Oracle:
 
         data = self.parse_data(
             replay_buffer.get_recent(),
-            self.get_current_data_oracle(env, t_idx, actions),
+            self.get_current_data_oracle(env, t_idx, actions, rewards),
         )
         replay_buffer.add(data)
 
@@ -99,7 +101,7 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 31
+            len(current_data) == 32  # includes actions + rewards
         ), "Invalid number of parameters. Can't run basic (root) agent optimization"
 
         for key, value in current_data.items():
@@ -136,16 +138,16 @@ class Oracle:
             data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
         return data
 
-    def get_current_data_oracle(self, env: CityLearn, t: int, actions: list = None):
-        """Returns data:dic for each building from `env` for `t` timestep"""
+    def get_current_data_oracle(
+        self, env: CityLearn, t: int, actions: list = None, rewards: list = None
+    ):
+        """Returns data (dict) for each building from `env` for `t` timestep"""
         ### FB - Full batch. Trim output X[:time-step]
         ### CT - current timestep only. X = full_data[time-step], no access to full_data
         ### DP - dynamic update. time-step k = [... k], time-step k+n = [... k + n].
         ### P - constant value across all time steps. changes per building only.
 
-        _max_load = 2 * 168  # 2-week max load
         _num_buildings = len(self.action_space)  # total number of buildings in env.
-        _start = max(t - _max_load, 0)
         observation_data = {}
 
         p_ele = [
@@ -317,6 +319,9 @@ class Oracle:
         observation_data["action_H"] = action_H
         observation_data["action_C"] = action_C
         observation_data["action_bat"] = action_bat
+
+        # add reward \in R^9 (scalar value for each building)
+        observation_data["reward"] = rewards
 
         return observation_data
 

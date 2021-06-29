@@ -90,44 +90,28 @@ class Actor:
         )
 
         # Loads
-        E_ns = cp.Parameter(
-            name="E_ns", shape=(window), value=parameters["E_ns"][t:, building_id]
-        )
-        H_bd = cp.Parameter(
-            name="H_bd", shape=(window), value=parameters["H_bd"][t:, building_id]
-        )
-        C_bd = cp.Parameter(
-            name="C_bd", shape=(window), value=parameters["C_bd"][t:, building_id]
-        )
+        E_ns = parameters["E_ns"][t:, building_id]
+        H_bd = parameters["H_bd"][t:, building_id]
+        C_bd = parameters["C_bd"][t:, building_id]
 
         # PV generations
-        E_pv = cp.Parameter(
-            name="E_pv", shape=(window), value=parameters["E_pv"][t:, building_id]
-        )
+        E_pv = parameters["E_pv"][t:, building_id]
 
         # Heat Pump
-        COP_C = cp.Parameter(
-            name="COP_C", shape=(window), value=parameters["COP_C"][t:, building_id]
-        )
-        E_hpC_max = cp.Parameter(
-            name="E_hpC_max", value=parameters["E_hpC_max"][t, building_id]
-        )
+        COP_C = parameters["COP_C"][t:, building_id]
+        E_hpC_max = parameters["E_hpC_max"][t, building_id]
 
         # Electric Heater
         eta_ehH = cp.Parameter(
             name="eta_ehH", value=parameters["eta_ehH"][t, building_id]
         )
-        E_ehH_max = cp.Parameter(
-            name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
-        )
+        E_ehH_max = parameters["E_ehH_max"][t, building_id]
 
         # Battery
-        C_f_bat = cp.Parameter(
-            name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
+        C_f_bat = parameters["C_f_bat"][t, building_id]
+        C_p_bat = cp.Parameter(
+            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
-        C_p_bat = parameters["C_p_bat"][
-            t, building_id
-        ]  # cp.Parameter(name='C_p_bat', value=parameters['C_p_bat'][t, building_id])
         eta_bat = cp.Parameter(
             name="eta_bat", value=parameters["eta_bat"][t, building_id]
         )
@@ -139,9 +123,7 @@ class Actor:
         )
 
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = cp.Parameter(
-            name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
-        )  # make constant.
+        C_f_Hsto = parameters["C_f_Hsto"][t, building_id]
         C_p_Hsto = cp.Parameter(
             name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
@@ -153,9 +135,7 @@ class Actor:
         )
 
         # Cooling (Energy->cooling) Storage
-        C_f_Csto = cp.Parameter(
-            name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
-        )
+        C_f_Csto = parameters["C_f_Csto"][t, building_id]
         C_p_Csto = cp.Parameter(
             name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )

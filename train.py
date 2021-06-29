@@ -62,14 +62,14 @@ action = agents.select_action(state)
 
 t_idx = 0
 end_time = 336
-print("in here")
+
 while not done and t_idx <= end_time:
 
     next_state, reward, done, _ = env.step(action)
     action_next = agents.select_action(
         next_state, env
     )  # passing in environment for Oracle agent.
-    agents.add_to_buffer_oracle(env, action)
+    agents.add_to_buffer_oracle(env, action, reward)
     # agents.add_to_buffer(state, action, reward, next_state, done)
     state = next_state
     action = action_next
