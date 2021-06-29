@@ -37,11 +37,11 @@ class TD3(object):
             num_actions
         )  # runs for first 2 weeks (by default) to collect data
 
-        self.actor = Actor(num_actions)
-        self.actor_target = Actor(num_actions)
+        self.actor = Actor(num_actions)  # 1 local actor
+        self.actor_target = Actor(num_actions)  # 1 target actor
 
-        self.critic = Critic()
-        self.critic_target = Critic()
+        self.critic = Critic()  # 2 local critic's
+        self.critic_target = Critic()  # 2 target critic's
 
         self.memory = ReplayBuffer()
 
@@ -98,21 +98,22 @@ class TD3(object):
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
-        data = deepcopy(self.memory.get(-1))  # should return an empty dictionary
-        self.data_loader.model.convert_to_numpy(data)
+        pass
+        # data = deepcopy(self.memory.get(-1))  # should return an empty dictionary
+        # self.data_loader.model.convert_to_numpy(data)
 
-        Q_value = [
-            self.critic.forward(
-                self.total_it % 24, data, id, data["rewards"][id]
-            )  # add data->rewards
-            for id in range(self.buildings)
-        ]
+        # Q_value = [
+        #     self.critic.forward(
+        #         self.total_it % 24, data, id, data["reward"][id]
+        #     )  # add data->rewards
+        #     for id in range(self.buildings)
+        # ]
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
         raise NotImplementedError
 
-    def add_to_buffer_oracle(self, env: CityLearn, action):
+    def add_to_buffer_oracle(self, env: CityLearn, action: list, reward: list):
         """Add to replay buffer"""
         if (
             self.total_it % 24 == 0 and self.total_it >= self.rbc_threshold - 24
@@ -122,13 +123,15 @@ class TD3(object):
                     self.memory.get(-1)
                 )
             else:
-                pass  # implement way to load previous eod SOC values into current days' 1st hour.
+                raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
-        self.data_loader.upload_data(self.memory, action, env, self.total_it)
+        self.data_loader.upload_data(self.memory, action, reward, env, self.total_it)
         self.total_it += 1
 
         if (
             self.total_it % self.meta_episode * 24 == 0
-            and self.total_it > self.rbc_threshold
+            and self.total_it
+            >= self.rbc_threshold
+            + self.meta_episode * 24  # start training after end of first meta-episode
         ):
             self.train()
