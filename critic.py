@@ -52,7 +52,7 @@ class Critic:
 
         alpha_peak1 = cp.Parameter(name="peak1", value=self.alpha_peak1[building_id])
 
-        alpha_peak2 = cp.Parameter(name="peak2", value=self.alpha_peak1[building_id])
+        alpha_peak2 = cp.Parameter(name="peak2", value=self.alpha_peak2[building_id])
 
         # Electricity grid
         E_grid_prevhour = cp.Parameter(
@@ -68,6 +68,9 @@ class Critic:
             if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
             else 0,
         )
+        # E_grid_prevhour = cp.Parameter(name="E_grid_prevhour", value=0)
+
+        # E_grid_pkhist = cp.Parameter(name="E_grid_pkhist", value=0)
 
         # Loads
         E_ns = cp.Parameter(
@@ -206,7 +209,8 @@ class Critic:
         reward_func = (
             -alpha_ramp.value * ramping_cost
             - alpha_peak1.value * peak_net_electricity_cost
-            - alpha_peak2.value * peak_net_electricity_cost
+            - alpha_peak2.value
+            * peak_net_electricity_cost  # cp.square(peak_net_electricity_cost) / cp.norm(peak_net_electricity_cost, 2)
         )
 
         ### relaxation costs - L1 norm
@@ -221,12 +225,12 @@ class Critic:
 
         self.costs.append(
             reward_func
-            - E_bal_relax_cost * 1e4
-            - H_bal_relax_cost * 1e4
-            - C_bal_relax_cost * 1e4
-            - SOC_Brelax_cost * 1e4
-            - SOC_Crelax_cost * 1e4
-            - SOC_Hrelax_cost * 1e4
+            - E_bal_relax_cost * 1e2
+            - H_bal_relax_cost * 1e2
+            - C_bal_relax_cost * 1e2
+            - SOC_Brelax_cost * 1e2
+            - SOC_Crelax_cost * 1e2
+            - SOC_Hrelax_cost * 1e2
         )
 
         ### constraints
@@ -352,10 +356,10 @@ class Critic:
         Q_reward_warping_output = prob.solve(
             verbose=debug
         )  # output of reward warping function
-
-        print("optimal solution", Q_reward_warping_output)
         if float("-inf") < Q_reward_warping_output < float("inf"):
             return Q_reward_warping_output  # , prob.variables()["E_grid"]
+        else:
+            print("ERROR", Q_reward_warping_output)
         return "Unbounded Solution"
 
     def forward(
@@ -420,6 +424,7 @@ class Optim:
         Q2 = critic_target_2.forward(t, parameters_2, building_id, debug)
         return min(Q1, Q2)  # y_r
 
+    # LOCAL critic update
     def backward(
         self,
         parameters_1: dict,  # data collected within actor forward pass - Critic 1 (sequential)
@@ -520,10 +525,10 @@ class Optim:
         for var in prob.variables():
             solution[var.name()] = var.value
 
-        critic_local_1.alpha_ramp = solution["ramp"]
-        critic_local_1.alpha_peak1 = solution["peak1"]
-        critic_local_1.alpha_peak2 = solution["peak2"]
+        critic_local_1.alpha_ramp[building_id] = solution["ramp"]
+        critic_local_1.alpha_peak1[building_id] = solution["peak1"]
+        critic_local_1.alpha_peak2[building_id] = solution["peak2"]
 
-        critic_local_2.alpha_ramp = solution["ramp"]
-        critic_local_2.alpha_peak1 = solution["peak1"]
-        critic_local_2.alpha_peak2 = solution["peak2"]
+        critic_local_2.alpha_ramp[building_id] = solution["ramp"]
+        critic_local_2.alpha_peak1[building_id] = solution["peak1"]
+        critic_local_2.alpha_peak2[building_id] = solution["peak2"]
