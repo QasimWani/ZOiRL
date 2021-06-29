@@ -1,14 +1,9 @@
-from os import lseek
 from utils import ReplayBuffer
-from critic import Critic
-from actor import Actor
 
 from citylearn import CityLearn
 
 import numpy as np
 import pandas as pd
-
-from copy import deepcopy
 
 
 class DataLoader:
@@ -34,11 +29,12 @@ class DataLoader:
         replay_buffer: ReplayBuffer,
         action: list,
         reward: list,
+        E_grid: list,
         env: CityLearn = None,
         t_idx: int = -1,
     ):
         """Upload to memory"""
-        self.model.upload_data(replay_buffer, action, reward, env, t_idx)
+        self.model.upload_data(replay_buffer, action, reward, E_grid, env, t_idx)
 
     def load_data(self):
         """Sample from Memory"""
@@ -72,6 +68,7 @@ class Oracle:
         replay_buffer: ReplayBuffer,
         actions: list,
         rewards: list,
+        E_grid: list,
         env: CityLearn = None,
         t_idx: int = -1,
     ):
@@ -79,11 +76,11 @@ class Oracle:
         assert (
             env is not None and t_idx >= 0
         ), "Invalid argument passed. Missing env object and/or invalid time index passed"
-        ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
 
+        ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
         data = self.parse_data(
             replay_buffer.get_recent(),
-            self.get_current_data_oracle(env, t_idx, actions, rewards),
+            self.get_current_data_oracle(env, t_idx, actions, rewards, E_grid),
         )
         replay_buffer.add(data)
 
@@ -101,7 +98,7 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 32  # includes actions + rewards
+            len(current_data) == 33  # includes actions + rewards + E_grid_collect
         ), "Invalid number of parameters. Can't run basic (root) agent optimization"
 
         for key, value in current_data.items():
@@ -133,13 +130,18 @@ class Oracle:
                 params[key] = np.array(params[key])
 
     def create_random_data(self, data: dict):
-        """Creates random Gaussian data"""
+        """Synthetic data (Gaussian) generation"""
         for key in data:
             data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
         return data
 
     def get_current_data_oracle(
-        self, env: CityLearn, t: int, actions: list = None, rewards: list = None
+        self,
+        env: CityLearn,
+        t: int,
+        actions: list = None,
+        rewards: list = None,
+        E_grid: list = None,
     ):
         """Returns data (dict) for each building from `env` for `t` timestep"""
         ### FB - Full batch. Trim output X[:time-step]
@@ -150,9 +152,10 @@ class Oracle:
         _num_buildings = len(self.action_space)  # total number of buildings in env.
         observation_data = {}
 
-        p_ele = [
-            2 if 10 <= t % 24 <= 20 else 0.2 for i in range(1, _num_buildings + 1)
-        ]  # FB -- virtual electricity price.
+        # p_ele = [
+        #     2 if 10 <= t % 24 <= 20 else 0.2 for i in range(1, _num_buildings + 1)
+        # ]  # FB -- virtual electricity price.
+        p_ele = [1] * _num_buildings  # FB -- virtual electricity price.
         # can't get future data since action dependent
         E_grid_past = [
             0 for i in range(1, _num_buildings + 1)
@@ -283,6 +286,7 @@ class Oracle:
         observation_data["p_ele"] = p_ele
         observation_data["ramping_cost_coeff"] = ramping_cost_coeff
         observation_data["E_grid_past"] = E_grid_past
+        observation_data["E_grid"] = E_grid  # add E-grid (part of E-grid_collect)
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd

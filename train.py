@@ -51,8 +51,12 @@ params_agent = {
 
 # Instantiating the control agent(s)
 # agents = Agent(**params_agent)
+RBC_THRESHOLD = 48
 agents = Agent(
-    num_actions=actions_spaces, num_buildings=len(observations_spaces), env=env
+    num_actions=actions_spaces,
+    num_buildings=len(observations_spaces),
+    env=env,
+    rbc_threshold=RBC_THRESHOLD,
 )
 
 state = env.reset()
@@ -61,7 +65,7 @@ done = False
 action = agents.select_action(state)
 
 t_idx = 0
-end_time = 336
+end_time = RBC_THRESHOLD + 100
 
 while not done and t_idx <= end_time:
 

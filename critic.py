@@ -11,7 +11,7 @@ class Critic:
         self,
         num_buildings: int,
         lambda_: float = 0.9,
-        rho: float = 0.1,
+        rho: float = 0.01,
         n_step: int = 2,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
@@ -46,20 +46,16 @@ class Critic:
         self.t = t
 
         ### --- Parameters ---
-
-        # Weights
-        alpha_ramp = cp.Parameter(name="ramp", value=self.alpha_ramp[building_id])
-
-        alpha_peak1 = cp.Parameter(name="peak1", value=self.alpha_peak1[building_id])
-
-        alpha_peak2 = cp.Parameter(name="peak2", value=self.alpha_peak2[building_id])
+        p_ele = cp.Parameter(
+            name="p_ele", shape=(window), value=parameters["p_ele"][t:, building_id]
+        )
 
         # Electricity grid
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
             value=parameters["E_grid"][max(t - 1, 0), building_id]
             if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0,
+            else 0,  # used in day ahead dispatch, default E-grid okay
         )
 
         E_grid_pkhist = cp.Parameter(
@@ -68,9 +64,12 @@ class Critic:
             if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
             else 0,
         )
-        # E_grid_prevhour = cp.Parameter(name="E_grid_prevhour", value=0)
 
-        # E_grid_pkhist = cp.Parameter(name="E_grid_pkhist", value=0)
+        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
+        ramping_cost_coeff = cp.Parameter(
+            name="ramping_cost_coeff",
+            value=parameters["ramping_cost_coeff"][t, building_id],
+        )
 
         # Loads
         E_ns = cp.Parameter(
@@ -146,6 +145,7 @@ class Critic:
         soc_Csto_init = cp.Parameter(
             name="soc_Csto_init", value=parameters["c_Csto_init"][building_id]
         )
+
         ### --- Variables ---
 
         # relaxation variables - prevents numerical failures when solving optimization
@@ -194,24 +194,47 @@ class Critic:
 
         ### objective function
 
+        ### objective function
         ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
             cp.abs(E_grid[1:] - E_grid[:-1])
         )  # E_grid_t+1 - E_grid_t
-
         peak_net_electricity_cost = cp.max(
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
-        # peak_net_electricity_cost = cp.atoms.elementwise.maximum.maximum(
-        #     *E_grid, E_grid_pkhist
-        # )
+        electricity_cost = cp.sum(p_ele * E_grid)
+        selling_cost = -1e2 * cp.sum(
+            E_grid_sell
+        )  # not as severe as violating constraints
 
-        # https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
-        reward_func = (
-            -alpha_ramp.value * ramping_cost
-            - alpha_peak1.value * peak_net_electricity_cost
-            - alpha_peak2.value
-            * peak_net_electricity_cost  # cp.square(peak_net_electricity_cost) / cp.norm(peak_net_electricity_cost, 2)
+        ### relaxation costs - L1 norm
+        # balance eq.
+        E_bal_relax_cost = cp.sum(cp.abs(E_bal_relax))
+        H_bal_relax_cost = cp.sum(cp.abs(H_bal_relax))
+        C_bal_relax_cost = cp.sum(cp.abs(C_bal_relax))
+        # soc eq.
+        SOC_Brelax_cost = cp.sum(cp.abs(SOC_Brelax))
+        SOC_Crelax_cost = cp.sum(cp.abs(SOC_Crelax))
+        SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
+
+        self.costs.append(
+            ramping_cost_coeff.value * ramping_cost
+            + peak_net_electricity_cost
+            + 0 * electricity_cost
+            + selling_cost
+            + E_bal_relax_cost * 1e4
+            + H_bal_relax_cost * 1e4
+            + C_bal_relax_cost * 1e4
+            + SOC_Brelax_cost * 1e4
+            + SOC_Crelax_cost * 1e4
+            + SOC_Hrelax_cost * 1e4
         )
+
+        # reward_func = (
+        #     -alpha_ramp.value * ramping_cost
+        #     - alpha_peak1.value * peak_net_electricity_cost
+        #     - alpha_peak2.value
+        #     * peak_net_electricity_cost  # cp.square(peak_net_electricity_cost) / cp.norm(peak_net_electricity_cost, 2)
+        # )
 
         ### relaxation costs - L1 norm
         # balance eq.
@@ -339,9 +362,9 @@ class Critic:
 
     def set_alphas(self, ramp, pk1, pk2):
         """Setter target alphas"""
-        self.alpha_ramp = ramp
-        self.alpha_peak1 = pk1
-        self.alpha_peak2 = pk2
+        self.alpha_ramp = np.clip(ramp, 0.1, 2)
+        self.alpha_peak1 = np.clip(pk1, 0.1, 2)
+        self.alpha_peak2 = np.clip(pk2, 0.1, 2)
 
     def get_alphas(self):
         """Getter target alphas"""
@@ -525,10 +548,10 @@ class Optim:
         for var in prob.variables():
             solution[var.name()] = var.value
 
-        critic_local_1.alpha_ramp[building_id] = solution["ramp"]
-        critic_local_1.alpha_peak1[building_id] = solution["peak1"]
-        critic_local_1.alpha_peak2[building_id] = solution["peak2"]
+        critic_local_1.alpha_ramp[building_id] = np.clip(solution["ramp"], 0.1, 2)
+        critic_local_1.alpha_peak1[building_id] = np.clip(solution["peak1"], 0.1, 2)
+        critic_local_1.alpha_peak2[building_id] = np.clip(solution["peak2"], 0.1, 2)
 
-        critic_local_2.alpha_ramp[building_id] = solution["ramp"]
-        critic_local_2.alpha_peak1[building_id] = solution["peak1"]
-        critic_local_2.alpha_peak2[building_id] = solution["peak2"]
+        critic_local_2.alpha_ramp[building_id] = np.clip(solution["ramp"], 0.1, 2)
+        critic_local_2.alpha_peak1[building_id] = np.clip(solution["peak1"], 0.1, 2)
+        critic_local_2.alpha_peak2[building_id] = np.clip(solution["peak2"], 0.1, 2)
