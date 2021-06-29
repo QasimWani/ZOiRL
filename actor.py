@@ -75,13 +75,20 @@ class Actor:
         p_ele = cp.Parameter(
             name="p_ele", shape=(window), value=parameters["p_ele"][t:, building_id]
         )
+
         E_grid_prevhour = cp.Parameter(
-            name="E_grid_prevhour", value=0
-        )  # @jinming - updated via diff.?
+            name="E_grid_prevhour",
+            value=parameters["E_grid"][max(t - 1, 0), building_id]
+            if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
+            else 0,  # used in day ahead dispatch, default E-grid okay
+        )
 
         E_grid_pkhist = cp.Parameter(
-            name="E_grid_pkhist", value=0
-        )  # @jinming - updated via diff.?
+            name="E_grid_pkhist",
+            value=np.max(parameters["E_grid"][:, building_id])
+            if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
+            else 0,  # used in day ahead dispatch, default E-grid okay
+        )
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
         ramping_cost_coeff = cp.Parameter(
@@ -384,15 +391,23 @@ class Actor:
         self.get_parameters(params)  ### set values for later use in backward pass.
 
         if self.num_actions[building_id].shape[0] == 2:
-            return [
+            return (
+                [
+                    actions["action_H"],
+                    actions["action_bat"],
+                ],
+                dispatch_cost if dispatch else None,
+                actions["E_grid"],  # + actions["E_grid_sell"]
+            )
+        return (
+            [
+                actions["action_C"],
                 actions["action_H"],
                 actions["action_bat"],
-            ], dispatch_cost if dispatch else None
-        return [
-            actions["action_C"],
-            actions["action_H"],
-            actions["action_bat"],
-        ], dispatch_cost if dispatch else None
+            ],
+            dispatch_cost if dispatch else None,
+            actions["E_grid"],  # + actions["E_grid_sell"]
+        )
 
     def get_parameters(self, params=None):
         """Does what it says (except it's also a setter!)"""
@@ -403,9 +418,8 @@ class Actor:
     def backward(
         self,
         t: int,
-        critic_local: Critic,
-        critic_target: Critic,
-        is_target: bool,
+        alphas: list,
+        is_local: bool,
     ):
         """
         Computes the gradient first for optimization given parameters `params`.
@@ -416,24 +430,24 @@ class Actor:
         Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
         Step 3. Take backward pass of (2) with parameters \zeta.
         """
-        prob = critic_target.get_problem() if is_target else critic_local.get_problem()
+        prob = self.get_problem()
         (zeta, variables_actor,) = (
-            prob.parameters(),
-            prob.variables(),
+            prob.param_dict,
+            prob.var_dict,
         )
 
         def convert_to_torch_tensor(params: list):
             """Converts cp.param to torch.tensor"""
             param_arr = []
             for param in params:
-                param_arr.append(
-                    torch.tensor(float(param.value), requires_grad=True).float()
-                )
+                param_arr.append(torch.from_numpy(np.array(param.value)).float())
             return param_arr
 
         # Actor forward pass - Step 1
         fit_actor = CvxpyLayer(
-            prob, parameters=list(zeta), variables=list(variables_actor)
+            prob,
+            parameters=list(zeta.values()),
+            variables=list(variables_actor.values()),
         )
         # fetch params in loss calculation
         E_grid_prevhour = zeta["E_grid_prevhour"].value
@@ -442,42 +456,40 @@ class Actor:
         zeta = convert_to_torch_tensor(
             zeta
         )  # typecast each param to tensor for autograd later
-        E_grid, *_ = fit_actor(zeta)  # use E_grid in loss func. (solves optim)
+        E_grid, *_ = fit_actor(
+            zeta
+        )  # use E_grid in loss func. (solves optim) --- !!! POTENTIAL ISSUE !!!
 
         # Q function forward pass - Step 2
-        (alpha_ramp, alpha_peak1, alpha_peak2,) = (
-            critic_target.get_alphas() if is_target else critic_local.get_alphas()
-        )  ### parameters at end of Critic update
+        alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(alphas).float()
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
             torch.abs(E_grid[1:] - E_grid[:-1])
         )  # E_grid_t+1 - E_grid_t
-        peak_net_electricity_cost = torch.max(
-            E_grid, E_grid_pkhist
-        )  # max(E_grid, E_grid_pkhist)
+        peak_net_electricity_cost = torch.max(E_grid.max(), torch.tensor(E_grid_pkhist))
 
         reward_warping_loss = (
             alpha_ramp * ramping_cost
             + alpha_peak1 * peak_net_electricity_cost
             + alpha_peak2 * torch.square(peak_net_electricity_cost)
         )
+        reward_warping_loss.requires_grad = True
 
         # Gradient w.r.t parameters (math: \zeta) - Step 3
-        reward_warping_loss.backward()
+        reward_warping_loss.backward()  ## confirm, mean or sum [do seperately for each building]
 
-        if is_target:
-            for i, param in enumerate(zeta):
-                ### prune out params from Critic.
-                zeta[i] = param + np.mean(
-                    param.grad, axis=1
-                )  # this will be incorrect. need to collect data across days. this will collect only across 1 day. must make use of replay buffer.
-                zeta[i] = (
-                    self.rho * zeta[i]
-                    + (1 - self.rho)
-                    * critic_local.get_problem().parameters()[param].value
-                )
-        else:
+        if is_local:
             # updated via Adam
             self.optim.update(t, zeta, zeta.grad)
-
-        self.get_parameters(zeta)  # pruned_zeta
+            self.get_parameters(zeta)  # pruned_zeta
+        else:
+            pass
+            # for i, param in enumerate(zeta):
+            #     ### prune out params from Critic.
+            #     zeta[i] = param + np.mean(param.grad, axis=1)
+            #     zeta[i] = (
+            #         self.rho * zeta[i]
+            #         + (1 - self.rho)
+            #         * critic_local.get_problem().parameters()[param].value
+            #     )
+            return zeta

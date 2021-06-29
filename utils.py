@@ -1,4 +1,3 @@
-from citylearn import CityLearn
 import numpy as np
 
 from collections import deque, namedtuple
@@ -38,7 +37,7 @@ class Adam:
 
 
 META_EPISODE = 7  # number of days in a meta-episode
-MINI_BATCH = 2  # number of days to sample
+MINI_BATCH = 1  # number of days to sample
 
 
 class ReplayBuffer:
@@ -90,12 +89,8 @@ class ReplayBuffer:
             indices = np.arange(len(self) - self.batch_size, len(self))
 
         days = [self.get(index) for index in indices]  # get all random experiences
-        # combine all days together from predictor.py
+        # combine all days together from DataLoader
         return days
-
-    def __len__(self):  # override default __len__ operator
-        """Return the current size of internal memory."""
-        return len(self.replay_memory)
 
     def get(self, index):
         """Returns an element from deque specified by `index`"""
@@ -104,6 +99,20 @@ class ReplayBuffer:
         except IndexError:
             print("Trying to access invalid index in replay buffer!")
             return None
+
+    def set(self, index, data: dict):
+        """Sets an element of replay buffer w/ dictionary"""
+        try:
+            self.replay_memory[index] = data
+        except:
+            print(
+                "Trying to set replay buffer w/ either invalid index or unable to set data!"
+            )
+            return None
+
+    def __len__(self):  # override default __len__ operator
+        """Return the current size of internal memory."""
+        return len(self.replay_memory)
 
 
 class RBC:
