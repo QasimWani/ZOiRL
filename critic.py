@@ -1,17 +1,19 @@
-import copy
+from os import name
+from predictor import DataLoader, Oracle, Predictor
 import numpy as np
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 import cvxpy as cp
 
 from utils import *
 
 
 class Critic:
-    def __init__(self, lambda_: float = 0.9, rho: float = 0.1, n_step: int = 2):
+    def __init__(
+        self,
+        num_buildings: int,
+        lambda_: float = 0.9,
+        rho: float = 0.1,
+        n_step: int = 2,
+    ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
         self.rho = rho  # critic update step size
@@ -19,9 +21,9 @@ class Critic:
         # Optim specific
         self.constraints = []
         self.costs = []
-        self.alpha_ramp = None
-        self.alpha_peak1 = None
-        self.alpha_peak2 = None
+        self.alpha_ramp = [1] * num_buildings
+        self.alpha_peak1 = [1] * num_buildings
+        self.alpha_peak2 = [1] * num_buildings
 
     def create_problem(self, t: int, parameters: dict, building_id: int):
         """
@@ -46,22 +48,26 @@ class Critic:
         ### --- Parameters ---
 
         # Weights
-        alpha_ramp = cp.Parameter(
-            name="ramp", value=parameters["ramp"][t:, building_id]
-        )
+        alpha_ramp = cp.Parameter(name="ramp", value=self.alpha_ramp[building_id])
 
-        alpha_peak1 = cp.Parameter(
-            name="peak1", value=parameters["peak1"][t:, building_id]
-        )
+        alpha_peak1 = cp.Parameter(name="peak1", value=self.alpha_peak1[building_id])
 
-        alpha_peak2 = cp.Parameter(
-            name="peak2", value=parameters["peak2"][t:, building_id]
-        )
+        alpha_peak2 = cp.Parameter(name="peak2", value=self.alpha_peak1[building_id])
 
         # Electricity grid
-        E_grid_prevhour = cp.Parameter(name="E_grid_prevhour", value=0)
+        E_grid_prevhour = cp.Parameter(
+            name="E_grid_prevhour",
+            value=parameters["E_grid"][max(t - 1, 0), building_id]
+            if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
+            else 0,
+        )
 
-        E_grid_pkhist = cp.Parameter(name="E_grid_pkhist", value=0)
+        E_grid_pkhist = cp.Parameter(
+            name="E_grid_pkhist",
+            value=np.max(parameters["E_grid"][:, building_id])
+            if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
+            else 0,
+        )
 
         # Loads
         E_ns = cp.Parameter(
@@ -162,46 +168,45 @@ class Critic:
         SOC_Brelax = cp.Variable(
             name="SOH_Brelax", shape=(window)
         )  # electrical battery relaxation (prevents numerical infeasibilities)
-        action_bat = cp.Parameter(
-            name="action_bat",
-            value=parameters["action_bat"][t:, building_id],
-            shape=(window),
-        )  # electric battery
+
+        action_bat = cp.Variable(name="action_bat", shape=(window))
+        action_H = cp.Variable(name="action_H", shape=(window))
+        action_C = cp.Variable(name="action_C", shape=(window))
+
+        current_action_bat = parameters["action_bat"][
+            t, building_id
+        ]  # electric battery
+        current_action_H = parameters["action_H"][t, building_id]  # heat storage
+        current_action_C = parameters["action_C"][t, building_id]  # cooling storage
 
         SOC_H = cp.Variable(name="SOC_H", shape=(window))  # heat storage
         SOC_Hrelax = cp.Variable(
             name="SOH_Crelax", shape=(window)
         )  # heat storage relaxation (prevents numerical infeasibilities)
-        action_H = cp.Parameter(
-            name="action_H",
-            value=parameters["action_H"][t:, building_id],
-            shape=(window),
-        )  # heat storage
 
         SOC_C = cp.Variable(name="SOC_C", shape=(window))  # cooling storage
         SOC_Crelax = cp.Variable(
             name="SOC_Crelax", shape=(window)
         )  # cooling storage relaxation (prevents numerical infeasibilities)
-        action_C = cp.Parameter(
-            name="action_C",
-            value=parameters["action_C"][t:, building_id],
-            shape=(window),
-        )  # cooling storage
 
         ### objective function
 
         ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
             cp.abs(E_grid[1:] - E_grid[:-1])
         )  # E_grid_t+1 - E_grid_t
+
         peak_net_electricity_cost = cp.max(
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
+        # peak_net_electricity_cost = cp.atoms.elementwise.maximum.maximum(
+        #     *E_grid, E_grid_pkhist
+        # )
 
         # https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
         reward_func = (
-            alpha_ramp.value * ramping_cost
-            + alpha_peak1.value * peak_net_electricity_cost
-            + alpha_peak2.value * cp.square(peak_net_electricity_cost)
+            -alpha_ramp.value * ramping_cost
+            - alpha_peak1.value * peak_net_electricity_cost
+            - alpha_peak2.value * peak_net_electricity_cost
         )
 
         ### relaxation costs - L1 norm
@@ -216,15 +221,22 @@ class Critic:
 
         self.costs.append(
             reward_func
-            + E_bal_relax_cost * 1e4
-            + H_bal_relax_cost * 1e4
-            + C_bal_relax_cost * 1e4
-            + SOC_Brelax_cost * 1e4
-            + SOC_Crelax_cost * 1e4
-            + SOC_Hrelax_cost * 1e4
+            - E_bal_relax_cost * 1e4
+            - H_bal_relax_cost * 1e4
+            - C_bal_relax_cost * 1e4
+            - SOC_Brelax_cost * 1e4
+            - SOC_Crelax_cost * 1e4
+            - SOC_Hrelax_cost * 1e4
         )
 
         ### constraints
+
+        # action constraints
+        self.constraints.append(action_bat[0] == current_action_bat)
+        self.constraints.append(action_H[0] == current_action_H)
+        self.constraints.append(action_C[0] == current_action_C)
+
+        # Net electricity consumption constraints
         self.constraints.append(E_grid >= 0)
         self.constraints.append(E_grid_sell <= 0)
 
@@ -251,7 +263,9 @@ class Critic:
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Crelax[0]
+            == (1 - C_f_bat) * soc_bat_init
+            + current_action_bat * eta_bat
+            + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):  # 1 = t + 1
@@ -270,7 +284,9 @@ class Critic:
         # Heat Storage constraints
         self.constraints.append(
             SOC_H[0]
-            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto + SOC_Hrelax[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init
+            + current_action_H * eta_Hsto
+            + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -286,7 +302,9 @@ class Critic:
         # Cooling Storage constraints
         self.constraints.append(
             SOC_C[0]
-            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto + SOC_Crelax[0]
+            == (1 - C_f_Csto) * soc_Csto_init
+            + current_action_C * eta_Csto
+            + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -305,7 +323,7 @@ class Critic:
         assert (
             len(self.costs) == 1
         ), "Objective function not/ill-defined. Need to call `create_problem` before running forward pass"
-        obj = cp.Minimize(*self.costs)
+        obj = cp.Maximize(*self.costs)
         # Form problem.
         prob = cp.Problem(obj, self.constraints)
 
@@ -315,7 +333,7 @@ class Critic:
         """Returns constraints for problem"""
         return self.constraints
 
-    def set_alphas(self, ramp=None, pk1=None, pk2=None):
+    def set_alphas(self, ramp, pk1, pk2):
         """Setter target alphas"""
         self.alpha_ramp = ramp
         self.alpha_peak1 = pk1
@@ -335,6 +353,7 @@ class Critic:
             verbose=debug
         )  # output of reward warping function
 
+        print("optimal solution", Q_reward_warping_output)
         if float("-inf") < Q_reward_warping_output < float("inf"):
             return Q_reward_warping_output  # , prob.variables()["E_grid"]
         return "Unbounded Solution"
@@ -344,32 +363,34 @@ class Critic:
         t: int,
         parameters: dict,
         building_id: int,
-        rewards: torch.Tensor,
         debug=False,
     ):
         """Uses result of RWL to compute for clipped Q values"""
 
         Gt_tn = 0.0
+        rewards = parameters["reward"][:, building_id]
         for n in range(1, 24 - t):
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + self.solve(
                 t + n, parameters, building_id, debug
             )
+
+        # compute TD(\lambda) rewards
         Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(
             rewards[t + 1 :]
         ) * self.lambda_ ** (24 - t)
 
         return Gt_lambda
 
-    def target_update(self, alphas_new: list):
+    def target_update(self, alphas_local: list):
         """Updates alphas given from least squares optimization"""
         assert (
-            len(alphas_new) == 3
-        ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas_new)}"
+            len(alphas_local) == 3
+        ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas_local)}"
 
         ### main target update
         alpha_ramp, alpha_peak1, alpha_peak2 = (
-            self.rho * np.array(alphas_new)  # alphas_new comes from LS optim sol.
-            + (1 - self.rho) * self.get_alphas()
+            self.rho * np.array(self.get_alphas())
+            + (1 - self.rho) * alphas_local  # alphas_new comes from LS optim sol.
         )
 
         self.set_alphas(
@@ -380,49 +401,59 @@ class Critic:
 class Optim:
     """Performs Critic Update"""
 
+    def __init__(self) -> None:
+        pass
+
     def obtain_target_Q(
         self,
         critic_target_1: Critic,
         critic_target_2: Critic,
         t: int,
-        parameters: dict,
+        parameters_1: dict,
+        parameters_2: dict,
         building_id: int,
-        rewards: list,
         debug: bool = False,
     ):
         """Computes min Q"""
         # shared data. difference only in alphas
-        Q1 = critic_target_1.forward(t, parameters, building_id, rewards, debug)
-        Q2 = critic_target_2.forward(t, parameters, building_id, rewards, debug)
+        Q1 = critic_target_1.forward(t, parameters_1, building_id, debug)
+        Q2 = critic_target_2.forward(t, parameters_2, building_id, debug)
         return min(Q1, Q2)  # y_r
 
     def backward(
         self,
-        parameters: dict,  # data collected within actor forward pass
+        parameters_1: dict,  # data collected within actor forward pass - Critic 1 (sequential)
+        parameters_2: dict,  # data collected within actor forward pass - Critic 2 (random)
         t: int,
         building_id: int,
-        rewards: torch.Tensor,
-        critic_target_1: Critic,
-        critic_target_2: Critic,
+        critic_local: list,
+        critic_target: list,
         debug: bool = False,
     ):
-        """Define least-squares optimization for generating values for alpha_ramp,peak1/2"""
+        """
+        Define least-squares optimization for generating optimal values for alpha_ramp,peak1/2.
+        NOTE: Called only for local critic update
+        """
+        # extrapolate Critics
+        critic_local_1, critic_local_2 = critic_local
+        critic_target_1, critic_target_2 = critic_target
 
         ### variables
-        alpha_ramp = cp.Variable(name="ramp", shape=(24 - t))
-        alpha_peak1 = cp.Variable(name="peak1", shape=(24 - t))
-        alpha_peak2 = cp.Variable(name="peak2", shape=(24 - t))
+        alpha_ramp = cp.Variable(name="ramp")
+        alpha_peak1 = cp.Variable(name="peak1")
+        alpha_peak2 = cp.Variable(name="peak2")
 
         ### parameters
         E_grid = cp.Parameter(
-            name="E_grid", shape=(24 - t), value=parameters["E_grid"][t:, building_id]
+            name="E_grid", shape=(24 - t), value=parameters_1["E_grid"][t:, building_id]
         )
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max(parameters["E_grid_pkhist"][:, building_id]),
+            value=np.max(parameters_1["E_grid"][:, building_id]),
         )
         E_grid_prevhour = cp.Parameter(
-            name="E_grid_prevhour", value=parameters[max(t - 1, 0), building_id]
+            name="E_grid_prevhour",
+            value=parameters_1["E_grid"][max(t - 1, 0), building_id],
         )
 
         y_r = cp.Parameter(
@@ -431,9 +462,9 @@ class Optim:
                 critic_target_1,
                 critic_target_2,
                 t,
-                parameters,
+                parameters_1,
+                parameters_2,
                 building_id,
-                rewards,
                 debug,
             ),
         )
@@ -475,7 +506,7 @@ class Optim:
         self.constraints.append(alpha_peak2 >= 0.1)
 
         # Form objective.
-        obj = cp.Minimize(*self.costs)
+        obj = cp.Minimize(*self.cost)
         # Form and solve problem.
         prob = cp.Problem(obj, self.constraints)
 
@@ -489,4 +520,10 @@ class Optim:
         for var in prob.variables():
             solution[var.name()] = var.value
 
-        return solution  ### returns optimal values for 3 alphas. Once solved, call `critic.target_update` on values from this fx
+        critic_local_1.alpha_ramp = solution["ramp"]
+        critic_local_1.alpha_peak1 = solution["peak1"]
+        critic_local_1.alpha_peak2 = solution["peak2"]
+
+        critic_local_2.alpha_ramp = solution["ramp"]
+        critic_local_2.alpha_peak1 = solution["peak1"]
+        critic_local_2.alpha_peak2 = solution["peak2"]
