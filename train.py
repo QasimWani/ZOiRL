@@ -51,7 +51,7 @@ params_agent = {
 
 # Instantiating the control agent(s)
 # agents = Agent(**params_agent)
-RBC_THRESHOLD = 48
+RBC_THRESHOLD = 336  # 2 weeks
 agents = Agent(
     num_actions=actions_spaces,
     num_buildings=len(observations_spaces),
@@ -65,7 +65,7 @@ done = False
 action = agents.select_action(state)
 
 t_idx = 0
-end_time = RBC_THRESHOLD + 100
+end_time = RBC_THRESHOLD + 24 * 30  # run for a month
 
 while not done and t_idx <= end_time:
 
