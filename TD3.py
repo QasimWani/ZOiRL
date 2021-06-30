@@ -36,10 +36,13 @@ class TD3(object):
             num_actions
         )  # runs for first 2 weeks (by default) to collect data
 
-        self.actor = Actor(num_actions)  # 1 local actor
+        self.actor = Actor(num_actions, num_buildings)  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
 
-        self.critic = [Critic(num_buildings), Critic(num_buildings)]  # 2 local critic's
+        self.critic = [
+            Critic(num_buildings, num_actions),
+            Critic(num_buildings, num_actions),
+        ]  # 2 local critic's
         self.critic_target = deepcopy(self.critic)  # 2 target critic's
 
         self.critic_optim = Optim()
@@ -91,7 +94,9 @@ class TD3(object):
 
         self.action_planned_day, cost_dispatch, self.E_grid_planned_day = zip(
             *[
-                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                self.actor.forward(
+                    self.total_it % 24, data_est, id, dispatch=True
+                )  # change actor -> actor_target?
                 for id in range(self.buildings)
             ]
         )
@@ -104,13 +109,11 @@ class TD3(object):
         """Master Critic update"""
         for params_1, params_2 in zip(parameters_1, parameters_2):
             # parse data for critic (in-place)
-            print("\n new day update...")
             params_1 = deepcopy(params_1)
             params_2 = deepcopy(params_2)
             self.data_loader.model.convert_to_numpy(params_1)
             self.data_loader.model.convert_to_numpy(params_2)
             # Local Critic Update
-            start = time.time()
             for id in range(self.buildings):
                 # local critic backward pass
                 self.critic_optim.backward(
@@ -126,11 +129,19 @@ class TD3(object):
             for i in range(len(self.critic_target)):
                 self.critic_target[i].target_update(self.critic[i].get_alphas())
 
-            print(f"Total time: {time.time() - start}\n")
-
-    def actor_update(self, parameters_1: list, parameters_2: list):
+    def actor_update(self):
         """Master Actor update"""
-        pass
+        for id in range(self.buildings):
+            # local actor update
+            self.actor.backward(
+                self.total_it % 24,
+                self.critic_target[0].get_alphas(),
+                id,
+                is_local=True,
+            )
+
+            # target actor update
+            self.actor_target.target_update(self.actor.zeta, id)
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
@@ -140,10 +151,16 @@ class TD3(object):
         parameters_2 = self.memory.sample(is_random=False)  # critic 2
 
         # local + target critic update
+        start = time.time()
         self.critic_update(parameters_1, parameters_2)
+        print(f"Critic update time (sec): {time.time() - start}")
 
+        # pre-intialize actor network - will be done for first run only.
+        self.actor_target.pre_initialize_target_params(
+            self.actor.zeta, self.actor.params
+        )
         # local + target actor update
-        self.actor_update(parameters_1, parameters_2)
+        self.actor_update()
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
@@ -157,10 +174,6 @@ class TD3(object):
                 _, self.init_updates = self.data_loader.model.init_values(
                     self.memory.get(-1)
                 )
-                # updated_values, _ = self.data_loader.model.init_values(
-                #     self.memory.get(-1), self.init_updates
-                # )
-                # self.memory.set(-1, updated_values)
             else:
                 raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 

@@ -19,6 +19,7 @@ class Adam:
 
     def update(self, t, w, dw):
         ## dw, db are from current minibatch
+        t = max(t, 1)  # prevent zero division
         ## momentum beta 1
         # *** weights *** #
         self.m_dw = self.beta1 * self.m_dw + (1 - self.beta1) * dw
