@@ -6,6 +6,7 @@ from TD3 import TD3 as Agent
 
 import sys
 import warnings
+import time
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
@@ -67,6 +68,7 @@ action = agents.select_action(state)
 t_idx = 0
 end_time = RBC_THRESHOLD + 24 * 30  # run for a month
 
+start_time = time.time()
 while not done and t_idx <= end_time:
 
     next_state, reward, done, _ = env.step(action)
@@ -82,4 +84,5 @@ while not done and t_idx <= end_time:
 
     print(f"\rTime step: {t_idx}", end="")
 
+print(f"Total time to run {end_time // 24} days: {time.time() - start_time}")
 # env.cost()

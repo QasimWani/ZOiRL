@@ -1,8 +1,5 @@
 from copy import deepcopy
 import numpy as np
-import torch
-
-import time
 
 from utils import ReplayBuffer, RBC
 
@@ -11,7 +8,6 @@ from predictor import *
 from actor import Actor
 from critic import Critic, Optim
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
@@ -151,9 +147,7 @@ class TD3(object):
         parameters_2 = self.memory.sample(is_random=False)  # critic 2
 
         # local + target critic update
-        start = time.time()
         self.critic_update(parameters_1, parameters_2)
-        print(f"Critic update time (sec): {time.time() - start}")
 
         # pre-intialize actor network - will be done for first run only.
         self.actor_target.pre_initialize_target_params(
