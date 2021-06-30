@@ -1,15 +1,15 @@
-from os import name
-from predictor import DataLoader, Oracle, Predictor
+from time import time_ns
 import numpy as np
 import cvxpy as cp
 
 from utils import *
 
 
-class Critic:
+class Critic:  # Centralized for now.
     def __init__(
         self,
         num_buildings: int,
+        num_actions: list,
         lambda_: float = 0.9,
         rho: float = 0.01,
         n_step: int = 2,
@@ -19,6 +19,7 @@ class Critic:
         self.rho = rho  # critic update step size
         self.n = n_step  # td lambda action-value step size
         # Optim specific
+        self.num_actions = num_actions
         self.constraints = []
         self.costs = []
         self.alpha_ramp = [1] * num_buildings
@@ -34,23 +35,49 @@ class Critic:
         - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
         - `building_id`: building index number (0-based).
         """
-        # reset data every call.
         t = np.clip(t, 0, 23)
-        # assert (
-        #     0 <= t < 24
-        # ), "Invalid timestep. Need to be a valid hour of the day [0 - 23]"
         T = 24
         window = T - t
+        # Reset data
         self.constraints = []
         self.costs = []
         self.t = t
+        # -- define action space -- #
+        bounds_high, bounds_low = np.vstack(
+            [self.num_actions[building_id].high, self.num_actions[building_id].low]
+        )
+        if len(bounds_high) == 2:  # bug
+            bounds_high = {
+                "action_C": bounds_high[0],
+                "action_H": None,
+                "action_bat": bounds_high[1],
+            }
+            bounds_low = {
+                "action_C": bounds_low[0],
+                "action_H": None,
+                "action_bat": bounds_low[1],
+            }
+        else:
+            bounds_high = {
+                "action_C": bounds_high[0],
+                "action_H": bounds_high[1],
+                "action_bat": bounds_high[2],
+            }
+            bounds_low = {
+                "action_C": bounds_low[0],
+                "action_H": bounds_low[1],
+                "action_bat": bounds_low[2],
+            }
+
+        # -- define action space -- #
+
+        # define parameters and variables
 
         ### --- Parameters ---
         p_ele = cp.Parameter(
             name="p_ele", shape=(window), value=parameters["p_ele"][t:, building_id]
         )
 
-        # Electricity grid
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
             value=parameters["E_grid"][max(t - 1, 0), building_id]
@@ -62,7 +89,7 @@ class Critic:
             name="E_grid_pkhist",
             value=np.max(parameters["E_grid"][:, building_id])
             if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0,
+            else 0,  # used in day ahead dispatch, default E-grid okay
         )
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
@@ -72,42 +99,28 @@ class Critic:
         )
 
         # Loads
-        E_ns = cp.Parameter(
-            name="E_ns", shape=(window), value=parameters["E_ns"][t:, building_id]
-        )
-        H_bd = cp.Parameter(
-            name="H_bd", shape=(window), value=parameters["H_bd"][t:, building_id]
-        )
-        C_bd = cp.Parameter(
-            name="C_bd", shape=(window), value=parameters["C_bd"][t:, building_id]
-        )
+        E_ns = parameters["E_ns"][t:, building_id]
+        H_bd = parameters["H_bd"][t:, building_id]
+        C_bd = parameters["C_bd"][t:, building_id]
 
         # PV generations
-        E_pv = cp.Parameter(
-            name="E_pv", shape=(window), value=parameters["E_pv"][t:, building_id]
-        )
+        E_pv = parameters["E_pv"][t:, building_id]
 
         # Heat Pump
-        COP_C = cp.Parameter(
-            name="COP_C", shape=(window), value=parameters["COP_C"][t:, building_id]
-        )
-        E_hpC_max = cp.Parameter(
-            name="E_hpC_max", value=parameters["E_hpC_max"][t, building_id]
-        )
+        COP_C = parameters["COP_C"][t:, building_id]
+        E_hpC_max = parameters["E_hpC_max"][t, building_id]
 
         # Electric Heater
         eta_ehH = cp.Parameter(
             name="eta_ehH", value=parameters["eta_ehH"][t, building_id]
         )
-        E_ehH_max = cp.Parameter(
-            name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
-        )
+        E_ehH_max = parameters["E_ehH_max"][t, building_id]
 
         # Battery
-        C_f_bat = cp.Parameter(
-            name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
+        C_f_bat = parameters["C_f_bat"][t, building_id]
+        C_p_bat = cp.Parameter(
+            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
-        C_p_bat = parameters["C_p_bat"][t, building_id]
         eta_bat = cp.Parameter(
             name="eta_bat", value=parameters["eta_bat"][t, building_id]
         )
@@ -119,9 +132,7 @@ class Critic:
         )
 
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = cp.Parameter(
-            name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
-        )  # make constant.
+        C_f_Hsto = parameters["C_f_Hsto"][t, building_id]
         C_p_Hsto = cp.Parameter(
             name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
@@ -133,9 +144,7 @@ class Critic:
         )
 
         # Cooling (Energy->cooling) Storage
-        C_f_Csto = cp.Parameter(
-            name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
-        )
+        C_f_Csto = parameters["C_f_Csto"][t, building_id]
         C_p_Csto = cp.Parameter(
             name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
@@ -146,6 +155,16 @@ class Critic:
             name="soc_Csto_init", value=parameters["c_Csto_init"][building_id]
         )
 
+        ### current actions
+        current_action_bat = cp.Parameter(
+            name="current_action_bat", value=parameters["action_bat"][t, building_id]
+        )  # electric battery
+        current_action_H = cp.Parameter(
+            name="current_action_H", value=parameters["action_H"][t, building_id]
+        )  # heat storage
+        current_action_C = cp.Parameter(
+            name="current_action_C", value=parameters["action_C"][t, building_id]
+        )  # cooling storage
         ### --- Variables ---
 
         # relaxation variables - prevents numerical failures when solving optimization
@@ -169,30 +188,21 @@ class Critic:
 
         SOC_bat = cp.Variable(name="SOC_bat", shape=(window))  # electric battery
         SOC_Brelax = cp.Variable(
-            name="SOH_Brelax", shape=(window)
+            name="SOC_Brelax", shape=(window)
         )  # electrical battery relaxation (prevents numerical infeasibilities)
-
-        action_bat = cp.Variable(name="action_bat", shape=(window))
-        action_H = cp.Variable(name="action_H", shape=(window))
-        action_C = cp.Variable(name="action_C", shape=(window))
-
-        current_action_bat = parameters["action_bat"][
-            t, building_id
-        ]  # electric battery
-        current_action_H = parameters["action_H"][t, building_id]  # heat storage
-        current_action_C = parameters["action_C"][t, building_id]  # cooling storage
+        action_bat = cp.Variable(name="action_bat", shape=(window))  # electric battery
 
         SOC_H = cp.Variable(name="SOC_H", shape=(window))  # heat storage
         SOC_Hrelax = cp.Variable(
-            name="SOH_Crelax", shape=(window)
+            name="SOC_Hrelax", shape=(window)
         )  # heat storage relaxation (prevents numerical infeasibilities)
+        action_H = cp.Variable(name="action_H", shape=(window))  # heat storage
 
         SOC_C = cp.Variable(name="SOC_C", shape=(window))  # cooling storage
         SOC_Crelax = cp.Variable(
             name="SOC_Crelax", shape=(window)
         )  # cooling storage relaxation (prevents numerical infeasibilities)
-
-        ### objective function
+        action_C = cp.Variable(name="action_C", shape=(window))  # cooling storage
 
         ### objective function
         ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
@@ -218,8 +228,8 @@ class Critic:
 
         self.costs.append(
             ramping_cost_coeff.value * ramping_cost
-            + peak_net_electricity_cost
-            + 0 * electricity_cost
+            + 5 * peak_net_electricity_cost
+            + electricity_cost
             + selling_cost
             + E_bal_relax_cost * 1e4
             + H_bal_relax_cost * 1e4
@@ -229,41 +239,13 @@ class Critic:
             + SOC_Hrelax_cost * 1e4
         )
 
-        # reward_func = (
-        #     -alpha_ramp.value * ramping_cost
-        #     - alpha_peak1.value * peak_net_electricity_cost
-        #     - alpha_peak2.value
-        #     * peak_net_electricity_cost  # cp.square(peak_net_electricity_cost) / cp.norm(peak_net_electricity_cost, 2)
-        # )
-
-        ### relaxation costs - L1 norm
-        # balance eq.
-        E_bal_relax_cost = cp.sum(cp.abs(E_bal_relax))
-        H_bal_relax_cost = cp.sum(cp.abs(H_bal_relax))
-        C_bal_relax_cost = cp.sum(cp.abs(C_bal_relax))
-        # soc eq.
-        SOC_Brelax_cost = cp.sum(cp.abs(SOC_Brelax))
-        SOC_Crelax_cost = cp.sum(cp.abs(SOC_Crelax))
-        SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
-
-        self.costs.append(
-            reward_func
-            - E_bal_relax_cost * 1e2
-            - H_bal_relax_cost * 1e2
-            - C_bal_relax_cost * 1e2
-            - SOC_Brelax_cost * 1e2
-            - SOC_Crelax_cost * 1e2
-            - SOC_Hrelax_cost * 1e2
-        )
-
         ### constraints
 
         # action constraints
-        self.constraints.append(action_bat[0] == current_action_bat)
-        self.constraints.append(action_H[0] == current_action_H)
-        self.constraints.append(action_C[0] == current_action_C)
+        # self.constraints.append(action_bat[0] == current_action_bat)
+        # self.constraints.append(action_H[0] == current_action_H)
+        # self.constraints.append(action_C[0] == current_action_C)
 
-        # Net electricity consumption constraints
         self.constraints.append(E_grid >= 0)
         self.constraints.append(E_grid_sell <= 0)
 
@@ -290,12 +272,10 @@ class Critic:
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init
-            + current_action_bat * eta_bat
-            + SOC_Crelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):  # 1 = t + 1
+        for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
@@ -311,9 +291,7 @@ class Critic:
         # Heat Storage constraints
         self.constraints.append(
             SOC_H[0]
-            == (1 - C_f_Hsto) * soc_Hsto_init
-            + current_action_H * eta_Hsto
-            + SOC_Hrelax[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -329,9 +307,7 @@ class Critic:
         # Cooling Storage constraints
         self.constraints.append(
             SOC_C[0]
-            == (1 - C_f_Csto) * soc_Csto_init
-            + current_action_C * eta_Csto
-            + SOC_Crelax[0]
+            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -344,13 +320,36 @@ class Critic:
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
         self.constraints.append(SOC_C <= 1)  # battery SOC bounds
 
+        #### action constraints (limit to action-space)
+        assert (
+            len(bounds_high) == 3
+        ), "Invalid number of bounds for actions - see dict defined in `Optim`"
+
+        for high, low in zip(bounds_high.items(), bounds_low.items()):
+            key, h, l = [*high, low[1]]
+            if not (h and l):
+                continue
+
+            # heating action
+            if key == "action_C":
+                self.constraints.append(action_C[1:] <= h)
+                self.constraints.append(action_C[1:] >= l)
+            # cooling action
+            elif key == "action_H":
+                self.constraints.append(action_H[1:] <= h)
+                self.constraints.append(action_H[1:] >= l)
+            # Battery action
+            elif key == "action_bat":
+                self.constraints.append(action_bat[1:] <= h)
+                self.constraints.append(action_bat[1:] >= l)
+
     def get_problem(self):
         """Returns raw problem. Need to call `create_problem` first. Returns error otherwise"""
         # Form objective.
         assert (
             len(self.costs) == 1
         ), "Objective function not/ill-defined. Need to call `create_problem` before running forward pass"
-        obj = cp.Maximize(*self.costs)
+        obj = cp.Minimize(*self.costs)
         # Form problem.
         prob = cp.Problem(obj, self.constraints)
 
@@ -376,14 +375,32 @@ class Critic:
             t, parameters, building_id
         )  # computes Q-value for n-step in the future
         prob = self.get_problem()  # Form and solve problem
-        Q_reward_warping_output = prob.solve(
-            verbose=debug
-        )  # output of reward warping function
-        if float("-inf") < Q_reward_warping_output < float("inf"):
-            return Q_reward_warping_output  # , prob.variables()["E_grid"]
-        else:
-            print("ERROR", Q_reward_warping_output)
-        return "Unbounded Solution"
+        status = prob.solve(verbose=debug)  # output of reward warping function
+        if float("-inf") < status < float("inf"):
+            return [
+                prob.var_dict["E_grid"].value,
+                prob.param_dict["E_grid_pkhist"].value,
+                prob.param_dict["E_grid_prevhour"].value,
+            ]
+        raise ValueError(f"Unbounded solution with status - {status}")
+
+    def reward_warping_layer(self, optimal_values: list, building_id: int):
+        """Calculates Q-value"""
+        (
+            E_grid,
+            E_grid_pkhist,
+            E_grid_prevhour,
+        ) = optimal_values  # building specific values
+
+        peak_hist_cost = np.max([E_grid.max(), E_grid_pkhist])
+        ramping_cost = np.sum(E_grid - E_grid_prevhour)
+
+        Q_value = (
+            self.alpha_ramp[building_id] * ramping_cost
+            - self.alpha_peak1[building_id] * peak_hist_cost
+            - self.alpha_peak2[building_id] * np.square(peak_hist_cost)
+        )
+        return Q_value
 
     def forward(
         self,
@@ -396,10 +413,10 @@ class Critic:
 
         Gt_tn = 0.0
         rewards = parameters["reward"][:, building_id]
-        for n in range(1, 24 - t):
-            Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + self.solve(
-                t + n, parameters, building_id, debug
-            )
+        for n in range(1, 24 - t - 1):
+            solution = self.solve(n, parameters, building_id, debug)
+            Q_value = self.reward_warping_layer(solution, building_id)
+            Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
         # compute TD(\lambda) rewards
         Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(
@@ -548,10 +565,10 @@ class Optim:
         for var in prob.variables():
             solution[var.name()] = var.value
 
-        critic_local_1.alpha_ramp[building_id] = np.clip(solution["ramp"], 0.1, 2)
-        critic_local_1.alpha_peak1[building_id] = np.clip(solution["peak1"], 0.1, 2)
-        critic_local_1.alpha_peak2[building_id] = np.clip(solution["peak2"], 0.1, 2)
+        critic_local_1.alpha_ramp[building_id] = solution["ramp"]
+        critic_local_1.alpha_peak1[building_id] = solution["peak1"]
+        critic_local_1.alpha_peak2[building_id] = solution["peak2"]
 
-        critic_local_2.alpha_ramp[building_id] = np.clip(solution["ramp"], 0.1, 2)
-        critic_local_2.alpha_peak1[building_id] = np.clip(solution["peak1"], 0.1, 2)
-        critic_local_2.alpha_peak2[building_id] = np.clip(solution["peak2"], 0.1, 2)
+        critic_local_2.alpha_ramp[building_id] = solution["ramp"]
+        critic_local_2.alpha_peak1[building_id] = solution["peak1"]
+        critic_local_2.alpha_peak2[building_id] = solution["peak2"]
