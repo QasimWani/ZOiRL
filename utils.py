@@ -38,7 +38,7 @@ class Adam:
 
 
 META_EPISODE = 7  # number of days in a meta-episode
-MINI_BATCH = 1  # number of days to sample
+MINI_BATCH = 2  # number of days to sample
 
 
 class ReplayBuffer:
