@@ -1,0 +1,25 @@
+# Jun 28
+1. Fix E-grid_collect [X]
+2. Critic update - check for further bugs (working commit) [X]
+--- End Critic ---
+
+3. Target Actor update - load actor problem not critic [X]
+4. Local Actor update - follow similar format as Critic update [x]
+--- End Actor ---
+
+5. Make sure everything runs properly [X]
+--- End TD3 ---
+
+6. Generate plot w.r.t RBC, Optim (last week), and TD3 [] @Vanshaj
+
+
+
+### ISSUES:
+
+1. Clarification on reward warping --> optimization (E_grid is a var) or taking data from Actor.forward? ### Solve it again, correct.
+2. If optimization, objective is maximized? (#L330)
+3. If optimization, peak_net_electricity_cost (#L201) square DCP violation. Using cp.norm(x, 2) still causes issues.
+4. Running update for alphas in critic update per day within buffer.sample()? (see TD3.py)
+5. Critic update ---> primal infeasable debugging. (19th hour of 2nd day of meta-episode) (see debug.ipynb)
+6. Actor update --> reward_warping_loss (sum or mean)?
+7. Actor update --> grad is of dimension 9 (buildings), taking the mean across that
