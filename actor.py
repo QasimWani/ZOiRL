@@ -532,9 +532,9 @@ class Actor:
         peak_net_electricity_cost = torch.max(E_grid.max(), torch.tensor(E_grid_pkhist))
 
         reward_warping_loss = (
-            alpha_ramp[building_id] * ramping_cost
-            + alpha_peak1[building_id] * peak_net_electricity_cost
-            + alpha_peak2[building_id] * torch.square(peak_net_electricity_cost)
+            -alpha_ramp[building_id] * ramping_cost
+            - alpha_peak1[building_id] * peak_net_electricity_cost
+            - alpha_peak2[building_id] * torch.square(peak_net_electricity_cost)
         )
         reward_warping_loss.requires_grad = True
 
