@@ -395,7 +395,7 @@ class Critic:  # Centralized for now.
         ramping_cost = np.sum(E_grid - E_grid_prevhour)
 
         Q_value = (
-            self.alpha_ramp[building_id] * ramping_cost
+            -self.alpha_ramp[building_id] * ramping_cost
             - self.alpha_peak1[building_id] * peak_hist_cost
             - self.alpha_peak2[building_id] * np.square(peak_hist_cost)
         )
