@@ -95,7 +95,7 @@ class Critic:  # Centralized for now.
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
         ramping_cost_coeff = cp.Parameter(
             name="ramping_cost_coeff",
-            value=parameters["ramping_cost_coeff"][t, building_id],
+            value=zeta_target["ramping_cost_coeff"][t, building_id],
         )
 
         # Loads
@@ -112,47 +112,47 @@ class Critic:  # Centralized for now.
 
         # Electric Heater
         eta_ehH = cp.Parameter(
-            name="eta_ehH", value=parameters["eta_ehH"][t, building_id]
+            name="eta_ehH", value=zeta_target["eta_ehH"][t, building_id]
         )
         E_ehH_max = parameters["E_ehH_max"][t, building_id]
 
         # Battery
         C_f_bat = parameters["C_f_bat"][t, building_id]
         C_p_bat = cp.Parameter(
-            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
+            name="C_p_bat", value=zeta_target["C_p_bat"][t, building_id]
         )
         eta_bat = cp.Parameter(
-            name="eta_bat", value=parameters["eta_bat"][t, building_id]
+            name="eta_bat", value=zeta_target["eta_bat"][t, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="soc_bat_init", value=parameters["c_bat_init"][building_id]
+            name="c_bat_init", value=zeta_target["c_bat_init"][building_id]
         )
         soc_bat_norm_end = cp.Parameter(
-            name="soc_bat_norm_end", value=parameters["c_bat_end"][t, building_id]
+            name="c_bat_end", value=zeta_target["c_bat_end"][t, building_id]
         )
 
         # Heat (Energy->dhw) Storage
         C_f_Hsto = parameters["C_f_Hsto"][t, building_id]
         C_p_Hsto = cp.Parameter(
-            name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
+            name="C_p_Hsto", value=zeta_target["C_p_Hsto"][t, building_id]
         )
         eta_Hsto = cp.Parameter(
-            name="eta_Hsto", value=parameters["eta_Hsto"][t, building_id]
+            name="eta_Hsto", value=zeta_target["eta_Hsto"][t, building_id]
         )
         soc_Hsto_init = cp.Parameter(
-            name="soc_Hsto_init", value=parameters["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=zeta_target["c_Hsto_init"][building_id]
         )
 
         # Cooling (Energy->cooling) Storage
         C_f_Csto = parameters["C_f_Csto"][t, building_id]
         C_p_Csto = cp.Parameter(
-            name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
+            name="C_p_Csto", value=zeta_target["C_p_Csto"][t, building_id]
         )
         eta_Csto = cp.Parameter(
-            name="eta_Csto", value=parameters["eta_Csto"][t, building_id]
+            name="eta_Csto", value=zeta_target["eta_Csto"][t, building_id]
         )
         soc_Csto_init = cp.Parameter(
-            name="soc_Csto_init", value=parameters["c_Csto_init"][building_id]
+            name="soc_Csto_init", value=zeta_target["c_Csto_init"][building_id]
         )
 
         ### current actions
@@ -369,13 +369,22 @@ class Critic:  # Centralized for now.
         """Getter target alphas"""
         return np.array([self.alpha_ramp, self.alpha_peak1, self.alpha_peak2])
 
-    def solve(self, t: int, parameters: dict, building_id: int, debug: bool = False):
+    def solve(
+        self,
+        t: int,
+        parameters: dict,
+        zeta_target: dict,
+        building_id: int,
+        debug: bool = False,
+    ):
         """Computes optimal Q-value using RWL as objective function"""
         self.create_problem(
-            t, parameters, building_id
+            t, parameters, zeta_target, building_id
         )  # computes Q-value for n-step in the future
         prob = self.get_problem()  # Form and solve problem
-        status = prob.solve(verbose=debug)  # output of reward warping function
+        status = prob.solve(
+            verbose=debug, max_iters=1000
+        )  # output of reward warping function
         if float("-inf") < status < float("inf"):
             return [
                 prob.var_dict["E_grid"].value,
@@ -406,6 +415,7 @@ class Critic:  # Centralized for now.
         self,
         t: int,
         parameters: dict,
+        zeta_target: dict,
         building_id: int,
         debug=False,
     ):
@@ -414,7 +424,7 @@ class Critic:  # Centralized for now.
         Gt_tn = 0.0
         rewards = parameters["reward"][:, building_id]
         for n in range(1, 24 - t - 1):
-            solution = self.solve(t + n, parameters, building_id, debug)
+            solution = self.solve(t + n, parameters, zeta_target, building_id, debug)
             Q_value = self.reward_warping_layer(solution, building_id)
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
@@ -455,13 +465,14 @@ class Optim:
         t: int,
         parameters_1: dict,
         parameters_2: dict,
+        zeta_target: dict,
         building_id: int,
         debug: bool = False,
     ):
         """Computes min Q"""
         # shared data. difference only in alphas
-        Q1 = critic_target_1.forward(t, parameters_1, building_id, debug)
-        Q2 = critic_target_2.forward(t, parameters_2, building_id, debug)
+        Q1 = critic_target_1.forward(t, parameters_1, zeta_target, building_id, debug)
+        Q2 = critic_target_2.forward(t, parameters_2, zeta_target, building_id, debug)
         return min(Q1, Q2)  # y_r
 
     # LOCAL critic update
@@ -469,6 +480,7 @@ class Optim:
         self,
         parameters_1: dict,  # data collected within actor forward pass - Critic 1 (sequential)
         parameters_2: dict,  # data collected within actor forward pass - Critic 2 (random)
+        zeta_target: dict,
         t: int,
         building_id: int,
         critic_local: list,
@@ -494,7 +506,7 @@ class Optim:
         )
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max(parameters_1["E_grid"][:t, building_id]),
+            value=0 if t == 0 else np.max(parameters_1["E_grid"][:t, building_id]),
         )
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
@@ -509,10 +521,11 @@ class Optim:
                 r,
                 parameters_1,
                 parameters_2,
+                zeta_target,
                 building_id,
                 debug,
             )
-            clipped_values += y_r
+            clipped_values.append(y_r)
 
         y_t = cp.Parameter(
             name="y_r",

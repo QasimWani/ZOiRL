@@ -361,7 +361,7 @@ class Actor:
         )  # problem formulation for Actor optimizaiton
         prob = self.get_problem()  # Form and solve problem
         actions = {}
-        status = prob.solve(verbose=debug)  # Returns the optimal value.
+        status = prob.solve(verbose=debug, max_iters=1000)  # Returns the optimal value.
         if float("-inf") < status < float("inf"):
             pass
         else:
