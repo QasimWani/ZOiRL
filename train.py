@@ -69,12 +69,24 @@ t_idx = 0
 end_time = RBC_THRESHOLD + 24 * 30  # run for a month
 
 start_time = time.time()
+
+costs_peak_net_ele = []
 while not done and t_idx <= end_time:
 
     next_state, reward, done, _ = env.step(action)
     action_next = agents.select_action(
         next_state, env
     )  # passing in environment for Oracle agent.
+
+    # agents.action_RBC()
+    # agents.action_noRL()
+
+    # cost, e_grid, ... = agents.get_data()
+    # cost, e_grid, ... = agents.RBC.get_data()
+    # cost, e_grid, ... = agents.NORL.get_data()
+
+    # agents.RBC.cost_dispatch[t]
+
     agents.add_to_buffer_oracle(env, action, reward)
     # agents.add_to_buffer(state, action, reward, next_state, done)
     state = next_state

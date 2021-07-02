@@ -574,6 +574,8 @@ class Optim:
         # Form and solve problem.
         prob = cp.Problem(obj, self.constraints)
 
+        self.debug_l2 = prob
+
         optim_solution = prob.solve()
 
         assert (

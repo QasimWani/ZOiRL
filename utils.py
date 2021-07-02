@@ -1,6 +1,8 @@
 import numpy as np
+import json
 
 from collections import deque, namedtuple
+from citylearn import CityLearn  # for RBC
 import torch
 
 
@@ -181,3 +183,39 @@ class RBC:
             ]
 
         return np.array(a, dtype="object")
+
+    def get_rbc_data(
+        self,
+        surrogate_env: CityLearn,
+        state: np.ndarray,
+        indx_hour: int,
+        run_timesteps: int,
+    ):
+        """Runs RBC for x number of timesteps"""
+        ## --- RBC generation ---
+        E_grid = []
+        for _ in range(run_timesteps):
+            hour_state = np.array([[state[0][indx_hour]]])
+            action = self.select_action(
+                hour_state
+            )  # using RBC to select next action given current sate
+            next_state, rewards, done, _ = surrogate_env.step(action)
+            state = next_state
+            E_grid.append([x[28] for x in state])
+        return E_grid
+
+
+def get_idx_hour():
+    # Finding which state
+    with open("buildings_state_action_space.json") as file:
+        actions_ = json.load(file)
+
+    indx_hour = -1
+    for obs_name, selected in list(actions_.values())[0]["states"].items():
+        indx_hour += 1
+        if obs_name == "hour":
+            break
+        assert (
+            indx_hour < len(list(actions_.values())[0]["states"].items()) - 1
+        ), "Please, select hour as a state for Building_1 to run the RBC"
+    return indx_hour
