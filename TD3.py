@@ -1,6 +1,8 @@
 from copy import deepcopy
 import numpy as np
 
+import time
+
 from utils import ReplayBuffer, RBC
 
 ## local imports
@@ -34,6 +36,13 @@ class TD3(object):
 
         self.actor = Actor(num_actions, num_buildings)  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
+        self.actor_norl = deepcopy(
+            self.actor
+        )  # NORL actor, i.e. actor whose parameters stay constant.
+
+        ### --- log details ---
+        self.logger = []
+        self.norl_logger = []
 
         self.critic = [
             Critic(num_buildings, num_actions),
@@ -90,12 +99,26 @@ class TD3(object):
 
         self.action_planned_day, cost_dispatch, self.E_grid_planned_day = zip(
             *[
-                self.actor.forward(
-                    self.total_it % 24, data_est, id, dispatch=True
-                )  # change actor -> actor_target?
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
                 for id in range(self.buildings)
             ]
         )
+        self.E_grid_planned_day = np.array(self.E_grid_planned_day)
+
+        ### DEBUG ###
+        # gather data for NORL agent
+        _, norl_cost_dispatch, _ = zip(
+            *[
+                self.actor_norl.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
+
+        self.logger.append(cost_dispatch)  # add all action variables - RL
+        self.norl_logger.append(
+            norl_cost_dispatch
+        )  # add all action variables - Pure Optim
+        ### DEBUG ###
 
         assert (
             len(self.action_planned_day[0][0]) == 24
@@ -115,13 +138,14 @@ class TD3(object):
                 self.critic_optim.backward(
                     params_1,
                     params_2,
+                    self.actor_target.zeta,
                     self.total_it % 24,
                     id,
                     self.critic,
                     self.critic_target,
                 )
 
-            # Target Critic update
+            # Target Critic update - moving average
             for i in range(len(self.critic_target)):
                 self.critic_target[i].target_update(self.critic[i].get_alphas())
 
@@ -131,12 +155,13 @@ class TD3(object):
             # local actor update
             self.actor.backward(
                 self.total_it % 24,
-                self.critic_target[0].get_alphas(),
+                self.critic[0].get_alphas(),
                 id,
+                self.E_grid_planned_day,
                 is_local=True,
             )
 
-            # target actor update
+            # target actor update - moving average
             self.actor_target.target_update(self.actor.zeta, id)
 
     def train(self):
@@ -146,13 +171,13 @@ class TD3(object):
         parameters_1 = self.memory.sample()  # critic 1
         parameters_2 = self.memory.sample(is_random=False)  # critic 2
 
-        # local + target critic update
-        self.critic_update(parameters_1, parameters_2)
-
         # pre-intialize actor network - will be done for first run only.
         self.actor_target.pre_initialize_target_params(
             self.actor.zeta, self.actor.params
         )
+        # local + target critic update
+        self.critic_update(parameters_1, parameters_2)
+
         # local + target actor update
         self.actor_update()
 
@@ -172,17 +197,22 @@ class TD3(object):
                 raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
         # upload E-grid (containarizing E-grid_collect w/ other memory for fast computational efficiency)
-        E_grid = (
-            np.array(self.E_grid_planned_day)[:, self.total_it % 24]
-            if self.E_grid_planned_day
-            else None
-        )
+        # E_grid = (
+        #     np.array(self.E_grid_planned_day)[:, self.total_it % 24]
+        #     if self.E_grid_planned_day
+        #     else None
+        # )
         self.data_loader.upload_data(
-            self.memory, action, reward, E_grid, env, self.total_it
+            self.memory, action, reward, self.E_grid_planned_day, env, self.total_it
         )
 
         self.total_it += 1
 
         # start training after end of first meta-episode
-        if self.total_it % (self.rbc_threshold + self.meta_episode * 24) == 0:
+        if (
+            self.total_it // 24 % self.meta_episode == 0
+            and self.total_it > self.rbc_threshold
+        ):
+            start = time.time()
             self.train()  # begin critic and actor update
+            print(f"Time taken (min): {round((time.time() - start) / 60, 3)}")

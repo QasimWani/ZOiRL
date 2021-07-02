@@ -138,7 +138,7 @@ class Oracle:
     def get_current_data_oracle(
         self,
         env: CityLearn,
-        t: int,
+        t: int,  # t goes from 0 - end of simulation (not 24 hour counter!)
         actions: list = None,
         rewards: list = None,
         E_grid: list = None,
@@ -158,7 +158,8 @@ class Oracle:
         p_ele = [1] * _num_buildings  # FB -- virtual electricity price.
         # can't get future data since action dependent
         E_grid_past = [
-            0 for i in range(1, _num_buildings + 1)
+            0 if E_grid is None else E_grid[i, max(t % 24 - 1, 0)]
+            for i in range(_num_buildings)
         ]  # FB -- replace w/ per building cost
         ramping_cost_coeff = [
             0.1 for i in range(_num_buildings)
@@ -286,7 +287,9 @@ class Oracle:
         observation_data["p_ele"] = p_ele
         observation_data["ramping_cost_coeff"] = ramping_cost_coeff
         observation_data["E_grid_past"] = E_grid_past
-        observation_data["E_grid"] = E_grid  # add E-grid (part of E-grid_collect)
+        observation_data["E_grid"] = (
+            E_grid[:, t % 24] if E_grid is not None else [0] * _num_buildings
+        )  # add E-grid (part of E-grid_collect)
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd

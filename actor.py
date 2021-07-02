@@ -404,7 +404,7 @@ class Actor:
                     actions["action_H"],
                     actions["action_bat"],
                 ],
-                dispatch_cost if dispatch else None,
+                actions if dispatch else None,  # debug
                 actions["E_grid"],  # + actions["E_grid_sell"]
             )
         return (
@@ -413,7 +413,7 @@ class Actor:
                 actions["action_H"],
                 actions["action_bat"],
             ],
-            dispatch_cost if dispatch else None,
+            actions if dispatch else None,  # debug
             actions["E_grid"],  # + actions["E_grid_sell"]
         )
 
@@ -481,6 +481,7 @@ class Actor:
         t: int,
         alphas: list,
         building_id: int,
+        E_grid: list,
         is_local: bool,
     ):
         """
@@ -516,9 +517,8 @@ class Actor:
             variables=list(variables_actor.values()),
         )
         # fetch params in loss calculation
-
-        E_grid_prevhour = self.params["E_grid_past"][t, building_id]
-        E_grid_pkhist = self.params["E_grid_pkhist"][t, building_id]
+        E_grid_prevhour = E_grid[building_id, -1]
+        E_grid_pkhist = E_grid[building_id].max()
 
         # typecast each param to tensor for autograd later
         zeta_tensor = convert_to_torch_tensor(zeta)
