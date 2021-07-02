@@ -86,17 +86,17 @@ class Actor:
             name="p_ele", shape=(window), value=self.zeta["p_ele"][t:, building_id]
         )
 
-        E_grid_prevhour = cp.Parameter(
-            name="E_grid_prevhour",
-            value=self.zeta["E_grid"][max(t - 1, 0), building_id]
-            if "E_gird" in self.zeta and len(self.zeta["E_grid"].shape) == 2
+        E_grid_prevhour = (
+            self.params["E_grid_past"][t, building_id]
+            if "E_gird" in self.params
+            and len(self.params["E_grid"].shape)
+            == 2  # E-grid exists means E_grid_past valid
             else 0,  # used in day ahead dispatch, default E-grid okay
         )
 
-        E_grid_pkhist = cp.Parameter(
-            name="E_grid_pkhist",
-            value=np.max(self.zeta["E_grid"][:, building_id])
-            if "E_grid" in self.zeta and len(self.zeta["E_grid"].shape) == 2
+        E_grid_pkhist = (
+            np.max(self.params["E_grid"][:t, building_id])
+            if "E_grid" in self.params and len(self.params["E_grid"].shape) == 2
             else 0,  # used in day ahead dispatch, default E-grid okay
         )
 
@@ -516,8 +516,9 @@ class Actor:
             variables=list(variables_actor.values()),
         )
         # fetch params in loss calculation
-        E_grid_prevhour = zeta["E_grid_prevhour"].value
-        E_grid_pkhist = zeta["E_grid_pkhist"].value
+
+        E_grid_prevhour = self.params["E_grid_past"][t, building_id]
+        E_grid_pkhist = self.params["E_grid_pkhist"][t, building_id]
 
         # typecast each param to tensor for autograd later
         zeta_tensor = convert_to_torch_tensor(zeta)

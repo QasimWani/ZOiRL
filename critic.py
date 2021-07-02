@@ -11,12 +11,10 @@ class Critic:  # Centralized for now.
         num_actions: list,
         lambda_: float = 0.9,
         rho: float = 0.01,
-        n_step: int = 2,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
         self.rho = rho  # critic update step size
-        self.n = n_step  # td lambda action-value step size
         # Optim specific
         self.num_actions = num_actions
         self.constraints = []
@@ -25,13 +23,16 @@ class Critic:  # Centralized for now.
         self.alpha_peak1 = [1] * num_buildings
         self.alpha_peak2 = [1] * num_buildings
 
-    def create_problem(self, t: int, parameters: dict, building_id: int):
+    def create_problem(
+        self, t: int, parameters: dict, zeta_target: dict, building_id: int
+    ):
         """
         Solves reward warping layer per building as specified by `building_id`. Note: 0 based.
         -> Internal function. Used by `forward()` for solution to Reward Wrapping Layer (RWL).
         @Param:
         - `t` : hour to solve convex optimization for.
-        - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
+        - `parameters` : data (dict) from r <= t <= T following `Oracle.get_current_data_oracle` format.
+        - `zeta_target` : set of differentiable parameters from actor target.
         - `building_id`: building index number (0-based).
         """
         t = np.clip(t, 0, 23)
@@ -74,12 +75,12 @@ class Critic:  # Centralized for now.
 
         ### --- Parameters ---
         p_ele = cp.Parameter(
-            name="p_ele", shape=(window), value=parameters["p_ele"][t:, building_id]
+            name="p_ele", shape=(window), value=zeta_target["p_ele"][t:, building_id]
         )
 
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
-            value=parameters["E_grid"][max(t - 1, 0), building_id]
+            value=parameters["E_grid_past"][t, building_id]
             if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
             else 0,  # used in day ahead dispatch, default E-grid okay
         )
@@ -413,14 +414,14 @@ class Critic:  # Centralized for now.
         Gt_tn = 0.0
         rewards = parameters["reward"][:, building_id]
         for n in range(1, 24 - t - 1):
-            solution = self.solve(n, parameters, building_id, debug)
+            solution = self.solve(t + n, parameters, building_id, debug)
             Q_value = self.reward_warping_layer(solution, building_id)
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
         # compute TD(\lambda) rewards
-        Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(
-            rewards[t + 1 :]
-        ) * self.lambda_ ** (24 - t)
+        Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(rewards[t:]) * self.lambda_ ** (
+            24 - t - 1
+        )
 
         return Gt_lambda
 
@@ -493,24 +494,30 @@ class Optim:
         )
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max(parameters_1["E_grid"][:, building_id]),
+            value=np.max(parameters_1["E_grid"][:t, building_id]),
         )
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
-            value=parameters_1["E_grid"][max(t - 1, 0), building_id],
+            value=parameters_1["E_grid_past"][t, building_id],
         )
 
-        y_r = cp.Parameter(
-            name="y_r",
-            value=self.obtain_target_Q(
+        clipped_values = []
+        for r in range(t, 24):
+            y_r = self.obtain_target_Q(
                 critic_target_1,
                 critic_target_2,
-                t,
+                r,
                 parameters_1,
                 parameters_2,
                 building_id,
                 debug,
-            ),
+            )
+            clipped_values += y_r
+
+        y_t = cp.Parameter(
+            name="y_r",
+            shape=(24 - t),
+            value=clipped_values,
         )
 
         #### cost
@@ -529,7 +536,7 @@ class Optim:
                     alpha_ramp * ramping_cost
                     + alpha_peak1 * peak_net_electricity_cost
                     + alpha_peak2 * cp.square(peak_net_electricity_cost)
-                    - y_r
+                    - y_t
                 )
             )
         ]
