@@ -115,9 +115,7 @@ class TD3(object):
         )
 
         self.logger.append(cost_dispatch)  # add all variables - RL
-        self.norl_logger.append(
-            norl_cost_dispatch
-        )  # add all action variables - Pure Optim
+        self.norl_logger.append(norl_cost_dispatch)  # add all variables - Pure Optim
         ### DEBUG ###
 
         assert (
@@ -210,9 +208,9 @@ class TD3(object):
 
         # start training after end of first meta-episode
         if (
-            self.total_it // 24 % self.meta_episode == 0
+            self.total_it % (self.meta_episode * 24) == 0
             and self.total_it > self.rbc_threshold
         ):
             start = time.time()
             self.train()  # begin critic and actor update
-            print(f"Time taken (min): {round((time.time() - start) / 60, 3)}")
+            print(f"\nTime taken (min): {round((time.time() - start) / 60, 3)}")
