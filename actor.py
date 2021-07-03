@@ -96,9 +96,11 @@ class Actor:
 
         E_grid_pkhist = (
             np.max(self.params["E_grid"][:t, building_id])
-            if "E_grid" in self.params and len(self.params["E_grid"].shape) == 2
-            else 0,  # used in day ahead dispatch, default E-grid okay
-        )
+            if t > 0
+            and "E_grid" in self.params
+            and len(self.params["E_grid"].shape) == 2
+            else 0,
+        )  # used in day ahead dispatch, default E-grid okay
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
         ramping_cost_coeff = cp.Parameter(
@@ -518,7 +520,7 @@ class Actor:
         )
         # fetch params in loss calculation
         E_grid_prevhour = E_grid[building_id, -1]
-        E_grid_pkhist = E_grid[building_id].max()
+        E_grid_pkhist = E_grid[building_id][:t].max() if t > 0 else 0
 
         # typecast each param to tensor for autograd later
         zeta_tensor = convert_to_torch_tensor(zeta)
