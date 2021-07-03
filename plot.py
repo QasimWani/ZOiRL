@@ -125,3 +125,25 @@ E_grid_true = np.array(E_grid_true)
 E_grid_RBC = np.array(E_grid_RBC)
 
 ############## TODO: ENTER CODE HERE ##############
+
+
+# vars_A, vars_B, ..., vars_Z = [], [], ..., [] # RL
+# vars_A, vars_B, ..., vars_Z = [], [], ..., [] # NORL
+# # keys = list(...) # list of all keys from actor.py#166 (see ref.)
+# for i in range(len(vars_RL)): #number of days of RL/NORL
+#     vars_A.append(vars_RL[i]["key name"])
+#     vars_B.append(vars_RL[i]["key name"])
+#     ...
+#     vars_Z.append(vars_RL[i]["key name"])
+
+# ### flatten out to get hour per building
+
+# vars_A = np.array(vars_A).flatten().reshape(len(vars_RL) * 24, 9) # hours x num_buildings
+# vars_B = np.array(vars_B).flatten().reshape(len(vars_RL) * 24, 9) # hours x num_buildings
+# ...
+# vars_Z = np.array(vars_Z).flatten().reshape(len(vars_RL) * 24, 9) # hours x num_buildings
+
+### plot
+# plt.plot(vars_A_RL[:, 0])
+# plt.plot(vars_A_NORL[:, 0])
+# plt.plot(vars_A_RBC[:, 0])
