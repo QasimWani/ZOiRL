@@ -78,15 +78,6 @@ while not done and t_idx <= end_time:
         next_state, env
     )  # passing in environment for Oracle agent.
 
-    # agents.action_RBC()
-    # agents.action_noRL()
-
-    # cost, e_grid, ... = agents.get_data()
-    # cost, e_grid, ... = agents.RBC.get_data()
-    # cost, e_grid, ... = agents.NORL.get_data()
-
-    # agents.RBC.cost_dispatch[t]
-
     agents.add_to_buffer_oracle(env, action, reward)
     # agents.add_to_buffer(state, action, reward, next_state, done)
     state = next_state
