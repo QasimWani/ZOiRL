@@ -114,7 +114,7 @@ class TD3(object):
             ]
         )
 
-        self.logger.append(cost_dispatch)  # add all action variables - RL
+        self.logger.append(cost_dispatch)  # add all variables - RL
         self.norl_logger.append(
             norl_cost_dispatch
         )  # add all action variables - Pure Optim
