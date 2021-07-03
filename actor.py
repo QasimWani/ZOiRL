@@ -520,7 +520,7 @@ class Actor:
         )
         # fetch params in loss calculation
         E_grid_prevhour = E_grid[building_id, -1]
-        E_grid_pkhist = E_grid[building_id][:t].max() if t > 0 else 0
+        E_grid_pkhist = E_grid[building_id][:t].max() if t > 0 else 0.0
 
         # typecast each param to tensor for autograd later
         zeta_tensor = convert_to_torch_tensor(zeta)
@@ -532,7 +532,11 @@ class Actor:
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
             torch.abs(E_grid[1:] - E_grid[:-1])
         )  # E_grid_t+1 - E_grid_t
-        peak_net_electricity_cost = torch.max(E_grid.max(), torch.tensor(E_grid_pkhist))
+
+        peak_net_electricity_cost = torch.max(
+            torch.tensor(E_grid.max()),
+            torch.tensor(E_grid_pkhist),
+        )
 
         reward_warping_loss = (
             -alpha_ramp[building_id] * ramping_cost
