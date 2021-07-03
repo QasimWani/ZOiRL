@@ -20,7 +20,7 @@ class DataLoader:
         if is_oracle:
             self.model = Oracle(env, action_space)
         else:
-            self.model = Predictor()
+            self.model = Predictor(...)
 
         self.data = {} if is_oracle else None
 
@@ -37,7 +37,7 @@ class DataLoader:
         self.model.upload_data(replay_buffer, action, reward, E_grid, env, t_idx)
 
     def load_data(self):
-        """Sample from Memory"""
+        """Sample from Memory. NOTE: Optional"""
         self.model.load_data()
 
 
