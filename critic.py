@@ -87,10 +87,10 @@ class Critic:  # Centralized for now.
 
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max(parameters["E_grid"][:, building_id])
-            if "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0,  # used in day ahead dispatch, default E-grid okay
-        )
+            value=np.max(parameters["E_grid"][:t, building_id])
+            if t > 0 and "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
+            else 0,
+        )  # used in day ahead dispatch, default E-grid okay
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
         ramping_cost_coeff = cp.Parameter(
@@ -542,10 +542,10 @@ class Optim:
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
 
-        # https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
+        # L1 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
         self.cost = [
             cp.sum(
-                cp.square(
+                cp.abs(
                     alpha_ramp * ramping_cost
                     + alpha_peak1 * peak_net_electricity_cost
                     + alpha_peak2 * cp.square(peak_net_electricity_cost)
