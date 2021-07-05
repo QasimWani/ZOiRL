@@ -756,7 +756,6 @@ class Optim:
         batch_parameters_1: list,  # data collected within actor forward pass - Critic 1 (sequential)
         batch_parameters_2: list,  # data collected within actor forward pass - Critic 2 (random)
         zeta_target: dict,
-        t: int,
         building_id: int,
         critic_local: list,
         critic_target: list,

@@ -99,7 +99,7 @@ class Oracle:
 
         ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
         data = self.parse_data(
-            replay_buffer.get_recent(),  # [day1, day, day{cooling: array(24, 9)}}]
+            replay_buffer.get_recent(),
             self.get_current_data_oracle(env, t_idx, actions, rewards, E_grid),
         )
         replay_buffer.add(data)
@@ -353,10 +353,15 @@ class Oracle:
         return observation_data
 
     def estimate_data(
-        self, surrogate_env: CityLearn, data: dict, t_start: int, init_updates: dict
+        self,
+        surrogate_env: CityLearn,
+        data: dict,
+        t_start: int,
+        init_updates: dict,
+        t_end: int = 24,
     ):
         """Returns data for hours `t_start` - 24 using `surrogate_env` running RBC `agent`"""
-        for i in range(0, 24):
+        for i in range(t_start % 24, t_end):
             data = self.parse_data(
                 data, self.get_current_data_oracle(surrogate_env, t_start + i)
             )
