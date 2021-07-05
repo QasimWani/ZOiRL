@@ -696,7 +696,7 @@ def estimate_data(
         data = parse_data(data, get_current_data_oracle(surrogate_env, t_start + i))
 
     return (
-        init_values(data, init_updates)[0] if t_start == 0 else data
+        init_values(data, init_updates)[0] if t_start % 24 == 0 else data
     )  # only load previous values at start of day
 
 
