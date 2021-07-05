@@ -495,7 +495,7 @@ class Actor:
         Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
         Step 3. Take backward pass of (2) with parameters \zeta.
         """
-        self.create_problem(
+        self.create_problem(  # mu(s, zeta)
             t, self.params, building_id
         )  # problem formulation for Actor optimizaiton
 
