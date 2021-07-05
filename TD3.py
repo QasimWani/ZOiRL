@@ -71,13 +71,16 @@ class TD3(object):
         """Returns epsilon-greedy action from RBC/Optimization"""
 
         if self.total_it >= self.rbc_threshold:  # run Actor
+            # pre-intialize actor network - will be done for first run only.
+            self.actor_target.pre_initialize_target_params(
+                self.actor.zeta, self.actor.params
+            )
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
                 if self.total_it % 24 == 0:
-                    data = deepcopy(
-                        self.memory.get_recent()
-                    )  # should return an empty dictionary
+                    # should return an empty dictionary
+                    data = deepcopy(self.memory.get_recent())
+
                     self.day_ahead_dispatch(env, data)
-                    # upload actions to E-grid_collect
 
                 actions = [
                     np.array(self.action_planned_day[idx])[:, self.total_it % 24]
@@ -97,9 +100,19 @@ class TD3(object):
         )
         self.data_loader.model.convert_to_numpy(data_est)
 
-        self.action_planned_day, cost_dispatch, self.E_grid_planned_day = zip(
+        self.action_planned_day, cost_dispatch, _ = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
+
+        # compute E-grid
+        _, _, self.E_grid_planned_day = zip(
+            *[
+                self.actor_target.forward(
+                    self.total_it % 24, data_est, id, dispatch=True
+                )
                 for id in range(self.buildings)
             ]
         )
@@ -124,28 +137,35 @@ class TD3(object):
 
     def critic_update(self, parameters_1: list, parameters_2: list):
         """Master Critic update"""
+        # pre-process each days information into numpy array and pass them to critic update
+        day_params_1, day_params_2 = [], []
         for params_1, params_2 in zip(parameters_1, parameters_2):
-            # parse data for critic (in-place)
+            # deepcopy to prevent overriding issues
             params_1 = deepcopy(params_1)
             params_2 = deepcopy(params_2)
+            # parse data for critic (in-place)
             self.data_loader.model.convert_to_numpy(params_1)
             self.data_loader.model.convert_to_numpy(params_2)
-            # Local Critic Update
-            for id in range(self.buildings):
-                # local critic backward pass
-                self.critic_optim.backward(
-                    params_1,
-                    params_2,
-                    self.actor_target.zeta,
-                    self.total_it % 24,
-                    id,
-                    self.critic,
-                    self.critic_target,
-                )
+            # add processed day info
+            day_params_1.append(params_1)
+            day_params_2.append(params_2)
 
-            # Target Critic update - moving average
-            for i in range(len(self.critic_target)):
-                self.critic_target[i].target_update(self.critic[i].get_alphas())
+        # Local Critic Update
+        for id in range(self.buildings):
+            # local critic backward pass
+            self.critic_optim.backward(
+                day_params_1,
+                day_params_2,
+                self.actor_target.zeta,
+                self.total_it % 24,
+                id,
+                self.critic,
+                self.critic_target,
+            )
+
+        # Target Critic update - moving average
+        for i in range(len(self.critic_target)):
+            self.critic_target[i].target_update(self.critic[i].get_alphas())
 
     def actor_update(self):
         """Master Actor update"""
@@ -169,10 +189,6 @@ class TD3(object):
         parameters_1 = self.memory.sample()  # critic 1
         parameters_2 = self.memory.sample(is_random=False)  # critic 2
 
-        # pre-intialize actor network - will be done for first run only.
-        self.actor_target.pre_initialize_target_params(
-            self.actor.zeta, self.actor.params
-        )
         # local + target critic update
         self.critic_update(parameters_1, parameters_2)
 
