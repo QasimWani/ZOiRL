@@ -31,7 +31,7 @@ class DataLoader:
         reward: list,
         E_grid: list,
         env: CityLearn = None,
-        t_idx: int = -1,
+        t_idx: int = -1,  # timestep (hour) of the simulation [0 - (4years-1)]
     ):
         """Upload to memory"""
         self.model.upload_data(replay_buffer, action, reward, E_grid, env, t_idx)
@@ -54,6 +54,26 @@ class Predictor:
         raise NotImplementedError("Functionality not implemented")
 
     # TODO: implement other methods here. Make sure `DataLoader.upload_data()` and `DataLoader.load_data()` are processed correctly
+    def parse_data(self, data: dict, current_data: dict) -> list:
+        """Parses `current_data` for optimization and loads into `data`"""
+        assert (
+            len(current_data) == 30  # includes actions + rewards + E_grid_collect
+        ), "Invalid number of parameters. Can't run basic (root) agent optimization"
+
+        for key, value in current_data.items():
+            if key not in data:
+                data[key] = []  # [] x, 9 1, 9 -> x + 1, 9
+            data[key].append(value)
+
+        return data
+
+    def convert_to_numpy(self, params: dict):
+        """Converts dic[key] to nd.array"""
+        for key in params:
+            if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
+                params[key] = np.array(params[key][0])
+            else:
+                params[key] = np.array(params[key])
 
 
 class Oracle:
@@ -79,7 +99,7 @@ class Oracle:
 
         ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
         data = self.parse_data(
-            replay_buffer.get_recent(),
+            replay_buffer.get_recent(),  # [day1, day, day{cooling: array(24, 9)}}]
             self.get_current_data_oracle(env, t_idx, actions, rewards, E_grid),
         )
         replay_buffer.add(data)
@@ -108,6 +128,14 @@ class Oracle:
 
         return data
 
+    def convert_to_numpy(self, params: dict):
+        """Converts dic[key] to nd.array"""
+        for key in params:
+            if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
+                params[key] = np.array(params[key][0])
+            else:
+                params[key] = np.array(params[key])
+
     def get_dimensions(self, data: dict):
         """Prints shape of each param"""
         for key in data.keys():
@@ -120,14 +148,6 @@ class Oracle:
         for key in data.keys():
             building_data[key] = np.array(data[key])[:, building_id - 1]
         return building_data
-
-    def convert_to_numpy(self, params: dict):
-        """Converts dic[key] to nd.array"""
-        for key in params:
-            if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
-                params[key] = np.array(params[key][0])
-            else:
-                params[key] = np.array(params[key])
 
     def create_random_data(self, data: dict):
         """Synthetic data (Gaussian) generation"""
@@ -342,7 +362,7 @@ class Oracle:
             )
 
         return (
-            self.init_values(data, init_updates)[0] if t_start == 0 else data
+            self.init_values(data, init_updates)[0] if t_start % 24 == 0 else data
         )  # only load previous values at start of day
 
     def init_values(self, data: dict, update_values: dict = None):
