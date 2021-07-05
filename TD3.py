@@ -59,14 +59,14 @@ class TD3(object):
 
         # day-ahead dispatch actions
         self.action_planned_day = None
-        self.E_grid_planned_day = None
+        self.E_grid_planned_day = np.zeros(shape=(num_buildings, 24))
         self.init_updates = None
 
     def select_action(
         self,
         state,
         env: CityLearn = None,
-        day_ahead: bool = True,
+        day_ahead: bool = False,
     ):
         """Returns epsilon-greedy action from RBC/Optimization"""
 
@@ -75,10 +75,10 @@ class TD3(object):
             self.actor_target.pre_initialize_target_params(
                 self.actor.zeta, self.actor.params
             )
+            # should return an empty dictionary if sod, else return up to current hour data
+            data = deepcopy(self.memory.get_recent())
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
                 if self.total_it % 24 == 0:
-                    # should return an empty dictionary
-                    data = deepcopy(self.memory.get_recent())
 
                     self.day_ahead_dispatch(env, data)
 
@@ -87,11 +87,49 @@ class TD3(object):
                     for idx in range(len(self.num_actions))
                 ]
             else:  # adaptive dispatch
-                actions = None  # will throw an error!
+                actions = self.adaptive_dispatch(env, data)
         else:  # run RBC
             actions = self.agent_rbc.select_action(state)
 
         return actions
+
+    def adaptive_dispatch(self, env: CityLearn, data: dict):
+        """Computes next action"""
+        data_est = self.data_loader.model.estimate_data(
+            env, data, self.total_it, self.init_updates
+        )
+        self.data_loader.model.convert_to_numpy(data_est)
+        action, cost, _ = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
+                for id in range(self.buildings)
+            ]
+        )
+        _, _, E_grid = zip(
+            *[
+                self.actor_target.forward(
+                    self.total_it % 24, data_est, id, dispatch=False
+                )
+                for id in range(self.buildings)
+            ]
+        )
+        self.E_grid_planned_day[:, self.total_it % 24] = E_grid  # adaptive update
+
+        ### DEBUG ###
+        # gather data for NORL agent
+        _, norl_cost, _ = zip(
+            *[
+                self.actor_norl.forward(
+                    self.total_it % 24, data_est, id, dispatch=False
+                )
+                for id in range(self.buildings)
+            ]
+        )
+        self.logger.append(cost)  # add all variables - RL
+        self.norl_logger.append(norl_cost)  # add all variables - Pure Optim
+        ### DEBUG ###
+
+        return action
 
     def day_ahead_dispatch(self, env: CityLearn, data: dict):
         """Computes action for the current day (24hrs) in advance"""
@@ -157,7 +195,6 @@ class TD3(object):
                 day_params_1,
                 day_params_2,
                 self.actor_target.zeta,
-                self.total_it % 24,
                 id,
                 self.critic,
                 self.critic_target,
@@ -211,11 +248,6 @@ class TD3(object):
                 raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
         # upload E-grid (containarizing E-grid_collect w/ other memory for fast computational efficiency)
-        # E_grid = (
-        #     np.array(self.E_grid_planned_day)[:, self.total_it % 24]
-        #     if self.E_grid_planned_day
-        #     else None
-        # )
         self.data_loader.upload_data(
             self.memory, action, reward, self.E_grid_planned_day, env, self.total_it
         )

@@ -363,7 +363,17 @@ class Actor:
         )  # problem formulation for Actor optimizaiton
         prob = self.get_problem()  # Form and solve problem
         actions = {}
-        status = prob.solve(verbose=debug, max_iters=1000)  # Returns the optimal value.
+        try:
+            status = prob.solve(
+                verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+        except:
+            # try another solver
+            print(f"\nSolving using SCS at t = {t} for building {building_id}")
+            status = prob.solve(
+                solver="SCS", verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+
         if float("-inf") < status < float("inf"):
             pass
         else:
@@ -371,16 +381,12 @@ class Actor:
 
         for var in prob.variables():
             if dispatch:
-                actions[var.name()] = np.array(
-                    var.value
-                )  # no need to clip... automatically restricts range
+                actions[var.name()] = np.array(var.value)
             else:
-                actions[var.name()] = var.value[
-                    0
-                ]  # no need to clip... automatically restricts range
+                actions[var.name()] = np.array(var.value)[0]
 
         # prune out zeta - set zeta values for later use in backward pass.
-        self.prune_update_zeta(prob.param_dict, building_id)
+        self.prune_update_zeta(t, prob.param_dict, building_id)
 
         ## compute dispatch cost
         if dispatch:
@@ -406,7 +412,7 @@ class Actor:
                     actions["action_H"],
                     actions["action_bat"],
                 ],
-                actions if dispatch else None,  # debug
+                actions,  # debug
                 actions["E_grid"],  # + actions["E_grid_sell"]
             )
         return (
@@ -415,7 +421,7 @@ class Actor:
                 actions["action_H"],
                 actions["action_bat"],
             ],
-            actions if dispatch else None,  # debug
+            actions,  # debug
             actions["E_grid"],  # + actions["E_grid_sell"]
         )
 
@@ -433,12 +439,12 @@ class Actor:
         if params:
             self.params = params
 
-    def prune_update_zeta(self, params: dict, building_id: int):
+    def prune_update_zeta(self, t_start: int, params: dict, building_id: int):
         """Deep Update Zeta"""
         for key, value in params.items():
             if key in self.zeta:
                 if len(self.zeta[key].shape) == 2:  # 2d array
-                    self.zeta[key][:, building_id] = value.value
+                    self.zeta[key][t_start:, building_id] = value.value
                 else:
                     self.zeta[key][building_id] = value.value
             else:
@@ -554,6 +560,6 @@ class Actor:
                 param_update = self.optim.update(t, zeta_tensor[i].numpy(), grad)
                 zeta[param].value = param_update
 
-            self.prune_update_zeta(zeta, building_id)  # update zeta
+            self.prune_update_zeta(t, zeta, building_id)  # update zeta
 
         return zeta
