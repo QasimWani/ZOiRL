@@ -653,8 +653,9 @@ class Optim:
         for day_params in parameters:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
-            data["E_grid_pkhist"].append(0)  # pkhist at 0th hour is 0.
-            data["E_grid_prevhour"].append(day_params["E_grid_past"][0, building_id])
+            data["E_grid_prevhour"].append(
+                day_params["E_grid_past"][0, building_id]
+            )  # hour 1 of current day.
 
             for r in range(24):
                 y_r = self.obtain_target_Q(
@@ -666,6 +667,9 @@ class Optim:
                     building_id,
                     debug,
                 )
+                data["E_grid_pkhist"].append(
+                    0.0 if r == 0 else np.max(day_params["E_grid"][:r, building_id])
+                )  # pkhist at 0th hour is 0.
                 clipped_values.append(y_r)
 
         # convert to ndarray
@@ -673,13 +677,18 @@ class Optim:
             len(parameters), 24
         )  # number of days, 24 hours
         data["E_grid"] = np.array(data["E_grid"]).reshape(clipped_values.shape)
+        data["E_grid_pkhist"] = np.array(data["E_grid_pkhist"]).reshape(
+            clipped_values.shape
+        )
 
         ### parameters
         E_grid = cp.Parameter(
             name="E_grid", shape=(clipped_values.shape), value=data["E_grid"]
         )
         E_grid_pkhist = cp.Parameter(
-            name="E_grid_pkhist", shape=len(parameters), value=data["E_grid_pkhist"]
+            name="E_grid_pkhist",
+            shape=(clipped_values.shape),
+            value=data["E_grid_pkhist"],
         )
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
@@ -701,7 +710,7 @@ class Optim:
             )  # E_grid_t+1 - E_grid_t
 
             peak_net_electricity_cost = cp.max(
-                cp.atoms.affine.hstack.hstack([*E_grid[i], E_grid_pkhist[i]])
+                cp.atoms.affine.hstack.hstack([*E_grid[i], *E_grid_pkhist[i]])
             )  # max(E_grid, E_gridpkhist)
 
             # L1 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
