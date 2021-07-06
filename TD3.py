@@ -72,9 +72,7 @@ class TD3(object):
 
         if self.total_it >= self.rbc_threshold:  # run Actor
             # pre-intialize actor network - will be done for first run only.
-            self.actor_target.pre_initialize_target_params(
-                self.actor.zeta, self.actor.params
-            )
+            self.actor_target.pre_initialize_target_params(self.actor.params)
             # should return an empty dictionary if sod, else return up to current hour data
             data = deepcopy(self.memory.get_recent())
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
@@ -96,37 +94,39 @@ class TD3(object):
     def adaptive_dispatch(self, env: CityLearn, data: dict):
         """Computes next action"""
         data_est = self.data_loader.model.estimate_data(
-            env, data, self.total_it, self.init_updates
+            env, data, self.total_it, self.init_updates, self.memory
         )
         self.data_loader.model.convert_to_numpy(data_est)
+
         action, cost, _ = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
                 for id in range(self.buildings)
             ]
         )
-        _, _, E_grid = zip(
-            *[
-                self.actor_target.forward(
-                    self.total_it % 24, data_est, id, dispatch=False
-                )
-                for id in range(self.buildings)
-            ]
-        )
-        self.E_grid_planned_day[:, self.total_it % 24] = E_grid  # adaptive update
+
+        # _, _, E_grid = zip(
+        #     *[
+        #         self.actor_target.forward(
+        #             self.total_it % 24, data_est, id, dispatch=False
+        #         )
+        #         for id in range(self.buildings)
+        #     ]
+        # )
+        # self.E_grid_planned_day[:, self.total_it % 24] = E_grid  # adaptive update
 
         ### DEBUG ###
         # gather data for NORL agent
-        _, norl_cost, _ = zip(
-            *[
-                self.actor_norl.forward(
-                    self.total_it % 24, data_est, id, dispatch=False
-                )
-                for id in range(self.buildings)
-            ]
-        )
-        self.logger.append(cost)  # add all variables - RL
-        self.norl_logger.append(norl_cost)  # add all variables - Pure Optim
+        # _, norl_cost, _ = zip(
+        #     *[
+        #         self.actor_norl.forward(
+        #             self.total_it % 24, data_est, id, dispatch=False
+        #         )
+        #         for id in range(self.buildings)
+        #     ]
+        # )
+        # self.logger.append(cost)  # add all variables - RL
+        # self.norl_logger.append(norl_cost)  # add all variables - Pure Optim
         ### DEBUG ###
 
         return action
@@ -134,7 +134,7 @@ class TD3(object):
     def day_ahead_dispatch(self, env: CityLearn, data: dict):
         """Computes action for the current day (24hrs) in advance"""
         data_est = self.data_loader.model.estimate_data(
-            env, data, self.total_it, self.init_updates
+            env, data, self.total_it, self.init_updates, self.memory
         )
         self.data_loader.model.convert_to_numpy(data_est)
 
@@ -194,7 +194,7 @@ class TD3(object):
             self.critic_optim.backward(
                 day_params_1,
                 day_params_2,
-                self.actor_target.zeta,
+                self.actor_target.params,
                 id,
                 self.critic,
                 self.critic_target,
@@ -212,12 +212,12 @@ class TD3(object):
                 self.total_it % 24,
                 self.critic[0].get_alphas(),
                 id,
-                self.E_grid_planned_day,
+                self.memory.get(-1)["E_grid"],
                 is_local=True,
             )
 
             # target actor update - moving average
-            self.actor_target.target_update(self.actor.zeta, id)
+            self.actor_target.target_update(self.actor.params, id)
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
@@ -236,7 +236,9 @@ class TD3(object):
         """Add to replay buffer"""
         raise NotImplementedError
 
-    def add_to_buffer_oracle(self, env: CityLearn, action: list, reward: list):
+    def add_to_buffer_oracle(
+        self, state: np.ndarray, env: CityLearn, action: list, reward: list
+    ):
         """Add to replay buffer"""
         # processing SOC's into suitable format
         if self.total_it % 24 == 0 and self.total_it > 0:  # reset values every day
@@ -249,7 +251,12 @@ class TD3(object):
 
         # upload E-grid (containarizing E-grid_collect w/ other memory for fast computational efficiency)
         self.data_loader.upload_data(
-            self.memory, action, reward, self.E_grid_planned_day, env, self.total_it
+            self.memory,
+            state[:, 28],  # current hour E_grid
+            action,
+            reward,
+            env,
+            self.total_it,
         )
 
         self.total_it += 1
