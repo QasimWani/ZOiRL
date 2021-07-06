@@ -314,7 +314,7 @@ class Critic:  # Centralized for now.
             SOC_bat[0]
             == (1 - C_f_bat) * soc_bat_init
             + current_action_bat * eta_bat
-            + SOC_Crelax[0]
+            + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -322,7 +322,7 @@ class Critic:  # Centralized for now.
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
                 + action_bat[i - 1] * eta_bat
-                + SOC_Crelax[i]
+                + SOC_Brelax[i]
             )
         self.constraints.append(
             SOC_bat[-1] == soc_bat_norm_end
