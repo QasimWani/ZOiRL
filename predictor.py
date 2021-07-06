@@ -271,7 +271,7 @@ class Oracle:
         E_ehH_max = [H_max[i] / eta_ehH[i] for i in range(_num_buildings)]  # P
 
         # Battery
-        C_f_bat = [0.0000 for i in range(_num_buildings)]  # P
+        C_f_bat = [0.00001 for i in range(_num_buildings)]  # P
         C_p_bat = [60] * _num_buildings  # P (range: [20, 200])
         eta_bat = [1] * _num_buildings  # P
         # current hour soc. normalized
@@ -285,7 +285,7 @@ class Oracle:
             except:
                 c_bat_init[i - 1] = 0
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = [0.00] * _num_buildings  # P
+        C_f_Hsto = [0.008] * _num_buildings  # P
         C_p_Hsto = [3 * H_max[i] for i in range(_num_buildings)]  # P
         eta_Hsto = [1] * _num_buildings  # P
         # current hour soc. normalized
@@ -299,7 +299,7 @@ class Oracle:
             except:
                 c_Hsto_init[i - 1] = 0
             # Cooling (Energy->cooling) Storage
-        C_f_Csto = [0.00] * _num_buildings  # P
+        C_f_Csto = [0.006] * _num_buildings  # P
         C_p_Csto = [2 * C_max[i] for i in range(_num_buildings)]  # P
         eta_Csto = [1] * _num_buildings  # P
         # current hour soc. normalized
