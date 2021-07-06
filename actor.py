@@ -288,7 +288,7 @@ class Actor:
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Crelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
@@ -296,7 +296,7 @@ class Actor:
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
                 + action_bat[i] * eta_bat
-                + SOC_Crelax[i]
+                + SOC_Brelax[i]
             )
         self.constraints.append(
             SOC_bat[-1] == soc_bat_norm_end
