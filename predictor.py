@@ -27,14 +27,15 @@ class DataLoader:
     def upload_data(
         self,
         replay_buffer: ReplayBuffer,
+        E_grid: list,
         action: list,
         reward: list,
-        E_grid: list,
         env: CityLearn = None,
         t_idx: int = -1,  # timestep (hour) of the simulation [0 - (4years-1)]
     ):
         """Upload to memory"""
-        self.model.upload_data(replay_buffer, action, reward, E_grid, env, t_idx)
+
+        self.model.upload_data(replay_buffer, E_grid, action, reward, env, t_idx)
 
     def load_data(self):
         """Sample from Memory. NOTE: Optional"""
@@ -86,9 +87,9 @@ class Oracle:
     def upload_data(
         self,
         replay_buffer: ReplayBuffer,
+        E_grid: list,
         actions: list,
         rewards: list,
-        E_grid: list,
         env: CityLearn = None,
         t_idx: int = -1,
     ):
@@ -98,9 +99,17 @@ class Oracle:
         ), "Invalid argument passed. Missing env object and/or invalid time index passed"
 
         ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
+        if t_idx == 0:
+            E_grid_memory = [0] * len(self.action_space)
+        else:
+            # last hour or eod E_grid values.
+            E_grid_memory = replay_buffer.get(-1)["E_grid"][-1]
+
         data = self.parse_data(
             replay_buffer.get_recent(),
-            self.get_current_data_oracle(env, t_idx, actions, rewards, E_grid),
+            self.get_current_data_oracle(
+                env, t_idx, E_grid, E_grid_memory, actions, rewards
+            ),
         )
         replay_buffer.add(data)
 
@@ -118,8 +127,8 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 33  # includes actions + rewards + E_grid_collect
-        ), "Invalid number of parameters. Can't run basic (root) agent optimization"
+            len(current_data) == 33  # actions + rewards + E_grid_collect. Section 1.3.1
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 33. Can't run Oracle agent optimization."
 
         for key, value in current_data.items():
             if key not in data:
@@ -159,11 +168,21 @@ class Oracle:
         self,
         env: CityLearn,
         t: int,  # t goes from 0 - end of simulation (not 24 hour counter!)
+        E_grid: list,
+        E_grid_memory: list,
         actions: list = None,
         rewards: list = None,
-        E_grid: list = None,
     ):
-        """Returns data (dict) for each building from `env` for `t` timestep"""
+        """
+        Returns data (dict) for each building from `env` for `t` timestep
+        @Params:
+        1. env: CityLearn environment.
+        2. t: current hour from TD3.py (agents.total_it). Goes from (0 - 4 * 365 * 24]
+        3. E_grid: Current net electricity consumption, obtained from environment.
+        4. E_grid_memory: Previous hours' net electricity consumption. Obtained from memory (replaybuffer).
+        5. actions: set of actions for current hour. Appends to replaybuffer.
+        6. rewards: per building reward. Appends to replaybuffer.
+        """
         ### FB - Full batch. Trim output X[:time-step]
         ### CT - current timestep only. X = full_data[time-step], no access to full_data
         ### DP - dynamic update. time-step k = [... k], time-step k+n = [... k + n].
@@ -177,10 +196,6 @@ class Oracle:
         # ]  # FB -- virtual electricity price.
         p_ele = [1] * _num_buildings  # FB -- virtual electricity price.
         # can't get future data since action dependent
-        E_grid_past = [
-            0 if E_grid is None else E_grid[i, max(t % 24 - 1, 0)]
-            for i in range(_num_buildings)
-        ]  # FB -- replace w/ per building cost
         ramping_cost_coeff = [
             0.1 for i in range(_num_buildings)
         ]  # P  -- initialized to 0.1, learned through diff.
@@ -306,10 +321,11 @@ class Oracle:
         # fill data
         observation_data["p_ele"] = p_ele
         observation_data["ramping_cost_coeff"] = ramping_cost_coeff
-        observation_data["E_grid_past"] = E_grid_past
+        # add E-grid (part of E-grid_collect)
         observation_data["E_grid"] = (
-            E_grid[:, t % 24] if E_grid is not None else [0] * _num_buildings
-        )  # add E-grid (part of E-grid_collect)
+            E_grid if E_grid is not None else [0] * _num_buildings
+        )
+        observation_data["E_grid_prevhour"] = E_grid_memory
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
@@ -358,12 +374,21 @@ class Oracle:
         data: dict,
         t_start: int,
         init_updates: dict,
+        replay_buffer: ReplayBuffer,
         t_end: int = 24,
     ):
         """Returns data for hours `t_start` - 24 using `surrogate_env` running RBC `agent`"""
         for i in range(t_start % 24, t_end):
             data = self.parse_data(
-                data, self.get_current_data_oracle(surrogate_env, t_start + i)
+                data,
+                self.get_current_data_oracle(
+                    surrogate_env,
+                    t_start + i,
+                    E_grid=None,
+                    E_grid_memory=replay_buffer.get(-2)["E_grid"][
+                        (t_start + i) % 24
+                    ],  # -2 : previous day E_grid values
+                ),
             )
 
         return (
@@ -379,13 +404,13 @@ class Oracle:
             data["c_Csto_init"][0] = update_values["c_Csto_init"]
 
             # assign previous day's end E_grid.
-            data["E_grid_past"][0] = update_values["E_grid_past"]
+            # data["E_grid_true"][0] = update_values["E_grid_true"]
         else:
             update_values = {
                 "c_bat_init": data["c_bat_init"][-1],
                 "c_Hsto_init": data["c_Hsto_init"][-1],
                 "c_Csto_init": data["c_Csto_init"][-1],
-                "E_grid_past": data["E_grid_past"][-1],
+                # "E_grid_true": data["E_grid_true"][-1],
             }
 
         return data, update_values
