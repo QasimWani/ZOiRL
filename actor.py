@@ -17,11 +17,24 @@ class Actor:
         # Optim specific
         self.constraints = []
         self.costs = []
+        # list of parameter names for Zeta
+        self.zeta_keys = set(
+            [
+                "p_ele",
+                "ramping_cost_coeff",  # won't be used because constant due to DPP
+                "eta_ehH",
+                "eta_bat",
+                "c_bat_end",
+                "eta_Hsto",
+                "eta_Csto",
+            ]
+        )
 
-        self.zeta = None
-        self.params = None
+        self.params = None  # parameters = {zeta, constants, predictors}
 
         self.optim = Adam()
+        # define problem - forward pass
+        self.prob = [None] * 24  # template for each hour
 
     def create_problem(self, t: int, parameters: dict, building_id: int):
         """
@@ -40,15 +53,9 @@ class Actor:
         self.costs = []
         self.t = t
 
-        # assign Zeta
-        if self.zeta is None:
-            self.zeta = deepcopy(
-                parameters
-            )  # will be changed automatically after forward pass.
-
         self.set_parameters(
             params=deepcopy(parameters)
-        )  # update parameters (constants + predictors)
+        )  # update parameters (constants + predictors) + zeta (only for initialization)
 
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
@@ -83,86 +90,101 @@ class Actor:
 
         ### --- Parameters ---
         p_ele = cp.Parameter(
-            name="p_ele", shape=(window), value=self.zeta["p_ele"][t:, building_id]
+            name="p_ele", shape=(window), value=self.params["p_ele"][t:, building_id]
         )
 
-        E_grid_prevhour = (
-            self.params["E_grid_past"][t, building_id]
-            if "E_gird" in self.params
-            and len(self.params["E_grid"].shape)
-            == 2  # E-grid exists means E_grid_past valid
-            else 0,  # used in day ahead dispatch, default E-grid okay
+        E_grid_prevhour = cp.Parameter(
+            name="E_grid_prevhour", value=self.params["E_grid_prevhour"][t, building_id]
         )
 
-        E_grid_pkhist = (
-            np.max(self.params["E_grid"][:t, building_id])
+        E_grid_pkhist = cp.Parameter(
+            name="E_grid_pkhist",
+            value=np.max([0, *self.params["E_grid"][:t, building_id]])
             if t > 0
-            and "E_grid" in self.params
-            and len(self.params["E_grid"].shape) == 2
-            else 0,
-        )  # used in day ahead dispatch, default E-grid okay
+            else max(E_grid_prevhour.value, 0),
+        )
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
         ramping_cost_coeff = cp.Parameter(
             name="ramping_cost_coeff",
-            value=self.zeta["ramping_cost_coeff"][t, building_id],
+            value=self.params["ramping_cost_coeff"][t, building_id],
         )
 
         # Loads
-        E_ns = self.params["E_ns"][t:, building_id]
-        H_bd = self.params["H_bd"][t:, building_id]
-        C_bd = self.params["C_bd"][t:, building_id]
+        E_ns = cp.Parameter(
+            name="E_ns", shape=window, value=self.params["E_ns"][t:, building_id]
+        )
+        H_bd = cp.Parameter(
+            name="H_bd", shape=window, value=self.params["H_bd"][t:, building_id]
+        )
+        C_bd = cp.Parameter(
+            name="C_bd", shape=window, value=self.params["C_bd"][t:, building_id]
+        )
 
         # PV generations
-        E_pv = self.params["E_pv"][t:, building_id]
+        E_pv = cp.Parameter(
+            name="E_pv", shape=window, value=self.params["E_pv"][t:, building_id]
+        )
 
         # Heat Pump
-        COP_C = self.params["COP_C"][t:, building_id]
-        E_hpC_max = self.params["E_hpC_max"][t, building_id]
+        COP_C = cp.Parameter(
+            name="COP_C", shape=window, value=self.params["COP_C"][t:, building_id]
+        )
+        E_hpC_max = cp.Parameter(
+            name="E_hpC_max", value=self.params["E_hpC_max"][t, building_id]
+        )
 
         # Electric Heater
         eta_ehH = cp.Parameter(
-            name="eta_ehH", value=self.zeta["eta_ehH"][t, building_id]
+            name="eta_ehH", value=self.params["eta_ehH"][t, building_id]
         )
-        E_ehH_max = self.params["E_ehH_max"][t, building_id]
+        E_ehH_max = cp.Parameter(
+            name="E_ehH_max", value=self.params["E_ehH_max"][t, building_id]
+        )
 
         # Battery
-        C_f_bat = self.params["C_f_bat"][t, building_id]
+        C_f_bat = cp.Parameter(
+            name="C_f_bat", value=self.params["C_f_bat"][t, building_id]
+        )
         C_p_bat = cp.Parameter(
-            name="C_p_bat", value=self.zeta["C_p_bat"][t, building_id]
+            name="C_p_bat", value=self.params["C_p_bat"][t, building_id]
         )
         eta_bat = cp.Parameter(
-            name="eta_bat", value=self.zeta["eta_bat"][t, building_id]
+            name="eta_bat", value=self.params["eta_bat"][t, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=self.zeta["c_bat_init"][building_id]
+            name="c_bat_init", value=self.params["c_bat_init"][building_id]
         )
         soc_bat_norm_end = cp.Parameter(
-            name="c_bat_end", value=self.zeta["c_bat_end"][t, building_id]
+            name="c_bat_end", value=self.params["c_bat_end"][t, building_id]
         )
 
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = self.params["C_f_Hsto"][t, building_id]
+        C_f_Hsto = cp.Parameter(
+            name="C_f_Hsto", value=self.params["C_f_Hsto"][t, building_id]
+        )
         C_p_Hsto = cp.Parameter(
-            name="C_p_Hsto", value=self.zeta["C_p_Hsto"][t, building_id]
+            name="C_p_Hsto", value=self.params["C_p_Hsto"][t, building_id]
         )
         eta_Hsto = cp.Parameter(
-            name="eta_Hsto", value=self.zeta["eta_Hsto"][t, building_id]
+            name="eta_Hsto", value=self.params["eta_Hsto"][t, building_id]
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=self.zeta["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=self.params["c_Hsto_init"][building_id]
         )
 
         # Cooling (Energy->cooling) Storage
-        C_f_Csto = self.params["C_f_Csto"][t, building_id]
+        C_f_Csto = cp.Parameter(
+            name="C_f_Csto", value=self.params["C_f_Csto"][t, building_id]
+        )
         C_p_Csto = cp.Parameter(
-            name="C_p_Csto", value=self.zeta["C_p_Csto"][t, building_id]
+            name="C_p_Csto", value=self.params["C_p_Csto"][t, building_id]
         )
         eta_Csto = cp.Parameter(
-            name="eta_Csto", value=self.zeta["eta_Csto"][t, building_id]
+            name="eta_Csto", value=self.params["eta_Csto"][t, building_id]
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=self.zeta["c_Csto_init"][building_id]
+            name="c_Csto_init", value=self.params["c_Csto_init"][building_id]
         )
 
         ### --- Variables ---
@@ -337,13 +359,84 @@ class Actor:
                 self.constraints.append(action_bat <= h)
                 self.constraints.append(action_bat >= l)
 
-    def get_problem(self):
+    def get_problem(self, t: int, parameters: dict, building_id: int):
         """Returns raw problem"""
+        assert 0 <= t < 24, f"Invalid range for t. Found {t}, needs to be (0, 24]"
         # Form objective.
-        obj = cp.Minimize(*self.costs)
-        # Form and solve problem.
-        prob = cp.Problem(obj, self.constraints)
-        return prob
+        if self.prob[t] is None:
+            self.create_problem(
+                t, parameters, building_id
+            )  # problem formulation for Actor optimizaiton
+            obj = cp.Minimize(*self.costs)
+            # Form problem.
+            self.prob[t] = cp.Problem(obj, self.constraints)
+        else:  # DPP
+            self.inject_params(t, parameters, building_id)
+
+    def inject_params(self, t: int, parameters: dict, building_id: int):
+        """Sets parameter values for problem. DPP"""
+        assert (
+            self.prob[t] is not None
+        ), "Problem must be defined to be able to use DPP."
+        problem_parameters = self.prob[t].param_dict
+
+        ### --- Parameters ---
+        problem_parameters["p_ele"].value = parameters["p_ele"][t:, building_id]
+
+        problem_parameters["E_grid_prevhour"].value = parameters["E_grid_prevhour"][
+            t, building_id
+        ]
+
+        problem_parameters["E_grid_pkhist"].value = (
+            np.max([0, *parameters["E_grid"][:t, building_id]])
+            if t > 0
+            else parameters["E_grid_prevhour"][t, building_id]
+        )
+
+        # ramping_cost_coeff isn't automatically stored as parameter because we're using its value in constraint calculation.
+        # this makes it a constant. So, we just update the constant value. This is the first constant that's why it's 0.
+        # self.prob[t % 24].constants()[0].value = parameters["ramping_cost_coeff"][
+        #     t, building_id
+        # ]
+
+        # Loads
+        problem_parameters["E_ns"].value = parameters["E_ns"][t:, building_id]
+        problem_parameters["H_bd"].value = parameters["H_bd"][t:, building_id]
+        problem_parameters["C_bd"].value = parameters["C_bd"][t:, building_id]
+
+        # PV generations
+        problem_parameters["E_pv"].value = parameters["E_pv"][t:, building_id]
+
+        # Heat Pump
+        problem_parameters["COP_C"].value = parameters["COP_C"][t:, building_id]
+        problem_parameters["E_hpC_max"].value = parameters["E_hpC_max"][t, building_id]
+
+        # Electric Heater
+        problem_parameters["eta_ehH"].value = parameters["eta_ehH"][t, building_id]
+        problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
+
+        # Battery
+        problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
+        problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
+        problem_parameters["eta_bat"].value = parameters["eta_bat"][t, building_id]
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
+        problem_parameters["c_bat_end"].value = parameters["c_bat_end"][t, building_id]
+
+        # Heat (Energy->dhw) Storage
+        problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
+        problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
+        problem_parameters["eta_Hsto"].value = parameters["eta_Hsto"][t, building_id]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
+
+        # Cooling (Energy->cooling) Storage
+        problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
+        problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
+        problem_parameters["eta_Csto"].value = parameters["eta_Csto"][t, building_id]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
+
+        ## Update Parameters
+        for key, prob_val in problem_parameters.items():
+            self.prob[t].param_dict[key].value = prob_val.value
 
     def get_constraints(self):
         """Returns constraints for problem"""
@@ -358,19 +451,17 @@ class Actor:
         dispatch=False,
     ):
         """Actor Optimization"""
-        self.create_problem(
-            t, parameters, building_id
-        )  # problem formulation for Actor optimizaiton
-        prob = self.get_problem()  # Form and solve problem
+        self.get_problem(t, parameters, building_id)  # Form problem using DPP
+
         actions = {}
+
         try:
-            status = prob.solve(
+            status = self.prob[t].solve(
                 verbose=debug, max_iters=1000
             )  # Returns the optimal value.
-        except:
-            # try another solver
+        except:  # try another solver
             print(f"\nSolving using SCS at t = {t} for building {building_id}")
-            status = prob.solve(
+            status = self.prob[t].solve(
                 solver="SCS", verbose=debug, max_iters=1000
             )  # Returns the optimal value.
 
@@ -379,14 +470,14 @@ class Actor:
         else:
             return [0, 0, 0], 0, 0 if dispatch else None, actions, None
 
-        for var in prob.variables():
+        for var in self.prob[t].variables():
             if dispatch:
                 actions[var.name()] = np.array(var.value)
             else:
                 actions[var.name()] = np.array(var.value)[0]
 
         # prune out zeta - set zeta values for later use in backward pass.
-        self.prune_update_zeta(t, prob.param_dict, building_id)
+        # self.prune_update_zeta(t, prob.param_dict, building_id)
 
         ## compute dispatch cost
         if dispatch:
@@ -400,7 +491,7 @@ class Actor:
             )
             net_peak_electricity_cost = np.max(actions["E_grid"])
             virtual_electricity_cost = np.sum(
-                self.zeta["p_ele"][:, building_id] * actions["E_grid"]
+                self.params["p_ele"][:, building_id] * actions["E_grid"]
             )
             dispatch_cost = (
                 ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
@@ -427,63 +518,88 @@ class Actor:
 
     def get_parameters(self):
         """Returns parameters (constant + predictors) and zeta"""
-        return self.zeta, self.params
+        return self.params
 
-    def set_parameters(self, zeta: dict = None, params: dict = None):
-        """Sets values for parameters (constant + predictors) and/or zeta"""
-        assert (
-            zeta or params
-        ), "Missing data. Please pass at least params or zeta params to update actor network."
-        if zeta:
-            self.zeta = zeta
-        if params:
+    def set_parameters(
+        self,
+        params: dict,
+        update_only_params: bool = True,
+        update_only_zeta: bool = False,
+        t_idx: int = -1,
+    ):
+        """
+        Sets values for parameters (constant + predictors) and/or zeta
+        @Params:
+        1. params: dictionary of parameters. Can be pruned to just zeta, or contain all set of parameters
+        2. update_only_params: if set to True, updates only constants and predictor parameters.
+        3. update_only_zeta: if set to True, updates only zeta.
+        4. t_idx: If >= 0, timestep to update zeta for.
+        """
+
+        # need to make sure params is not none
+        if self.params is None:
             self.params = params
+            return
 
-    def prune_update_zeta(self, t_start: int, params: dict, building_id: int):
-        """Deep Update Zeta"""
-        for key, value in params.items():
-            if key in self.zeta:
-                if len(self.zeta[key].shape) == 2:  # 2d array
-                    self.zeta[key][t_start:, building_id] = value.value
-                else:
-                    self.zeta[key][building_id] = value.value
-            else:
-                self.zeta[key] = np.array([0] * self.num_buildings)
-                self.zeta[key][building_id] = value.value
+        # update constants + predictors
+        if update_only_params:
+            for key, value in params.items():
+                if key not in self.zeta_keys:
+                    self.params[key] = value
 
-        if len(self.zeta.keys()) > len(params.keys()):
-            # prune out other types of params
-            for key in deepcopy(list(self.zeta.keys())):
-                if (
-                    key not in params and key != "ramping_cost_coeff"
-                ):  # not used directly in `create_problem`
-                    self.zeta.pop(key, None)  # is guaranteed to exist in Zeta
+        # update zeta
+        if update_only_zeta:
+            for key in self.zeta_keys:
+                self.params[key][t] = params[key][t]
 
-    def target_update(self, local_zeta: dict, building_id: int):
+    # def prune_update_zeta(self, t_start: int, params: dict, building_id: int):
+    #     """Deep Update Zeta"""
+    #     for key, value in params.items():
+    #         if key in self.zeta:
+    #             if len(self.zeta[key].shape) == 2:  # 2d array
+    #                 self.zeta[key][t_start:, building_id] = value.value
+    #             else:
+    #                 self.zeta[key][building_id] = value.value
+    #         else:
+    #             self.zeta[key] = np.array([0] * self.num_buildings)
+    #             self.zeta[key][building_id] = value.value
+
+    #     if len(self.zeta.keys()) > len(params.keys()):
+    #         # prune out other types of params
+    #         for key in deepcopy(list(self.zeta.keys())):
+    #             if (
+    #                 key not in params and key != "ramping_cost_coeff"
+    #             ):  # not used directly in `create_problem`
+    #                 self.zeta.pop(key, None)  # is guaranteed to exist in Zeta
+
+    def target_update(self, local_params: dict, building_id: int):
         """Update rule for Target Actor."""
         assert (
-            self.zeta is not None
+            self.params is not None
         ), "Zeta must be pre-initialized to local actor network. See `pre_initialize_target_params`"
 
-        for param, value in self.zeta.items():
-            if len(self.zeta[param].shape) == 2:
-                self.zeta[param][:, building_id] = (
+        for param, value in self.params.items():
+            if param not in self.zeta_keys:
+                continue
+
+            # current param is guaranteed to be Zeta
+            if len(self.params[param].shape) == 2:
+                self.params[param][:, building_id] = (
                     self.rho * value[:, building_id]
-                    + (1 - self.rho) * local_zeta[param][:, building_id]
+                    + (1 - self.rho) * local_params[param][:, building_id]
                 )
             else:
-                self.zeta[param][building_id] = (
+                self.params[param][building_id] = (
                     self.rho * value[building_id]
-                    + (1 - self.rho) * local_zeta[param][building_id]
+                    + (1 - self.rho) * local_params[param][building_id]
                 )
 
-    def pre_initialize_target_params(self, local_zeta: dict, local_params: dict):
+    def pre_initialize_target_params(self, local_params: dict):
         """Initializes target actor parameters for the very first run."""
-        if self.zeta is None:
-            self.zeta = local_zeta
         if self.params is None:
             self.params = local_params
 
+    # TODO: need to consider 0 <= t < 24. take ∑ grad. right now, only doing t=0.
     def backward(
         self,
         t: int,
@@ -501,27 +617,34 @@ class Actor:
         Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
         Step 3. Take backward pass of (2) with parameters \zeta.
         """
-        self.create_problem(  # mu(s, zeta)
-            t, self.params, building_id
-        )  # problem formulation for Actor optimizaiton
+        # problem formulation for Actor optimizaiton
+        self.get_problem(t, parameters, building_id)  # mu(s, zeta)
 
-        prob = self.get_problem()
-        (zeta, variables_actor,) = (
+        prob = self.prob[t]
+        (zeta_plus_params, variables_actor,) = (
             prob.param_dict,
             prob.var_dict,
         )
 
-        def convert_to_torch_tensor(params: dict):
-            """Converts cp.param to torch.tensor"""
-            param_arr = []
-            for value in params.values():
-                param_arr.append(torch.from_numpy(np.array(value.value)).float())
-            return param_arr
+        def convert_to_torch_tensor(params: dict) -> dict:
+            """Converts cp.param to dict:torch.tensor"""
+            params_dict = {}
+            for key, value in params.items():
+                if key in self.zeta_keys:
+                    # only compute gradient w.r.t zeta
+                    params_dict[key] = torch.tensor(
+                        np.array(value.value), requires_grad=True
+                    )
+                    params_dict[key].grad = None
+                else:
+                    params_dict[key] = torch.from_numpy(np.array(value.value)).float()
+
+            return params_dict
 
         # Actor forward pass - Step 1
         fit_actor = CvxpyLayer(
             prob,
-            parameters=list(zeta.values()),
+            parameters=list(zeta_plus_params.values()),
             variables=list(variables_actor.values()),
         )
         # fetch params in loss calculation
@@ -529,8 +652,8 @@ class Actor:
         E_grid_pkhist = E_grid[building_id][:t].max() if t > 0 else 0.0
 
         # typecast each param to tensor for autograd later
-        zeta_tensor = convert_to_torch_tensor(zeta)
-        E_grid, *_ = fit_actor(*zeta_tensor)
+        zeta_plus_params_tensor = convert_to_torch_tensor(zeta_plus_params)
+        E_grid, *_ = fit_actor(*zeta_plus_params_tensor.values())
 
         # Q function forward pass - Step 2
         alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(alphas).float()
@@ -549,17 +672,21 @@ class Actor:
             - alpha_peak1[building_id] * peak_net_electricity_cost
             - alpha_peak2[building_id] * torch.square(peak_net_electricity_cost)
         )
-        reward_warping_loss.requires_grad = True
 
         # Gradient w.r.t parameters (math: \zeta) - Step 3
         reward_warping_loss.backward()
-        grad = reward_warping_loss.grad.item()
+
         if is_local:
             # updated via Adam
-            for i, param in enumerate(zeta.keys()):
-                param_update = self.optim.update(t, zeta_tensor[i].numpy(), grad)
-                zeta[param].value = param_update
+            for param in self.zeta_keys:
+                grad = zeta_plus_params_tensor[param].grad.item()
+                param_update = self.optim.update(
+                    t, zeta_plus_params_tensor[param].numpy(), grad
+                )
+                zeta_plus_params[param].value = param_update
 
-            self.prune_update_zeta(t, zeta, building_id)  # update zeta
+            self.set_parameters(
+                zeta_plus_params, update_only_zeta=True, t_idx=t
+            )  # update zeta
 
-        return zeta
+        return zeta_plus_params
