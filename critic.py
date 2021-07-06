@@ -640,9 +640,6 @@ class Optim:
         for day_params in parameters:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
-            data["E_grid_prevhour"].append(
-                day_params["E_grid_prevhour"][0, building_id]
-            )  # hour 1 of current day.
 
             for r in range(24):
                 y_r = self.obtain_target_Q(
@@ -654,19 +651,36 @@ class Optim:
                     building_id,
                     debug,
                 )
+
+                data["E_grid_prevhour"].append(
+                    day_params["E_grid_prevhour"][r, building_id]
+                )
+
                 data["E_grid_pkhist"].append(
-                    0.0 if r == 0 else np.max(day_params["E_grid"][:r, building_id])
+                    max(0, day_params["E_grid_prevhour"][r, building_id])
+                    if r == 0
+                    else np.max([0, *day_params["E_grid"][:r, building_id]])
                 )  # pkhist at 0th hour is 0.
                 clipped_values.append(y_r)
 
         # convert to ndarray
-        clipped_values = np.array(clipped_values).reshape(
+        clipped_values = np.array(clipped_values, dtype=float).reshape(
             len(parameters), 24
         )  # number of days, 24 hours
-        data["E_grid"] = np.array(data["E_grid"]).reshape(clipped_values.shape)
-        data["E_grid_pkhist"] = np.array(data["E_grid_pkhist"]).reshape(
+
+        data["E_grid"] = np.array(data["E_grid"], dtype=float).reshape(
             clipped_values.shape
         )
+
+        data["E_grid_prevhour"] = np.array(
+            data["E_grid_prevhour"], dtype=float
+        ).reshape(clipped_values.shape)
+
+        data["E_grid_pkhist"] = np.array(data["E_grid_pkhist"], dtype=float).reshape(
+            clipped_values.shape
+        )
+
+        self.debug_data = data
 
         ### parameters
         E_grid = cp.Parameter(
@@ -679,7 +693,7 @@ class Optim:
         )
         E_grid_prevhour = cp.Parameter(
             name="E_grid_prevhour",
-            shape=len(parameters),
+            shape=(clipped_values.shape),
             value=data["E_grid_prevhour"],
         )
 
