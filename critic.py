@@ -84,17 +84,14 @@ class Critic:  # Centralized for now.
         )
 
         E_grid_prevhour = cp.Parameter(
-            name="E_grid_prevhour",
-            value=parameters["E_grid_past"][t, building_id]
-            if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0,  # used in day ahead dispatch, default E-grid okay
+            name="E_grid_prevhour", value=parameters["E_grid_prevhour"][t, building_id]
         )
 
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max(parameters["E_grid"][:t, building_id])
-            if t > 0 and "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0,
+            value=np.max([0, *parameters["E_grid"][:t, building_id]])
+            if t > 0
+            else max(E_grid_prevhour.value, 0),
         )  # used in day ahead dispatch, default E-grid okay
 
         # max-min normalization of ramping_cost to downplay E_grid_sell weight.
@@ -140,13 +137,13 @@ class Critic:  # Centralized for now.
             name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
         )
         C_p_bat = cp.Parameter(
-            name="C_p_bat", value=zeta_target["C_p_bat"][t, building_id]
+            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
         eta_bat = cp.Parameter(
             name="eta_bat", value=zeta_target["eta_bat"][t, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=zeta_target["c_bat_init"][building_id]
+            name="c_bat_init", value=parameters["c_bat_init"][building_id]
         )
         soc_bat_norm_end = cp.Parameter(
             name="c_bat_end", value=zeta_target["c_bat_end"][t, building_id]
@@ -157,13 +154,13 @@ class Critic:  # Centralized for now.
             name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
         )
         C_p_Hsto = cp.Parameter(
-            name="C_p_Hsto", value=zeta_target["C_p_Hsto"][t, building_id]
+            name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
         eta_Hsto = cp.Parameter(
             name="eta_Hsto", value=zeta_target["eta_Hsto"][t, building_id]
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=zeta_target["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
         )
 
         # Cooling (Energy->cooling) Storage
@@ -171,13 +168,13 @@ class Critic:  # Centralized for now.
             name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
         )
         C_p_Csto = cp.Parameter(
-            name="C_p_Csto", value=zeta_target["C_p_Csto"][t, building_id]
+            name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
         eta_Csto = cp.Parameter(
             name="eta_Csto", value=zeta_target["eta_Csto"][t, building_id]
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=zeta_target["c_Csto_init"][building_id]
+            name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
         )
 
         ### current actions
@@ -422,23 +419,18 @@ class Critic:  # Centralized for now.
         ### --- Parameters ---
         problem_parameters["p_ele"].value = zeta_target["p_ele"][t:, building_id]
 
-        # used in day ahead dispatch, default E-grid okay
-        problem_parameters["E_grid_prevhour"].value = (
-            parameters["E_grid_past"][t, building_id]
-            if "E_gird" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0
-        )
-
-        problem_parameters["E_grid_pkhist"].value = (
-            np.max(parameters["E_grid"][:t, building_id])
-            if t > 0 and "E_grid" in parameters and len(parameters["E_grid"].shape) == 2
-            else 0
-        )  # used in day ahead dispatch, default E-grid okay
-
-        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
-        self.prob[t % 24].constants()[0] = zeta_target["ramping_cost_coeff"][
+        problem_parameters["E_grid_prevhour"].value = parameters["E_grid_prevhour"][
             t, building_id
         ]
+
+        problem_parameters["E_grid_pkhist"].value = (
+            np.max([0, *parameters["E_grid"][:t, building_id]]) if t > 0 else 0
+        )
+
+        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
+        # self.prob[t % 24].constants()[0].value = zeta_target["ramping_cost_coeff"][
+        #     t, building_id
+        # ]
 
         # Loads
         problem_parameters["E_ns"].value = parameters["E_ns"][t:, building_id]
@@ -458,36 +450,22 @@ class Critic:  # Centralized for now.
 
         # Battery
         problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
-
-        problem_parameters["C_p_bat"].value = zeta_target["C_p_bat"][t, building_id]
-
+        problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = zeta_target["eta_bat"][t, building_id]
-
-        problem_parameters["c_bat_init"].value = zeta_target["c_bat_init"][building_id]
-
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
         problem_parameters["c_bat_end"].value = zeta_target["c_bat_end"][t, building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
-
-        problem_parameters["C_p_Hsto"].value = zeta_target["C_p_Hsto"][t, building_id]
-
+        problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = zeta_target["eta_Hsto"][t, building_id]
-
-        problem_parameters["c_Hsto_init"].value = zeta_target["c_Hsto_init"][
-            building_id
-        ]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
-
-        problem_parameters["C_p_Csto"].value = zeta_target["C_p_Csto"][t, building_id]
-
+        problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = zeta_target["eta_Csto"][t, building_id]
-
-        problem_parameters["c_Csto_init"].value = zeta_target["c_Csto_init"][
-            building_id
-        ]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
 
         ### current actions
 
@@ -540,27 +518,26 @@ class Critic:  # Centralized for now.
             verbose=debug, max_iters=1000
         )  # output of reward warping function
         if float("-inf") < status < float("inf"):
-            return [
-                self.prob[t % 24].var_dict["E_grid"].value,
-                self.prob[t % 24].param_dict["E_grid_prevhour"].value,
-            ]
+            return self.prob[t % 24].var_dict["E_grid"].value  # building specific sol.
+
         raise ValueError(f"Unbounded solution with status - {status}")
 
+    # TODO
     def reward_warping_layer(
-        self, timestep: int, optimal_values: list, building_id: int
+        self, timestep: int, E_grid: list, zeta_target: dict, building_id: int
     ):
         """Calculates Q-value"""
+        # `timestep` is guaranteed to be > 0.
+        E_grid_prevhour = zeta_target["E_grid_prevhour"][timestep, building_id]
+        E_grid_pkhist = (
+            np.max([0, *zeta_target["E_grid"][:timestep, building_id]])
+            if timestep > 0
+            else max(E_grid_prevhour, 0)
+        )
 
-        E_grid, E_grid_prevhour = optimal_values  # building specific values
-        if timestep > 0:
-            # E_grid_prevhour = E-grid_{r - 1}. If r = 0, load previous eod value (stored by default)
-            E_grid_prevhour = E_grid[timestep - 1]
-
-        E_grid_pkhist = np.max(E_grid[:timestep]) if timestep > 0 else E_grid_prevhour
-
-        peak_hist_cost = np.max([E_grid[timestep:].max(), E_grid_pkhist])
+        peak_hist_cost = np.max([*E_grid[timestep:], E_grid_pkhist])
         ramping_cost = np.abs(E_grid[timestep] - E_grid_prevhour) + np.sum(
-            E_grid[timestep + 1 :] - E_grid[timestep:-1]
+            np.abs(E_grid[timestep + 1 :] - E_grid[timestep:-1])
         )
 
         Q_value = (
@@ -582,9 +559,15 @@ class Critic:  # Centralized for now.
 
         Gt_tn = 0.0
         rewards = parameters["reward"][:, building_id]
-        solution = self.solve(t, parameters, zeta_target, building_id, debug)
+
+        solution = (
+            self.solve(t, parameters, zeta_target, building_id, debug)
+            if 24 - t > 1
+            else None  # monte carlo return
+        )
+
         for n in range(1, 24 - t):
-            Q_value = self.reward_warping_layer(n, solution, building_id)
+            Q_value = self.reward_warping_layer(n, solution, zeta_target, building_id)
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
         # compute TD(\lambda) rewards
@@ -633,6 +616,7 @@ class Optim:
         Q2 = critic_target_2.forward(t, parameters, zeta_target, building_id, debug)
         return min(Q1, Q2)  # y_r
 
+    # TODO
     def least_absolute_optimization(
         self,
         parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates
@@ -657,7 +641,7 @@ class Optim:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
             data["E_grid_prevhour"].append(
-                day_params["E_grid_past"][0, building_id]
+                day_params["E_grid_prevhour"][0, building_id]
             )  # hour 1 of current day.
 
             for r in range(24):
