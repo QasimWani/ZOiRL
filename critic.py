@@ -542,7 +542,6 @@ class Critic:  # Centralized for now.
         if float("-inf") < status < float("inf"):
             return [
                 self.prob[t % 24].var_dict["E_grid"].value,
-                self.prob[t % 24].param_dict["E_grid_pkhist"].value,
                 self.prob[t % 24].param_dict["E_grid_prevhour"].value,
             ]
         raise ValueError(f"Unbounded solution with status - {status}")
@@ -551,14 +550,18 @@ class Critic:  # Centralized for now.
         self, timestep: int, optimal_values: list, building_id: int
     ):
         """Calculates Q-value"""
-        (
-            E_grid,
-            E_grid_pkhist,
-            E_grid_prevhour,
-        ) = optimal_values  # building specific values
+
+        E_grid, E_grid_prevhour = optimal_values  # building specific values
+        if timestep > 0:
+            # E_grid_prevhour = E-grid_{r - 1}. If r = 0, load previous eod value (stored by default)
+            E_grid_prevhour = E_grid[timestep - 1]
+
+        E_grid_pkhist = np.max(E_grid[:timestep]) if timestep > 0 else E_grid_prevhour
 
         peak_hist_cost = np.max([E_grid[timestep:].max(), E_grid_pkhist])
-        ramping_cost = np.sum(E_grid[timestep:] - E_grid_prevhour)
+        ramping_cost = np.abs(E_grid[timestep] - E_grid_prevhour) + np.sum(
+            E_grid[timestep + 1 :] - E_grid[timestep:-1]
+        )
 
         Q_value = (
             -self.alpha_ramp[building_id] * ramping_cost
@@ -581,7 +584,7 @@ class Critic:  # Centralized for now.
         rewards = parameters["reward"][:, building_id]
         solution = self.solve(t, parameters, zeta_target, building_id, debug)
         for n in range(1, 24 - t):
-            Q_value = self.reward_warping_layer(t + n, solution, building_id)
+            Q_value = self.reward_warping_layer(n, solution, building_id)
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
         # compute TD(\lambda) rewards
