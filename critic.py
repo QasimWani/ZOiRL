@@ -518,7 +518,11 @@ class Critic:  # Centralized for now.
             verbose=debug, max_iters=1000
         )  # output of reward warping function
         if float("-inf") < status < float("inf"):
-            return self.prob[t % 24].var_dict["E_grid"].value  # building specific sol.
+            return (
+                self.prob[t % 24].var_dict["E_grid"].value,  # from Optim
+                # self.prob[t % 24].param_dict["E_grid"].value,  # from env
+                # self.prob[t % 24].param_dict["E_grid_prevhour"].value,  # from env
+            )  # building specific sol.
 
         raise ValueError(f"Unbounded solution with status - {status}")
 
@@ -527,7 +531,6 @@ class Critic:  # Centralized for now.
         self, timestep: int, E_grid: list, zeta_target: dict, building_id: int
     ):
         """Calculates Q-value"""
-        # `timestep` is guaranteed to be > 0.
         E_grid_prevhour = zeta_target["E_grid_prevhour"][timestep, building_id]
         E_grid_pkhist = (
             np.max([0, *zeta_target["E_grid"][:timestep, building_id]])
@@ -560,13 +563,8 @@ class Critic:  # Centralized for now.
         Gt_tn = 0.0
         rewards = parameters["reward"][:, building_id]
 
-        solution = (
-            self.solve(t, parameters, zeta_target, building_id, debug)
-            if 24 - t > 1
-            else None  # monte carlo return
-        )
-
         for n in range(1, 24 - t):
+            solution = self.solve(t + n, parameters, zeta_target, building_id, debug)
             Q_value = self.reward_warping_layer(n, solution, zeta_target, building_id)
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
