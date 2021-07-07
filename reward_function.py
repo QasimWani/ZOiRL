@@ -3,8 +3,8 @@ This function is intended to wrap the rewards returned by the CityLearn RL envir
 be modified at will. This reward_function takes all the electrical demands and carbon intensity of all the buildings and turns them into one or multiple rewards for the agent(s)
 """
 import numpy as np
+from utils import ReplayBuffer
 
-# Reward used in the CityLearn Challenge. Reward function for the multi-agent (decentralized) agents.
 class reward_function_ma:
     def __init__(self, n_agents, building_info):
         self.n_agents = n_agents
@@ -25,18 +25,38 @@ class reward_function_ma:
         # Use this reward function when running the MARLISA example with information_sharing = True. The reward sent to each agent will have an individual and a collective component.
         if using_marlisa:
             return list(np.sign(electricity_demand)*0.01*(np.array(np.abs(electricity_demand))**2 * max(0, total_electricity_demand)))
-        
-        else:
             
             # Use this reward when running the SAC example. It assumes that the building-agents act independently of each other, without sharing information through the reward.
-            reward_ = np.array(electricity_demand)**3.0
-            reward_[reward_>0] = 0
-            return list(reward_)
-    
-      
         
+        # Need to include the function to get current hour
         
+        buffer_size = 24*7
+        demand_buffer = ReplayBuffer(buffer_size)
         
+        if hour == 0:
+            ramping_cost = electricity_demand
+        else:
+            ramping_cost = electricity_demand - demand_buffer.get_recent()
+        
+        demand_buffer.append(electricty_demand)
+        
+        alpha = 5   
+            
+        # We have access to previous E_grids from the buffer
+        # Get current hour
+
+            
+        if hour <= 23:
+            r_ = -ramping_cost
+            
+        else:
+            r_ = -ramping_cost - alpha*(E_grid_pkhst)**2
+                
+        reward_ = reward_.append(r_)
+        
+        reward_[reward_>0] = 0
+        return list(reward_)
+       
         
         
         
