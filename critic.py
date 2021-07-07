@@ -407,6 +407,7 @@ class Critic:  # Centralized for now.
         zeta_target: dict,
         building_id: int,
         debug: bool = False,
+        return_prob: bool = False,
     ):
         """Returns raw problem. Calls `create_problem` if problem not defined. DPP for speed-up"""
         # Form objective.
@@ -414,12 +415,20 @@ class Critic:  # Centralized for now.
             self.create_problem(t, parameters, zeta_target, building_id)
             obj = cp.Minimize(*self.costs)
             # Form problem.
+            if return_prob:
+                return cp.Problem(obj, self.constraints)
+
             self.prob[t % 24] = cp.Problem(obj, self.constraints)
         else:  # DPP
-            self.inject_params(t, parameters, zeta_target, building_id)
+            self.inject_params(t, parameters, zeta_target, building_id, return_prob)
 
     def inject_params(
-        self, t: int, parameters: dict, zeta_target: dict, building_id: int
+        self,
+        t: int,
+        parameters: dict,
+        zeta_target: dict,
+        building_id: int,
+        return_prob: bool = False,
     ):
         """Sets parameter values - DPP"""
         assert (
@@ -491,8 +500,14 @@ class Critic:  # Centralized for now.
         ]
 
         ## Update Parameters
-        for key, prob_val in problem_parameters.items():
-            self.prob[t % 24].param_dict[key].value = prob_val.value
+        if return_prob:
+            prob = self.prob[t % 24]
+            for key, prob_val in problem_parameters.items():
+                prob.param_dict[key].value = prob_val.value
+            return prob
+        else:
+            for key, prob_val in problem_parameters.items():
+                self.prob[t % 24].param_dict[key].value = prob_val.value
 
     def get_constraints(self):
         """Returns constraints for problem"""

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from critic import Critic
 
 from utils import Adam
 import numpy as np
@@ -570,7 +571,7 @@ class Actor:
     def backward(
         self,
         t: int,
-        alphas: list,
+        critic: Critic,  # Critic local-1
         building_id: int,
         E_grid: list,
         is_local: bool,
@@ -585,9 +586,10 @@ class Actor:
         Step 3. Take backward pass of (2) with parameters \zeta.
         """
         # problem formulation for Actor optimizaiton
-        self.get_problem(t, parameters, building_id)  # mu(s, zeta)
+        prob = critic.get_problem(
+            t, self.params, self.params, building_id, return_prob=True
+        )  # mu(s, zeta)
 
-        prob = self.prob[t]
         (zeta_plus_params, variables_actor,) = (
             prob.param_dict,
             prob.var_dict,
@@ -623,7 +625,9 @@ class Actor:
         E_grid, *_ = fit_actor(*zeta_plus_params_tensor.values())
 
         # Q function forward pass - Step 2
-        alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(alphas).float()
+        alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(
+            critic.get_alphas()
+        ).float()
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
             torch.abs(E_grid[1:] - E_grid[:-1])
