@@ -21,7 +21,6 @@ class Actor:
         self.zeta_keys = set(
             [
                 "p_ele",
-                "ramping_cost_coeff",  # won't be used because constant due to DPP
                 "eta_ehH",
                 "eta_bat",
                 "c_bat_end",
@@ -102,12 +101,6 @@ class Actor:
             value=np.max([0, *self.params["E_grid"][:t, building_id]])
             if t > 0
             else max(E_grid_prevhour.value, 0),
-        )
-
-        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
-        ramping_cost_coeff = cp.Parameter(
-            name="ramping_cost_coeff",
-            value=self.params["ramping_cost_coeff"][t, building_id],
         )
 
         # Loads
@@ -249,7 +242,7 @@ class Actor:
         SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
 
         self.costs.append(
-            ramping_cost_coeff.value * ramping_cost
+            0.1 * ramping_cost
             + 5 * peak_net_electricity_cost
             + electricity_cost
             + selling_cost
@@ -392,12 +385,6 @@ class Actor:
             if t > 0
             else parameters["E_grid_prevhour"][t, building_id]
         )
-
-        # ramping_cost_coeff isn't automatically stored as parameter because we're using its value in constraint calculation.
-        # this makes it a constant. So, we just update the constant value. This is the first constant that's why it's 0.
-        # self.prob[t % 24].constants()[0].value = parameters["ramping_cost_coeff"][
-        #     t, building_id
-        # ]
 
         # Loads
         problem_parameters["E_ns"].value = parameters["E_ns"][t:, building_id]
@@ -550,27 +537,7 @@ class Actor:
         # update zeta
         if update_only_zeta:
             for key in self.zeta_keys:
-                self.params[key][t] = params[key][t]
-
-    # def prune_update_zeta(self, t_start: int, params: dict, building_id: int):
-    #     """Deep Update Zeta"""
-    #     for key, value in params.items():
-    #         if key in self.zeta:
-    #             if len(self.zeta[key].shape) == 2:  # 2d array
-    #                 self.zeta[key][t_start:, building_id] = value.value
-    #             else:
-    #                 self.zeta[key][building_id] = value.value
-    #         else:
-    #             self.zeta[key] = np.array([0] * self.num_buildings)
-    #             self.zeta[key][building_id] = value.value
-
-    #     if len(self.zeta.keys()) > len(params.keys()):
-    #         # prune out other types of params
-    #         for key in deepcopy(list(self.zeta.keys())):
-    #             if (
-    #                 key not in params and key != "ramping_cost_coeff"
-    #             ):  # not used directly in `create_problem`
-    #                 self.zeta.pop(key, None)  # is guaranteed to exist in Zeta
+                self.params[key][t_idx] = params[key][t_idx]
 
     def target_update(self, local_params: dict, building_id: int):
         """Update rule for Target Actor."""
