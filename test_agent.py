@@ -17,7 +17,7 @@ try:
     from pathlib import Path
 
     import cvxpy as cp
-    from cvxpylayers.torch import CvxpyLayer
+    from cvxpylayers.torch import CvxpyLayer  ## COMMENT THIS IF NEEDED
 
 except ImportError as error:
     print(error.__class__.__name__ + ": " + error.message)
