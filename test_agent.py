@@ -1,5 +1,15 @@
 import sys
 
+'''
+Please use python3+ THIS HASN'T BEEN TESTED w/ python <= 2.7
+
+Colab/Notebook : get python version
+
+>>> from platform import python_version
+>>> print(python_version())
+'''
+
+
 ### testing package installation
 try:
 
