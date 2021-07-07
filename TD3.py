@@ -210,7 +210,7 @@ class TD3(object):
             # local actor update
             self.actor.backward(
                 self.total_it % 24,
-                self.critic[0].get_alphas(),
+                self.critic[0],
                 id,
                 self.memory.get(-1)["E_grid"],
                 is_local=True,
