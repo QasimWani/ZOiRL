@@ -1,8 +1,8 @@
 import numpy as np
 import cvxpy as cp
 
-from copy import deepcopy
-from collections import defaultdict
+
+from collections import defaultdict, deque
 
 from utils import *
 
@@ -28,6 +28,9 @@ class Critic:  # Centralized for now.
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
 
+        # q value per building, recycled everyday - see `least_square_optimization`
+        self.Q_value = [deque(maxlen=24)] * num_buildings  # 9 x 24
+
     def create_problem(
         self, t: int, parameters: dict, zeta_target: dict, building_id: int
     ):
@@ -40,7 +43,11 @@ class Critic:  # Centralized for now.
         - `zeta_target` : set of differentiable parameters from actor target.
         - `building_id`: building index number (0-based).
         """
-        t = np.clip(t, 0, 23)
+        # t = np.clip(t, 0, 23)
+        assert (
+            0 <= t < 24
+        ), f"timestep invalid range. needs to be 0 <= t < 24. found {t}"
+
         T = 24
         window = T - t
         # Reset data
@@ -93,12 +100,6 @@ class Critic:  # Centralized for now.
             if t > 0
             else max(E_grid_prevhour.value, 0),
         )  # used in day ahead dispatch, default E-grid okay
-
-        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
-        ramping_cost_coeff = cp.Parameter(
-            name="ramping_cost_coeff",
-            value=zeta_target["ramping_cost_coeff"][t, building_id],
-        )
 
         # Loads
         E_ns = cp.Parameter(
@@ -212,21 +213,29 @@ class Critic:  # Centralized for now.
         SOC_Brelax = cp.Variable(
             name="SOC_Brelax", shape=(window)
         )  # electrical battery relaxation (prevents numerical infeasibilities)
-        action_bat = cp.Variable(
-            name="action_bat", shape=(window - 1)
-        )  # electric battery
+
+        if window > 1:  # not at eod
+            action_bat = cp.Variable(
+                name="action_bat", shape=(window - 1)
+            )  # electric battery
 
         SOC_H = cp.Variable(name="SOC_H", shape=(window))  # heat storage
         SOC_Hrelax = cp.Variable(
             name="SOC_Hrelax", shape=(window)
         )  # heat storage relaxation (prevents numerical infeasibilities)
-        action_H = cp.Variable(name="action_H", shape=(window - 1))  # heat storage
+
+        if window > 1:  # not at eod
+            action_H = cp.Variable(name="action_H", shape=(window - 1))  # heat storage
 
         SOC_C = cp.Variable(name="SOC_C", shape=(window))  # cooling storage
         SOC_Crelax = cp.Variable(
             name="SOC_Crelax", shape=(window)
         )  # cooling storage relaxation (prevents numerical infeasibilities)
-        action_C = cp.Variable(name="action_C", shape=(window - 1))  # cooling storage
+
+        if window > 1:  # not at eod
+            action_C = cp.Variable(
+                name="action_C", shape=(window - 1)
+            )  # cooling storage
 
         ### objective function
         ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
@@ -251,7 +260,7 @@ class Critic:  # Centralized for now.
         SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
 
         self.costs.append(
-            ramping_cost_coeff.value * ramping_cost
+            0.1 * ramping_cost
             + 5 * peak_net_electricity_cost
             + electricity_cost
             + selling_cost
@@ -265,38 +274,37 @@ class Critic:  # Centralized for now.
 
         ### constraints
 
-        # action constraints
-        # self.constraints.append(action_bat[0] == current_action_bat)
-        # self.constraints.append(action_H[0] == current_action_H)
-        # self.constraints.append(action_C[0] == current_action_C)
-
         self.constraints.append(E_grid >= 0)
         self.constraints.append(E_grid_sell <= 0)
 
         # energy balance constraints
 
         # electricity balance
-        self.constraints.append(
-            E_pv[1:] + E_grid[1:] + E_grid_sell[1:] + E_bal_relax[1:]
-            == E_ns[1:] + E_hpC[1:] + E_ehH[1:] + action_bat * C_p_bat
-        )
+        if window > 1:  # not at eod
+            self.constraints.append(
+                E_pv[1:] + E_grid[1:] + E_grid_sell[1:] + E_bal_relax[1:]
+                == E_ns[1:] + E_hpC[1:] + E_ehH[1:] + action_bat * C_p_bat
+            )
         self.constraints.append(
             E_pv[0] + E_grid[0] + E_grid_sell[0] + E_bal_relax[0]
             == E_ns[0] + E_hpC[0] + E_ehH[0] + current_action_bat * C_p_bat
         )
 
         # heat balance
-        self.constraints.append(
-            E_ehH[1:] * eta_ehH + H_bal_relax[1:] == action_H * C_p_Hsto + H_bd[1:]
-        )
+        if window > 1:  # not at eod
+            self.constraints.append(
+                E_ehH[1:] * eta_ehH + H_bal_relax[1:] == action_H * C_p_Hsto + H_bd[1:]
+            )
         self.constraints.append(
             E_ehH[0] * eta_ehH + H_bal_relax[0] == current_action_H * C_p_Hsto + H_bd[0]
         )
 
         # cooling balance
-        self.constraints.append(
-            E_hpC[1:] * COP_C[1:] + C_bal_relax[1:] == action_C * C_p_Csto + C_bd[1:]
-        )
+        if window > 1:  # not at eod
+            self.constraints.append(
+                E_hpC[1:] * COP_C[1:] + C_bal_relax[1:]
+                == action_C * C_p_Csto + C_bd[1:]
+            )
         self.constraints.append(
             E_hpC[0] * COP_C[0] + C_bal_relax[0]
             == current_action_C * C_p_Csto + C_bd[0]
@@ -317,7 +325,7 @@ class Critic:  # Centralized for now.
             + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):
+        for i in range(1, window):  # won't run eod
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
@@ -338,7 +346,7 @@ class Critic:  # Centralized for now.
             + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):
+        for i in range(1, window):  # won't run eod
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
@@ -356,7 +364,7 @@ class Critic:  # Centralized for now.
             + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):
+        for i in range(1, window):  # won't run eod
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
@@ -370,6 +378,9 @@ class Critic:  # Centralized for now.
         assert (
             len(bounds_high) == 3
         ), "Invalid number of bounds for actions - see dict defined in `Optim`"
+
+        if window <= 1:  # eod. no actions to consider
+            return
 
         for high, low in zip(bounds_high.items(), bounds_low.items()):
             key, h, l = [*high, low[1]]
@@ -426,11 +437,6 @@ class Critic:  # Centralized for now.
         problem_parameters["E_grid_pkhist"].value = (
             np.max([0, *parameters["E_grid"][:t, building_id]]) if t > 0 else 0
         )
-
-        # max-min normalization of ramping_cost to downplay E_grid_sell weight.
-        # self.prob[t % 24].constants()[0].value = zeta_target["ramping_cost_coeff"][
-        #     t, building_id
-        # ]
 
         # Loads
         problem_parameters["E_ns"].value = parameters["E_ns"][t:, building_id]
@@ -494,13 +500,20 @@ class Critic:  # Centralized for now.
 
     def set_alphas(self, ramp, pk1, pk2):
         """Setter target alphas"""
-        self.alpha_ramp = np.clip(ramp, 0.1, 2)
-        self.alpha_peak1 = np.clip(pk1, 0.1, 2)
-        self.alpha_peak2 = np.clip(pk2, 0.1, 2)
+        self.alpha_ramp = ramp
+        self.alpha_peak1 = pk1
+        self.alpha_peak2 = pk2
 
     def get_alphas(self):
         """Getter target alphas"""
         return np.array([self.alpha_ramp, self.alpha_peak1, self.alpha_peak2])
+
+    def get(self, index, building_id):
+        """Returns an element from Q-value deque specified by `building_id` and `index`"""
+        try:
+            return self.Q_value[building_id][index]
+        except IndexError:
+            return None
 
     def solve(
         self,
@@ -512,6 +525,7 @@ class Critic:  # Centralized for now.
     ):
         """Computes optimal Q-value using RWL as objective function"""
         # computes Q-value for n-step in the future
+
         # Form and solve problem - automatically assigns to self.prob (DPP if problem already exists)
         self.get_problem(t, parameters, zeta_target, building_id)
         status = self.prob[t % 24].solve(
@@ -519,14 +533,15 @@ class Critic:  # Centralized for now.
         )  # output of reward warping function
         if float("-inf") < status < float("inf"):
             return (
-                self.prob[t % 24].var_dict["E_grid"].value,  # from Optim
+                self.prob[t % 24]
+                .var_dict["E_grid"]
+                .value  # from Optim
                 # self.prob[t % 24].param_dict["E_grid"].value,  # from env
                 # self.prob[t % 24].param_dict["E_grid_prevhour"].value,  # from env
             )  # building specific sol.
 
         raise ValueError(f"Unbounded solution with status - {status}")
 
-    # TODO
     def reward_warping_layer(
         self, timestep: int, E_grid: list, zeta_target: dict, building_id: int
     ):
@@ -538,9 +553,9 @@ class Critic:  # Centralized for now.
             else max(E_grid_prevhour, 0)
         )
 
-        peak_hist_cost = np.max([*E_grid[timestep:], E_grid_pkhist])
-        ramping_cost = np.abs(E_grid[timestep] - E_grid_prevhour) + np.sum(
-            np.abs(E_grid[timestep + 1 :] - E_grid[timestep:-1])
+        peak_hist_cost = np.max([*E_grid, E_grid_pkhist])
+        ramping_cost = np.abs(E_grid[0] - E_grid_prevhour) + np.sum(
+            np.abs(E_grid[1:] - E_grid[:-1])
         )
 
         Q_value = (
@@ -548,6 +563,11 @@ class Critic:  # Centralized for now.
             - self.alpha_peak1[building_id] * peak_hist_cost
             - self.alpha_peak2[building_id] * np.square(peak_hist_cost)
         )
+
+        self.Q_value[building_id].append(
+            Q_value
+        )  # called only if no Q value exists for current timestep
+
         return Q_value
 
     def forward(
@@ -564,8 +584,19 @@ class Critic:  # Centralized for now.
         rewards = parameters["reward"][:, building_id]
 
         for n in range(1, 24 - t):
-            solution = self.solve(t + n, parameters, zeta_target, building_id, debug)
-            Q_value = self.reward_warping_layer(n, solution, zeta_target, building_id)
+            # first check if we need to compute it at all. --> Saves computation
+
+            # if Q_value := self.get(t, building_id) is not None: # will break < 3.8.5
+            #     return Q_value
+
+            Q_value = self.get(n, building_id)  # NOTE: n is an index from 0 - 23
+
+            if Q_value is None:  # doesn't exist, solve
+                solution = self.solve(n, parameters, zeta_target, building_id, debug)
+                Q_value = self.reward_warping_layer(
+                    n, solution, zeta_target, building_id
+                )
+
             Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
 
         # compute TD(\lambda) rewards
@@ -625,7 +656,8 @@ class Optim:
     ):
         """Define least-absolute optimization for generating optimal values for alpha_ramp,peak1/2."""
         # extract target Critic
-        critic_target_1, critic_target_2 = critic_target
+        critic_target_1: Critic = critic_target[0]
+        critic_target_2: Critic = critic_target[1]
 
         ### variables
         alpha_ramp = cp.Variable(name="ramp")
@@ -638,6 +670,10 @@ class Optim:
         for day_params in parameters:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
+
+            # clear Q-buffer for building x at each day
+            critic_target_1.Q_value[building_id].clear()
+            critic_target_2.Q_value[building_id].clear()
 
             for r in range(24):
                 y_r = self.obtain_target_Q(
