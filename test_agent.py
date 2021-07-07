@@ -29,6 +29,9 @@ try:
     import cvxpy as cp
     from cvxpylayers.torch import CvxpyLayer  ## COMMENT THIS IF NEEDED
 
+    from sklearn import linear_model
+    from sklearn.linear_model import LinearRegression, QuantileRegressor    # for prediction/estimation
+
 except ImportError as error:
     print(error.__class__.__name__ + ": " + error.message)
 
