@@ -1,7 +1,9 @@
+
 from copy import deepcopy
 import numpy as np
-from citylearn import CityLearn
 from pathlib import Path
+from Energy_Models_DigitalTwin import Battery, HeatPump, ElectricHeater, EnergyStorage, Building
+from citylearn import building_loader
 
 import sys
 import warnings
@@ -17,239 +19,243 @@ if not sys.warnoptions:
 ## local imports
 from predictor import *
 
-
 class DigitalTwin(object):
-    def __init__(
-        self,
-        SOC_bat_next: float,
-        SOC_bat_current: float,
-        SOC_Csto_current:float,
-        SOC_Csto_previous:float,
-        SOC_Csto_next:float,
-        SOC_Hsto_current:float,
-        SOC_Hsto_previous:float, 
-        C_f_Hsto:float,
-        eta_Hsto:float
-        COP_C_next:float,
-        C_f_Csto:float,
-        eta_Csto:float
-        action_bat:float,
-        E_bat_max: float,
-        E_grid:float,
-        E_sell:float,
-        E_NS:float,
-        E_PV:float,
-        E_PV_next:float,
-        E_netgrid_next:float,
-        E_NS_next:float,
-        C_p_Hsto:float,
-        dhw_tank_cap:float,
-        eta_hp_tech: float = 0.22,   # Technical Efficiency
-        t_hp_C: int = 8,             # Target temperature cooling
-        eta_ehH: float = 0.9,         # Electric Heater efficiency
-        C_f_bat :float = 1e-5,    # Battery capcaity loss coefficient
-        C_f_bat: int = 0,         # Battery loss coefficient
-        num_buildings: int,
-    ):
+    def __init__(self, SOC_bat, SOC_Csto, SOC_Hsto,
+                E_hpC_max:float, E_ehH_max:float, C_max:float, H_max:float,
+                eta_bat:float, 
+                C_p_Csto:float, C_p_Hsto:float, C_p_bat:float,
+                time_step:int,  
+                COP_C, E_grid_prev:float,
+                E_grid_pkhist:float, 
+                num_buildings: int,
+                E_PV,
+                E_NS, H_bd, C_bd, 
+                save_memory = True,
+                buildings_states_actions = None,
+                building_attributes, 
+                eta_hp_tech: float = 0.22,   # Technical Efficiency
+                t_hp_C: int = 8,             # Target temperature cooling
+                eta_ehH: float = 0.9,  
+                C_f_Hsto:float = 0.008, C_f_Csto:float = 0.006, C_f_bat :float = 1e-5,    # Battery capacity loss coefficient 
+                simulation_period = (0,8759),
+                cost_function = ['ramping','1-load_factor','average_daily_peak','peak_demand','net_electricity_consumption'],
+                ):
         
-    def Estimate_E_bat_max(self, SOC_bat_next: float,
-                           SOC_bat_current: float,
-                           C_f_bat: float):
+        with open(buildings_states_actions) as json_file:
+            self.buildings_states_actions = json.load(json_file)
         
-        C_p_bat_est = self.Estimate_C_p_bat(action_bat, 
-                        E_grid,
-                        E_sell,
-                        E_NS,
-                        E_PV)
+        self.buildings_states_actions = buildings_states_actions
+        self.buildings_net_electricity_demand = []
+        self.building_attributes = building_attributes
+        self.cost_function = cost_function
         
-        eta_bat_est = self.Estimate_eta_bat(self, C_f_bat: float,
-                        SOC_bat_current: float,
-                        SOC_bat_previous, 
-                        action_bat)
+        self.SOC_bat = SOC_bat
+        self.SOC_Csto = SOC_Csto
+        self.SOC_Hsto = SOC_Hsto
+        self.eta_bat = eta_bat
+        self.E_PV = E_PV
+        self.H_bd = H_bd
+        self.C_bd = C_bd
+        self.E_NS = E_NS
+        self.COP_C = COP_C
         
+        params_loader = {'data_path':data_path,
+                         'building_attributes':self.data_path / self.building_attributes,
+                         'weather_file':self.data_path / self.weather_file,
+                         'solar_profile':self.data_path / self.solar_profile,
+                         'carbon_intensity':self.data_path / self.carbon_intensity,
+                         'building_ids':building_ids,
+                         'buildings_states_actions':self.buildings_states_actions,
+                         'save_memory':save_memory}
         
-        E_bat_max_est = -C_p_bat_est*((SOC_bat_next - (1 - C_f_bat)*SOC_bat_current))/eta_bat_est
+        self.buildings, self.observation_spaces, self.action_spaces, self.observation_space, self.action_space = building_loader(**params_loader)
         
-        return E_bat_max_est
-    
-    
-    def Estimate_eta_bat(self, C_f_bat: float,
-                        SOC_bat_current: float,
-                        SOC_bat_previous: float 
-                        action_bat: float):
-        
-        eta_bat_est = (SOC_bat_current - (1 - C_f_bat)*SOC_bat_previous)/action_bat
-        
-        return eta_bat_est
-    
-    
-    def Estimate_max_power_bat(self, SOC_bat:float, E_bat_max: float):
+        self.simulation_period = simulation_period
+        self.uid = None
+        self.num_buildings = len([i for i in self.buildings])
+        self.time_step = 0
+        self.reset()
         
         
-        if SOC_bat<0.6:
+    def next_hour(self):
+        self.time_step = next(self.hour)
+        for building in self.buildings.values():
+            building.time_step = self.time_step    
+        
+        
+    def step(self, actions):
+        
+        self.buildings_net_electricity_demand = []
+        self.current_carbon_intensity = list(self.buildings.values())[0].sim_results['carbon_intensity'][self.time_step]
+        electric_demand = 0
+        elec_consumption_electrical_storage = 0
+        elec_consumption_dhw_storage = 0
+        elec_consumption_cooling_storage = 0
+        elec_consumption_dhw_total = 0
+        elec_consumption_cooling_total = 0
+        elec_consumption_appliances = 0
+        elec_generation = 0
+        
+        # For the decentralized agent
+        assert len(actions) == self.num_buildings, "The length of the list of actions should match the length of the list of buildings."
+        
+        for a, (uid, building) in zip(actions, Buildings.items()):
             
-            max_power_bat_est = E_bat_max
             
-        else:
-            
-            max_power_bat_est = max(E_bat_max, (1 - SOC_bat)*C_p_bat)
-            
-        return max_power_bat_est
-        
-    
-    def Estimate_C_p_bat(self, action_bat:float, 
-                        E_grid:float,
-                        E_sell:float,
-                        E_NS:float,
-                        E_PV:float):
-        
-        C_p_bat_est = (1/(action_bat))*(E_PV + E_grid + E_sell - E_NS)
-        
-        return C_p_bat_est
-    
-    ######## Estimate Cooling and Heating storage capacity and load estimation
-    #@Zhiyao @Mingyu  # Section 3.2
-    
-    ## Insert Code Here
-    
-    # 3.2 Estimation of storage capacity
-    
-    
-    
-    
-    # Estimate ratio of cooling load and cooling storage capacity
-    def EstimateRatios_Cbd_CpCsto(self, SOC_Csto_current:float,
-                                  C_f_Csto:float,
-                                  SOC_Csto_previous:float,
-                                  eta_Csto:float):
-        
-        Ratio_Cbd_CpCsto = -(SOC_Csto_current - (1 - C-_Csto)*SOC_Csto_previous)/eta_Csto
-    
-        return Ratio_Cbd_CpCsto
-    
-    def Estimate_C_p_Csto(self, COP_C_next:float,
-                         E_PV_next:float,
-                         E_netgrid_next:float,
-                         E_NS_next:float,
-                         SOC_Csto_previous:float, 
-                         SOC_Csto_next:float,
-                         SOC_Csto_current:float,
-                         C_f_Csto:float,
-                         eta_Csto:float
-                         ):
-        
-        
-        
-        Ratio_Cbd_CpCsto = self.EstimateRatios_Cbd_CpCsto(SOC_Csto_current, C_f_csto, SOC_Csto_previous, eta_Csto)
-        
-        num = COP_C_next*(E_PV_next + E_netgrid_next + E_NS_next)
-        den1 = (SOC_Csto_next - (1 - C_f_Csto)*SOC_Csto_current)/eta_Csto
-        den2 = Ratio_Cbd_CpCsto
-        
-        den = den1 + den2
-        
-        C_p_Csto_est = num/den
-        
-        return C_p_Csto_est
-    
-    def C_p_Hsto_est(self, SOC_Hsto_next:float,
-                     SOC_Hsto_current:float,
-                     C_f_Hsto:float,
-                     eta_Hsto:float):
-        
-        
-        
-        
-    def Estimate_C_bd(self, SOC_Csto_next:float,
-                     SOC_Csto_current:float,
-                     C_f_Csto:float,
-                     eta_Csto:float):
-        
-        C_bd_est = (SOC_Csto_next -(1 - C_f_Csto)*SOC_Csto_current)/eta_Csto
-        
-        return C_bd_est
-        
-        
-        
-    def Estimate_H_bd_t(self, eta_eh_H:float = 0.9,
-                        action_bat:float,
-                       E_PV_current:float,
-                       E_grid_current:float,
-                       E_sell_current:float, 
-                       E_NS_current:float,
-                       SOC_bat_current:float,
-                       SOC_bat_previous:float,
-                       C_f_bat:float,
-                       eta_bat:float,
-                       SOC_Hsto_current:float,
-                       SOC_Hsto_previous:float, 
-                       C_f_Hsto:float,
-                       eta_Hsto:float):
-        
-        C_p_Hsto_est = self.Estimate_C_p_Hsto()
-        C_p_bat_est = self.Estimate_C_p_bat(action_bat, 
-                        E_grid_current,
-                        E_sell_current,
-                        E_NS_current,
-                        E_PV_current)
-        
-        
-        A1 = (SOC_bat_current - (1 - C_f_bat)*SOC_bat_previous)/eta_bat
-        B1 = (SOC_Hsto_current - (1 - C_f_Hsto)*SOC_Hsto_previous)/eta_Hsto
-    
-        H_bd_est = eta_ehH*(E_PV_current + E_grid_current - E_NS_current - A1*C_p_bat_est) - B1*C_p_Hsto_est
-        
-        return H_bd_est
-    
-    
-    ###################################
-    
-    
-    # 3.3 Heat Pump Nominal Power
-    
-    def Estimate_E_hpC_max(self, eta_hp_tech:float = 0.22,
-                          t_hp_C:int = 8,
-                          temp_t:float,
-                          C_max_est:float,
-                          ):
-        
-        # Line 252 CityLearn.py
-        COP_C_est = eta_hp_tech*((t_hp_C + 273.15)/(temp_t - t_hp_C))
-        
-        # from citylearn.py#L52 - We assume that the heat pump is always large enough to meet the highest heating or cooling demand of the building
-        building.dhw_heating_device.nominal_power = np.array(building.sim_results['dhw_demand']/building.dhw_heating_device.cop_heating).max()
-        E_hpC_max1 = building.dhw_heating_device.nominal_power    #estimated from estimated COP and observedd cooling loads
-        
-        E_hpC_max2 = C_max_est/20        # Maximum Cooling load
-        
-        E_hpC_max_est = max(E_hpC_max1, E_hpC_max2)
-        
-        return E_hpC_max_est
-    
-    
-    # 3.4 Section
-        
-    def Estimate_E_ehH_max(self, eta_ehH: float = 0.9,
-                           C_p_Hsto:float,
-                           dhw_tank_cap:float
-                          ):
-        
-        # C_p_Hsto - Heating storage capacity
-        # H_max - maximum heating load
-        # Getting the upper on the heating storage actio using citylearn.py line 218
-        
-        if dhw_tank_cap > 0.000001:
-            a_high = 1/dhw_tank_cap
-        
-        else:
-            a_high = 1
-        
-        # Using the relation Hmax  = C_p_Hsto* upper bound on heat store action
-        H_max = C_p_Hsto*a_high
+            if self.buildings_states_actions[uid]['actions']['electrical_storage']:
+                
 
-        E_ehH_max_est = H_max/eta_ehH      # Electric heater nominal power
+                if self.buildings_states_actions[uid]['actions']['cooling_storage']:
+                    
+                    # Cooling
+                    _electric_demand_cooling = building.set_storage_cooling(a[0], C_p_Csto, self.C_bd)
+                    elec_consumption_cooling_storage += building._electric_consumption_cooling_storage
+                        
+                    # 'Electrical Storage' & 'Cooling Storage' & 'DHW Storage'
+                    if self.buildings_states_actions[uid]['actions']['dhw_storage']:
+                        
+                        # DHW
+                        _electric_demand_dhw = building.set_storage_heating(a[1], E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+                        elec_consumption_dhw_storage += building._electric_consumption_dhw_storage
+                            
+                        # Electrical
+                        _electric_demand_electrical_storage = building.set_storage_electrical(a[2], C_p_bat, self.SOC_bat)
+                        elec_consumption_electrical_storage += _electric_demand_electrical_storage
+                            
+                            # 'Electrical Storage' & 'Cooling Storage'
+                    else:
+                        _electric_demand_dhw = building.set_storage_heating(0.0, E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+                        # Electrical
+                        _electric_demand_electrical_storage = building.set_storage_electrical(a[1], C_p_bat, self.SOC_bat)
+                        elec_consumption_electrical_storage += _electric_demand_electrical_storage
+                else:
+                    
+                    _electric_demand_cooling = building.set_storage_cooling(0.0)
+                        # 'Electrical Storage' & 'DHW Storage'
+                    if self.buildings_states_actions[uid]['actions']['dhw_storage']:
+                        # DHW
+                        _electric_demand_dhw = building.set_storage_heating(a[0], E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+                        elec_consumption_dhw_storage += building._electric_consumption_dhw_storage
+                            
+                        # Electrical
+                        _electric_demand_electrical_storage = building.set_storage_electrical(a[1], C_p_bat, self.SOC_bat)
+                        elec_consumption_electrical_storage += _electric_demand_electrical_storage
+
+                    # 'Electrical Storage'
+                    else:
+                        _electric_demand_dhw = building.set_storage_heating(0.0)
+                        # Electrical
+                        _electric_demand_electrical_storage = building.set_storage_electrical(a[0], C_p_bat, self.SOC_bat)
+                        elec_consumption_electrical_storage += _electric_demand_electrical_storage
+                
+            
+            
+            else:
+                
+                _electric_demand_electrical_storage = 0.0
+                    
+                if self.buildings_states_actions[uid]['actions']['cooling_storage']:
+                    # Cooling
+                    _electric_demand_cooling = building.set_storage_cooling(a[0], C_p_Csto, self.C_bd)
+                    elec_consumption_cooling_storage += building._electric_consumption_cooling_storage
+
+                    if self.buildings_states_actions[uid]['actions']['dhw_storage']:
+                        # DHW
+                        _electric_demand_dhw = building.set_storage_heating(a[1], E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+                        elec_consumption_dhw_storage += building._electric_consumption_dhw_storage
+
+                    else:
+                        _electric_demand_dhw = building.set_storage_heating(0.0, E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+
+                else:
+                    _electric_demand_cooling = building.set_storage_cooling(0.0, C_p_Csto, self.C_bd)
+                    # DHW
+                    _electric_demand_dhw = building.set_storage_heating(a[0], E_ehH_max, C_Hsto, self.SOC_Hsto, self.H_bd)
+                    elec_consumption_dhw_storage += building._electric_consumption_dhw_storage
+
         
-        return E_ehH_max_est
-    
-    
-    
+        
+                    
+        # Total heating and cooling electrical loads
+        elec_consumption_cooling_total += _electric_demand_cooling
+        elec_consumption_dhw_total += _electric_demand_dhw
+
+        # Electrical appliances
+        _non_shiftable_load = building.get_non_shiftable_load()
+        elec_consumption_appliances += _non_shiftable_load
+
+        # Solar generation
+        _solar_generation = building.get_solar_power()
+        elec_generation += _solar_generation
+
+        # Adding loads from appliances and subtracting solar generation to the net electrical load of each building
+        building_electric_demand = round(_electric_demand_electrical_storage + _electric_demand_cooling + _electric_demand_dhw + _non_shiftable_load - _solar_generation, 4)
+
+        # Electricity consumed by every building
+        building.current_net_electricity_demand = building_electric_demand
+        self.buildings_net_electricity_demand.append(-building_electric_demand)    
+
+        # Total electricity consumption
+        electric_demand += building_electric_demand 
+        
+    self.next_hour()
+        
+        
+    def reset(self):
+        
+        
+        #Initialization of variables
+        self.hour = iter(np.array(range(self.simulation_period[0], self.simulation_period[1] + 1)))
+        self.next_hour()
+            
+        self.carbon_emissions = []
+        self.net_electric_consumption = []
+        self.net_electric_consumption_no_storage = []
+        self.net_electric_consumption_no_pv_no_storage = []
+        self.electric_consumption_electric_storage = []
+        self.electric_consumption_dhw_storage = []
+        self.electric_consumption_cooling_storage = []
+        self.electric_consumption_electrical_storage = []
+        self.electric_consumption_dhw = []
+        self.electric_consumption_cooling = []
+        self.electric_consumption_appliances = []
+        self.electric_generation = []
+        
+        self.cumulated_reward_episode = 0
+        self.current_carbon_intensity = 0
+        
+        self.reward_function = reward_function_ma(len(self.building_ids), self.get_building_information())
+            
+        self.state = []
+        for uid, building in self.buildings.items():
+            building.reset()
+            s = []
+            for state_name, value in zip(self.buildings_states_actions[uid]['states'], self.buildings_states_actions[uid]['states'].values()):
+                if value == True:
+                    if state_name == 'net_electricity_consumption':
+                        s.append(building.current_net_electricity_demand)
+                    elif (state_name != 'cooling_storage_soc') and (state_name != 'dhw_storage_soc') and (state_name != 'electrical_storage_soc'):
+                        s.append(building.sim_results[state_name][self.time_step])
+                    elif state_name == 'cooling_storage_soc':
+                        s.append(0.0)
+                    elif state_name == 'dhw_storage_soc':
+                        s.append(0.0)
+                    elif state_name == 'electrical_storage_soc':
+                        s.append(0.0)
+
+                self.state.append(np.array(s, dtype=np.float32))
+                
+            self.state = np.array(self.state, dtype='object')
+            
+        return self._get_ob()
+        
+        
+        
+        
+
+    def _get_ob(self):            
+        return self.state
+
+#########################
+##########################
+############################
