@@ -127,8 +127,8 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 33  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 33. Can't run Oracle agent optimization."
+            len(current_data) == 25  # actions + rewards + E_grid_collect. Section 1.3.1
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 25. Can't run Oracle agent optimization."
 
         for key, value in current_data.items():
             if key not in data:
@@ -191,15 +191,6 @@ class Oracle:
         _num_buildings = len(self.action_space)  # total number of buildings in env.
         observation_data = {}
 
-        # p_ele = [
-        #     2 if 10 <= t % 24 <= 20 else 0.2 for i in range(1, _num_buildings + 1)
-        # ]  # FB -- virtual electricity price.
-        p_ele = [1] * _num_buildings  # FB -- virtual electricity price.
-        # can't get future data since action dependent
-        ramping_cost_coeff = [
-            0.1 for i in range(_num_buildings)
-        ]  # P  -- initialized to 0.1, learned through diff.
-
         # Loads
         E_ns = [
             env.buildings["Building_" + str(i)].sim_results["non_shiftable_load"][t]
@@ -223,13 +214,6 @@ class Oracle:
         C_max = np.max(
             [
                 env.buildings["Building_" + str(i)].sim_results["cooling_demand"]
-                for i in range(1, _num_buildings + 1)
-            ],
-            axis=1,
-        )  # DP
-        E_max = np.max(
-            [
-                env.buildings["Building_" + str(i)].sim_results["non_shiftable_load"]
                 for i in range(1, _num_buildings + 1)
             ],
             axis=1,
@@ -266,14 +250,12 @@ class Oracle:
             )
 
         # Electric Heater
-        eta_ehH = [0.9] * _num_buildings  # P
         # replaced capacity (not avaiable in electric heater) w/ nominal_power
-        E_ehH_max = [H_max[i] / eta_ehH[i] for i in range(_num_buildings)]  # P
+        # E_ehH_max = [H_max[i] / eta_ehH[i] for i in range(_num_buildings)]  # P
 
         # Battery
         C_f_bat = [0.00001 for i in range(_num_buildings)]  # P
         C_p_bat = [60] * _num_buildings  # P (range: [20, 200])
-        eta_bat = [1] * _num_buildings  # P
         # current hour soc. normalized
         c_bat_init = [
             None
@@ -287,7 +269,6 @@ class Oracle:
         # Heat (Energy->dhw) Storage
         C_f_Hsto = [0.008] * _num_buildings  # P
         C_p_Hsto = [3 * H_max[i] for i in range(_num_buildings)]  # P
-        eta_Hsto = [1] * _num_buildings  # P
         # current hour soc. normalized
         c_Hsto_init = [
             None
@@ -301,7 +282,7 @@ class Oracle:
             # Cooling (Energy->cooling) Storage
         C_f_Csto = [0.006] * _num_buildings  # P
         C_p_Csto = [2 * C_max[i] for i in range(_num_buildings)]  # P
-        eta_Csto = [1] * _num_buildings  # P
+
         # current hour soc. normalized
         c_Csto_init = [
             None
@@ -319,8 +300,6 @@ class Oracle:
         )
 
         # fill data
-        observation_data["p_ele"] = p_ele
-        observation_data["ramping_cost_coeff"] = ramping_cost_coeff
         # add E-grid (part of E-grid_collect)
         observation_data["E_grid"] = (
             E_grid if E_grid is not None else [0] * _num_buildings
@@ -340,23 +319,16 @@ class Oracle:
         observation_data["t_C_hp"] = t_C_hp
         observation_data["COP_C"] = COP_C
 
-        observation_data["eta_ehH"] = eta_ehH
-        observation_data["E_ehH_max"] = E_ehH_max
-
         observation_data["C_f_bat"] = C_f_bat
         observation_data["C_p_bat"] = C_p_bat
-        observation_data["eta_bat"] = eta_bat
         observation_data["c_bat_init"] = c_bat_init
-        observation_data["c_bat_end"] = [0.1] * _num_buildings
 
         observation_data["C_f_Hsto"] = C_f_Hsto
         observation_data["C_p_Hsto"] = C_p_Hsto
-        observation_data["eta_Hsto"] = eta_Hsto
         observation_data["c_Hsto_init"] = c_Hsto_init
 
         observation_data["C_f_Csto"] = C_f_Csto
         observation_data["C_p_Csto"] = C_p_Csto
-        observation_data["eta_Csto"] = eta_Csto
         observation_data["c_Csto_init"] = c_Csto_init
 
         observation_data["action_H"] = action_H
