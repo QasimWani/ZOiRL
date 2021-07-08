@@ -57,7 +57,11 @@ class Critic:  # decentralized version
         self.constraints = []
         # self.cost = None ### reassign to NONE. not needed.
 
-        self.t = t
+        ### define constants
+        C_f_bat = 0.00001
+        C_f_Csto = 0.006
+        C_f_Hsto = 0.008
+
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
             [self.num_actions[building_id].high, self.num_actions[building_id].low]
@@ -140,9 +144,6 @@ class Critic:  # decentralized version
         )
 
         # Battery
-        C_f_bat = cp.Parameter(
-            name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
-        )
         C_p_bat = cp.Parameter(
             name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
@@ -157,9 +158,6 @@ class Critic:  # decentralized version
         )
 
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = cp.Parameter(
-            name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
-        )
         C_p_Hsto = cp.Parameter(
             name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
@@ -173,9 +171,6 @@ class Critic:  # decentralized version
         )
 
         # Cooling (Energy->cooling) Storage
-        C_f_Csto = cp.Parameter(
-            name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
-        )
         C_p_Csto = cp.Parameter(
             name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
@@ -224,28 +219,21 @@ class Critic:  # decentralized version
             name="SOC_Brelax", shape=(window)
         )  # electrical battery relaxation (prevents numerical infeasibilities)
 
-        if window > 1:  # not at eod
-            action_bat = cp.Variable(
-                name="action_bat", shape=(window - 1)
-            )  # electric battery
+        action_bat = cp.Variable(name="action_bat", shape=(window))  # electric battery
 
         SOC_H = cp.Variable(name="SOC_H", shape=(window))  # heat storage
         SOC_Hrelax = cp.Variable(
             name="SOC_Hrelax", shape=(window)
         )  # heat storage relaxation (prevents numerical infeasibilities)
 
-        if window > 1:  # not at eod
-            action_H = cp.Variable(name="action_H", shape=(window - 1))  # heat storage
+        action_H = cp.Variable(name="action_H", shape=(window))  # heat storage
 
         SOC_C = cp.Variable(name="SOC_C", shape=(window))  # cooling storage
         SOC_Crelax = cp.Variable(
             name="SOC_Crelax", shape=(window)
         )  # cooling storage relaxation (prevents numerical infeasibilities)
 
-        if window > 1:  # not at eod
-            action_C = cp.Variable(
-                name="action_C", shape=(window - 1)
-            )  # cooling storage
+        action_C = cp.Variable(name="action_C", shape=(window))  # cooling storage
 
         ### objective function
         ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour)
@@ -287,41 +275,28 @@ class Critic:  # decentralized version
 
         ### constraints
 
+        # action constraints
+        self.constraints.append(action_bat[0] == current_action_bat)
+        self.constraints.append(action_H[0] == current_action_H)
+        self.constraints.append(action_C[0] == current_action_C)
+
         self.constraints.append(E_grid >= 0)
         self.constraints.append(E_grid_sell <= 0)
 
         # energy balance constraints
 
-        # electricity balance
-        if window > 1:  # not at eod
-            self.constraints.append(
-                E_pv[1:] + E_grid[1:] + E_grid_sell[1:] + E_bal_relax[1:]
-                == E_ns[1:] + E_hpC[1:] + E_ehH[1:] + action_bat * C_p_bat
-            )
+        # energy balance constraints
         self.constraints.append(
-            E_pv[0] + E_grid[0] + E_grid_sell[0] + E_bal_relax[0]
-            == E_ns[0] + E_hpC[0] + E_ehH[0] + current_action_bat * C_p_bat
-        )
+            E_pv + E_grid + E_grid_sell + E_bal_relax
+            == E_ns + E_hpC + E_ehH + action_bat * C_p_bat
+        )  # electricity balance
+        self.constraints.append(
+            E_ehH * eta_ehH + H_bal_relax == action_H * C_p_Hsto + H_bd
+        )  # heat balance
 
-        # heat balance
-        if window > 1:  # not at eod
-            self.constraints.append(
-                E_ehH[1:] * eta_ehH + H_bal_relax[1:] == action_H * C_p_Hsto + H_bd[1:]
-            )
         self.constraints.append(
-            E_ehH[0] * eta_ehH + H_bal_relax[0] == current_action_H * C_p_Hsto + H_bd[0]
-        )
-
-        # cooling balance
-        if window > 1:  # not at eod
-            self.constraints.append(
-                E_hpC[1:] * COP_C[1:] + C_bal_relax[1:]
-                == action_C * C_p_Csto + C_bd[1:]
-            )
-        self.constraints.append(
-            E_hpC[0] * COP_C[0] + C_bal_relax[0]
-            == current_action_C * C_p_Csto + C_bd[0]
-        )
+            E_hpC * COP_C + C_bal_relax == action_C * C_p_Csto + C_bd
+        )  # cooling balance
 
         # heat pump constraints
         self.constraints.append(E_hpC <= E_hpC_max)  # maximum cooling
@@ -333,16 +308,14 @@ class Critic:  # decentralized version
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init
-            + current_action_bat * eta_bat
-            + SOC_Brelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):  # won't run eod
+        for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
-                + action_bat[i - 1] * eta_bat
+                + action_bat[i] * eta_bat
                 + SOC_Brelax[i]
             )
         self.constraints.append(
@@ -354,16 +327,14 @@ class Critic:  # decentralized version
         # Heat Storage constraints
         self.constraints.append(
             SOC_H[0]
-            == (1 - C_f_Hsto) * soc_Hsto_init
-            + current_action_H * eta_Hsto
-            + SOC_Hrelax[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):  # won't run eod
+        for i in range(1, window):
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
-                + action_H[i - 1] * eta_Hsto
+                + action_H[i] * eta_Hsto
                 + SOC_Hrelax[i]
             )
         self.constraints.append(SOC_H >= 0)  # battery SOC bounds
@@ -372,16 +343,14 @@ class Critic:  # decentralized version
         # Cooling Storage constraints
         self.constraints.append(
             SOC_C[0]
-            == (1 - C_f_Csto) * soc_Csto_init
-            + current_action_C * eta_Csto
-            + SOC_Crelax[0]
+            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
-        for i in range(1, window):  # won't run eod
+        for i in range(1, window):
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
-                + action_C[i - 1] * eta_Csto
+                + action_C[i] * eta_Csto
                 + SOC_Crelax[i]
             )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
@@ -432,8 +401,12 @@ class Critic:  # decentralized version
                 return cp.Problem(obj, self.constraints)
 
             self.prob[t % 24] = cp.Problem(obj, self.constraints)
+            assert self.prob[t % 24].is_dpp()
         else:  # DPP
-            self.inject_params(t, parameters, zeta_target, building_id, return_prob)
+            prob = self.inject_params(t, parameters, zeta_target, building_id)
+            if return_prob:
+                return prob
+            self.prob[t % 24] = prob
 
     def inject_params(
         self,
@@ -441,7 +414,6 @@ class Critic:  # decentralized version
         parameters: dict,
         zeta_target: dict,
         building_id: int,
-        return_prob: bool = False,
     ):
         """Sets parameter values - DPP"""
         assert (
@@ -481,20 +453,17 @@ class Critic:  # decentralized version
         )
 
         # Battery
-        problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = zeta_target["eta_bat"][t:, building_id]
         problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
         problem_parameters["c_bat_end"].value = zeta_target["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
-        problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = zeta_target["eta_Hsto"][t:, building_id]
         problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
 
         # Cooling (Energy->cooling) Storage
-        problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = zeta_target["eta_Csto"][t:, building_id]
         problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
@@ -517,14 +486,10 @@ class Critic:  # decentralized version
         ]
 
         ## Update Parameters
-        if return_prob:
-            prob = self.prob[t % 24]
-            for key, prob_val in problem_parameters.items():
-                prob.param_dict[key].value = prob_val.value
-            return prob
-        else:
-            for key, prob_val in problem_parameters.items():
-                self.prob[t % 24].param_dict[key].value = prob_val.value
+        prob = self.prob[t % 24]
+        for key, prob_val in problem_parameters.items():
+            prob.param_dict[key].value = prob_val.value
+        return prob
 
     def get_constraints(self):
         """Returns constraints for problem"""

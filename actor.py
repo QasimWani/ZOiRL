@@ -39,9 +39,11 @@ class Actor:
 
         self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
 
-        self.optim = [Adam()] * num_buildings
-        # (t - offset + 1) see Adam.update
-        self.adam_offset = offset + 1  # +1 for 1-based indexing
+        self.optim = [
+            {key: Adam() for key in self.zeta_keys}
+        ] * num_buildings  # per building per parameter 9 x 6
+
+        self.adam_offset = offset  # (t - offset + 1) see Adam.update
 
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
@@ -88,6 +90,11 @@ class Actor:
         self.constraints = []
         # self.cost = None ### reassign to NONE. not needed.
         self.t = t
+
+        ### define constants
+        C_f_bat = 0.00001
+        C_f_Csto = 0.006
+        C_f_Hsto = 0.008
 
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
@@ -169,9 +176,6 @@ class Actor:
         )
 
         # Battery
-        C_f_bat = cp.Parameter(
-            name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
-        )
         C_p_bat = cp.Parameter(
             name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
@@ -186,9 +190,6 @@ class Actor:
         )
 
         # Heat (Energy->dhw) Storage
-        C_f_Hsto = cp.Parameter(
-            name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
-        )
         C_p_Hsto = cp.Parameter(
             name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
@@ -202,9 +203,6 @@ class Actor:
         )
 
         # Cooling (Energy->cooling) Storage
-        C_f_Csto = cp.Parameter(
-            name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
-        )
         C_p_Csto = cp.Parameter(
             name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
@@ -403,6 +401,7 @@ class Actor:
             obj = cp.Minimize(self.cost)
             # Form problem.
             self.prob[t] = cp.Problem(obj, self.constraints)
+            assert self.prob[t].is_dpp()
         else:  # DPP
             self.inject_params(t, parameters, building_id)
 
@@ -445,20 +444,17 @@ class Actor:
         )
 
         # Battery
-        problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = self.zeta["eta_bat"][t:, building_id]
         problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
         problem_parameters["c_bat_end"].value = self.zeta["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
-        problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = self.zeta["eta_Hsto"][t:, building_id]
         problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
 
         # Cooling (Energy->cooling) Storage
-        problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = self.zeta["eta_Csto"][t:, building_id]
         problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
@@ -557,23 +553,23 @@ class Actor:
         """Sets values for zeta"""
         # get Zeta
         (
-            p_ele_grad,
-            eta_bat_grad,
-            eta_Hsto_grad,
-            eta_Csto_grad,
-            eta_ehH_grad,
-            c_bat_end_grad,
+            p_ele,
+            eta_bat,
+            eta_Hsto,
+            eta_Csto,
+            eta_ehH,
+            c_bat_end,
         ) = zeta
 
         # dimensions: 24
-        self.zeta["p_ele_grad"][:, building_id] = p_ele_grad
-        self.zeta["eta_bat_grad"][:, building_id] = eta_bat_grad
-        self.zeta["eta_Hsto_grad"][:, building_id] = eta_Hsto_grad
-        self.zeta["eta_Csto_grad"][:, building_id] = eta_Csto_grad
+        self.zeta["p_ele"][:, building_id] = p_ele
+        self.zeta["eta_bat"][:, building_id] = eta_bat
+        self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
+        self.zeta["eta_Csto"][:, building_id] = eta_Csto
 
         # dimensions: 1
-        self.zeta["eta_ehH_grad"][building_id] = eta_ehH_grad
-        self.zeta["c_bat_end_grad"][building_id] = c_bat_end_grad
+        self.zeta["eta_ehH"][building_id] = eta_ehH
+        self.zeta["c_bat_end"][building_id] = c_bat_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
@@ -614,7 +610,9 @@ class Actor:
         params_dict = {}
         for key, value in params.items():
             # only compute gradient w.r.t zeta
-            params_dict[key] = torch.tensor(np.array(value.value), requires_grad=True)
+            params_dict[key] = torch.tensor(
+                np.array(value.value, dtype=np.float), requires_grad=True
+            )
             params_dict[key].grad = None
 
         return params_dict
@@ -647,9 +645,7 @@ class Actor:
             else np.max([0, *parameters["E_grid"][:t, building_id]])
         )
 
-        zeta_plus_params_tensor_dict: dict = self.convert_to_torch_tensor(
-            zeta_plus_params
-        )
+        zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(zeta_plus_params)
         E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
 
         # Reward Warping function, Critic forward pass - Step 2
@@ -677,20 +673,28 @@ class Actor:
         # Gradient w.r.t parameters (math: \zeta) - Step 3
         reward_warping_loss.backward()
 
-        # Pad zeta, only for non-scalars
-        # dimensions: 24
-        p_ele_grad = np.pad(
-            zeta_plus_params_tensor_dict["p_ele"].grad.item(), (23 - t, 0)
-        )
+        # dimensions: 24 - Pad zeta
+        p_ele_grad = np.pad(zeta_plus_params_tensor_dict["p_ele"].grad.numpy(), (t, 0))
+        assert len(p_ele_grad) == 24, f"Invalid dimension. found {len(p_ele_grad)}"
+
         eta_bat_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_bat"].grad.item(), (23 - t, 0)
+            zeta_plus_params_tensor_dict["eta_bat"].grad.numpy(), (t, 0)
         )
+        assert len(eta_bat_grad) == 24, f"Invalid dimension. found {len(eta_bat_grad)}"
+
         eta_Hsto_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_Hsto"].grad.item(), (23 - t, 0)
+            zeta_plus_params_tensor_dict["eta_Hsto"].grad.numpy(), (t, 0)
         )
+        assert (
+            len(eta_Hsto_grad) == 24
+        ), f"Invalid dimension. found {len(eta_Hsto_grad)}"
+
         eta_Csto_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_Csto"].grad.item(), (23 - t, 0)
+            zeta_plus_params_tensor_dict["eta_Csto"].grad.numpy(), (t, 0)
         )
+        assert (
+            len(eta_Csto_grad) == 24
+        ), f"Invalid dimension. found {len(eta_Csto_grad)}"
 
         # dimensions: 1
         eta_ehH_grad = zeta_plus_params_tensor_dict["eta_ehH"].grad.item()
@@ -768,42 +772,43 @@ class Actor:
         # dimension : 1
         parameter_gradients["eta_ehH_grad"] = np.array(
             parameter_gradients["eta_ehH_grad"]
-        ).mean(0)
+        ).mean()
 
         # dimension : 1
         parameter_gradients["c_bat_end_grad"] = np.array(
             parameter_gradients["c_bat_end_grad"]
-        ).mean(0)
+        ).mean()
 
         ### Update Parameter using Adam
-        p_ele = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["p_ele"],
+        NUM_HOURS = len(batch_parameters) * 24
+        p_ele = self.optim[building_id]["p_ele"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["p_ele"][:, building_id],
             parameter_gradients["p_ele_grad"],
         )
-        eta_bat = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["eta_bat"],
+        eta_bat = self.optim[building_id]["eta_bat"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_bat"][:, building_id],
             parameter_gradients["eta_bat_grad"],
         )
-        eta_Hsto = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["eta_Hsto"],
+        eta_Hsto = self.optim[building_id]["eta_Hsto"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_Hsto"][:, building_id],
             parameter_gradients["eta_Hsto_grad"],
         )
-        eta_Csto = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["eta_Csto"],
+        eta_Csto = self.optim[building_id]["eta_Csto"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_Csto"][:, building_id],
             parameter_gradients["eta_Csto_grad"],
         )
-        eta_ehH = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["eta_ehH"],
+        eta_ehH = self.optim[building_id]["eta_ehH"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_ehH"][building_id],
             parameter_gradients["eta_ehH_grad"],
         )
-        c_bat_end = self.optim[building_id].update(
-            t - self.adam_offset,
-            self.zeta["c_bat_end"],
+        c_bat_end = self.optim[building_id]["c_bat_end"].update(
+            ((t - self.adam_offset) // NUM_HOURS),
+            self.zeta["c_bat_end"][building_id],
             parameter_gradients["c_bat_end_grad"],
         )
 
