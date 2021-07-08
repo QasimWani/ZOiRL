@@ -17,7 +17,7 @@ class Actor:
         self.rho = rho
         # Optim specific
         self.constraints = []
-        self.costs = []
+        self.cost = None  # created at every call to `create_problem`. not used in DPP.
         # list of parameter names for Zeta
         self.zeta_keys = set(
             [
@@ -30,11 +30,38 @@ class Actor:
             ]
         )
 
-        self.params = None  # parameters = {zeta, constants, predictors}
+        self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
 
-        self.optim = Adam()
+        self.optim = [Adam()] * num_buildings
+
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
+
+    def initialize_zeta(
+        self,
+        p_ele: float = 1.0,
+        eta_ehH: float = 0.9,
+        eta_bat: float = 1.0,
+        eta_Hsto: float = 1.0,
+        eta_Csto: float = 1.0,
+        c_bat_end: float = 0.1,
+    ):
+        """
+        Initialize differentiable parameters, zeta with default values.
+        Local assign makes sure no accidental calls are made. it won't, but Murphy's law!
+        """
+        zeta = {}  # 6 parameters learned via differentiation
+
+        zeta["p_ele"] = np.full((24, self.num_buildings), p_ele)
+
+        zeta["eta_bat"] = np.full((24, self.num_buildings), eta_bat)
+        zeta["eta_Hsto"] = np.full((24, self.num_buildings), eta_Hsto)
+        zeta["eta_Csto"] = np.full((24, self.num_buildings), eta_Csto)
+
+        zeta["eta_ehH"] = np.full(9, eta_ehH)
+        zeta["c_bat_end"] = np.full(9, c_bat_end)
+
+        return zeta
 
     def create_problem(self, t: int, parameters: dict, building_id: int):
         """
@@ -50,12 +77,8 @@ class Actor:
         window = T - t
         # Reset data
         self.constraints = []
-        self.costs = []
+        # self.cost = None ### reassign to NONE. not needed.
         self.t = t
-
-        self.set_parameters(
-            params=deepcopy(parameters)
-        )  # update parameters (constants + predictors) + zeta (only for initialization)
 
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
@@ -90,95 +113,99 @@ class Actor:
 
         ### --- Parameters ---
         p_ele = cp.Parameter(
-            name="p_ele", shape=(window), value=self.params["p_ele"][t:, building_id]
+            name="p_ele", shape=(window), value=self.zeta["p_ele"][t:, building_id]
         )
 
         E_grid_prevhour = cp.Parameter(
-            name="E_grid_prevhour", value=self.params["E_grid_prevhour"][t, building_id]
+            name="E_grid_prevhour", value=parameters["E_grid_prevhour"][t, building_id]
         )
 
         E_grid_pkhist = cp.Parameter(
             name="E_grid_pkhist",
-            value=np.max([0, *self.params["E_grid"][:t, building_id]])
+            value=np.max([0, *parameters["E_grid"][:t, building_id]])
             if t > 0
             else max(E_grid_prevhour.value, 0),
         )
 
         # Loads
         E_ns = cp.Parameter(
-            name="E_ns", shape=window, value=self.params["E_ns"][t:, building_id]
+            name="E_ns", shape=window, value=parameters["E_ns"][t:, building_id]
         )
         H_bd = cp.Parameter(
-            name="H_bd", shape=window, value=self.params["H_bd"][t:, building_id]
+            name="H_bd", shape=window, value=parameters["H_bd"][t:, building_id]
         )
         C_bd = cp.Parameter(
-            name="C_bd", shape=window, value=self.params["C_bd"][t:, building_id]
+            name="C_bd", shape=window, value=parameters["C_bd"][t:, building_id]
         )
 
         # PV generations
         E_pv = cp.Parameter(
-            name="E_pv", shape=window, value=self.params["E_pv"][t:, building_id]
+            name="E_pv", shape=window, value=parameters["E_pv"][t:, building_id]
         )
 
         # Heat Pump
         COP_C = cp.Parameter(
-            name="COP_C", shape=window, value=self.params["COP_C"][t:, building_id]
+            name="COP_C", shape=window, value=parameters["COP_C"][t:, building_id]
         )
         E_hpC_max = cp.Parameter(
-            name="E_hpC_max", value=self.params["E_hpC_max"][t, building_id]
+            name="E_hpC_max", value=parameters["E_hpC_max"][t, building_id]
         )
 
         # Electric Heater
-        eta_ehH = cp.Parameter(
-            name="eta_ehH", value=self.params["eta_ehH"][t, building_id]
-        )
+        eta_ehH = cp.Parameter(name="eta_ehH", value=self.zeta["eta_ehH"][building_id])
         E_ehH_max = cp.Parameter(
-            name="E_ehH_max", value=self.params["E_ehH_max"][t, building_id]
+            name="E_ehH_max",
+            value=parameters["H_max"][t, building_id]
+            / self.zeta["eta_ehH"][building_id],
         )
 
         # Battery
         C_f_bat = cp.Parameter(
-            name="C_f_bat", value=self.params["C_f_bat"][t, building_id]
+            name="C_f_bat", value=parameters["C_f_bat"][t, building_id]
         )
         C_p_bat = cp.Parameter(
-            name="C_p_bat", value=self.params["C_p_bat"][t, building_id]
+            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
         eta_bat = cp.Parameter(
-            name="eta_bat", value=self.params["eta_bat"][t, building_id]
+            name="eta_bat", shape=window, value=self.zeta["eta_bat"][t:, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=self.params["c_bat_init"][building_id]
+            name="c_bat_init", value=parameters["c_bat_init"][building_id]
         )
         soc_bat_norm_end = cp.Parameter(
-            name="c_bat_end", value=self.params["c_bat_end"][t, building_id]
+            name="c_bat_end", value=self.zeta["c_bat_end"][building_id]
         )
 
         # Heat (Energy->dhw) Storage
         C_f_Hsto = cp.Parameter(
-            name="C_f_Hsto", value=self.params["C_f_Hsto"][t, building_id]
+            name="C_f_Hsto", value=parameters["C_f_Hsto"][t, building_id]
         )
         C_p_Hsto = cp.Parameter(
-            name="C_p_Hsto", value=self.params["C_p_Hsto"][t, building_id]
+            name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
         eta_Hsto = cp.Parameter(
-            name="eta_Hsto", value=self.params["eta_Hsto"][t, building_id]
+            name="eta_Hsto",
+            shape=window,
+            value=self.zeta["eta_Hsto"][t:, building_id],
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=self.params["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
         )
 
         # Cooling (Energy->cooling) Storage
         C_f_Csto = cp.Parameter(
-            name="C_f_Csto", value=self.params["C_f_Csto"][t, building_id]
+            name="C_f_Csto", value=parameters["C_f_Csto"][t, building_id]
         )
         C_p_Csto = cp.Parameter(
-            name="C_p_Csto", value=self.params["C_p_Csto"][t, building_id]
+            name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
         eta_Csto = cp.Parameter(
-            name="eta_Csto", value=self.params["eta_Csto"][t, building_id]
+            name="eta_Csto",
+            shape=window,
+            value=self.zeta["eta_Csto"][t:, building_id],
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=self.params["c_Csto_init"][building_id]
+            name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
         )
 
         ### --- Variables ---
@@ -221,9 +248,12 @@ class Actor:
         action_C = cp.Variable(name="action_C", shape=(window))  # cooling storage
 
         ### objective function
-        ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
-            cp.abs(E_grid[1:] - E_grid[:-1])
-        )  # E_grid_t+1 - E_grid_t
+        ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour)
+        if window > 1:  # not at eod
+            ramping_cost += cp.sum(
+                cp.abs(E_grid[1:] - E_grid[:-1])
+            )  # E_grid_t+1 - E_grid_t
+
         peak_net_electricity_cost = cp.max(
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
@@ -242,7 +272,7 @@ class Actor:
         SOC_Crelax_cost = cp.sum(cp.abs(SOC_Crelax))
         SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
 
-        self.costs.append(
+        self.cost = (
             0.1 * ramping_cost
             + 5 * peak_net_electricity_cost
             + electricity_cost
@@ -361,7 +391,7 @@ class Actor:
             self.create_problem(
                 t, parameters, building_id
             )  # problem formulation for Actor optimizaiton
-            obj = cp.Minimize(*self.costs)
+            obj = cp.Minimize(self.cost)
             # Form problem.
             self.prob[t] = cp.Problem(obj, self.constraints)
         else:  # DPP
@@ -375,7 +405,7 @@ class Actor:
         problem_parameters = self.prob[t].param_dict
 
         ### --- Parameters ---
-        problem_parameters["p_ele"].value = parameters["p_ele"][t:, building_id]
+        problem_parameters["p_ele"].value = self.zeta["p_ele"][t:, building_id]
 
         problem_parameters["E_grid_prevhour"].value = parameters["E_grid_prevhour"][
             t, building_id
@@ -384,7 +414,7 @@ class Actor:
         problem_parameters["E_grid_pkhist"].value = (
             np.max([0, *parameters["E_grid"][:t, building_id]])
             if t > 0
-            else parameters["E_grid_prevhour"][t, building_id]
+            else max(0, parameters["E_grid_prevhour"][t, building_id])
         )
 
         # Loads
@@ -400,26 +430,28 @@ class Actor:
         problem_parameters["E_hpC_max"].value = parameters["E_hpC_max"][t, building_id]
 
         # Electric Heater
-        problem_parameters["eta_ehH"].value = parameters["eta_ehH"][t, building_id]
-        problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
+        problem_parameters["eta_ehH"].value = self.zeta["eta_ehH"][building_id]
+        problem_parameters["E_ehH_max"].value = (
+            parameters["H_max"][t, building_id] / self.zeta["eta_ehH"][building_id]
+        )
 
         # Battery
         problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
-        problem_parameters["eta_bat"].value = parameters["eta_bat"][t, building_id]
+        problem_parameters["eta_bat"].value = self.zeta["eta_bat"][t:, building_id]
         problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
-        problem_parameters["c_bat_end"].value = parameters["c_bat_end"][t, building_id]
+        problem_parameters["c_bat_end"].value = self.zeta["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
-        problem_parameters["eta_Hsto"].value = parameters["eta_Hsto"][t, building_id]
+        problem_parameters["eta_Hsto"].value = self.zeta["eta_Hsto"][t:, building_id]
         problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
-        problem_parameters["eta_Csto"].value = parameters["eta_Csto"][t, building_id]
+        problem_parameters["eta_Csto"].value = self.zeta["eta_Csto"][t:, building_id]
         problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
 
         ## Update Parameters
@@ -468,22 +500,22 @@ class Actor:
         # self.prune_update_zeta(t, prob.param_dict, building_id)
 
         ## compute dispatch cost
-        if dispatch:
-            ramping_cost = np.sum(
-                np.abs(
-                    actions["E_grid"][1:]
-                    + actions["E_grid_sell"][1:]
-                    - actions["E_grid"][:-1]
-                    - actions["E_grid_sell"][:-1]
-                )
-            )
-            net_peak_electricity_cost = np.max(actions["E_grid"])
-            virtual_electricity_cost = np.sum(
-                self.params["p_ele"][:, building_id] * actions["E_grid"]
-            )
-            dispatch_cost = (
-                ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
-            )
+        # if dispatch:
+        #     ramping_cost = np.sum(
+        #         np.abs(
+        #             actions["E_grid"][1:]
+        #             + actions["E_grid_sell"][1:]
+        #             - actions["E_grid"][:-1]
+        #             - actions["E_grid_sell"][:-1]
+        #         )
+        #     )
+        #     net_peak_electricity_cost = np.max(actions["E_grid"])
+        #     virtual_electricity_cost = np.sum(
+        #         self.params["p_ele"][:, building_id] * actions["E_grid"]
+        #     )
+        #     dispatch_cost = (
+        #         ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
+        #     )
 
         if self.num_actions[building_id].shape[0] == 2:
             return (
@@ -504,42 +536,39 @@ class Actor:
             actions["E_grid"],  # + actions["E_grid_sell"]
         )
 
-    def get_parameters(self):
-        """Returns parameters (constant + predictors) and zeta"""
-        return self.params
+    def get_zeta(self):
+        """Returns set of differentiable parameters, zeta"""
+        return self.zeta
 
-    def set_parameters(
-        self,
-        params: dict,
-        update_only_params: bool = True,
-        update_only_zeta: bool = False,
-        t_idx: int = -1,
-    ):
+    def set_zeta(self, parameters: dict, t: int, building_id: int):
         """
-        Sets values for parameters (constant + predictors) and/or zeta
+        Sets values for zeta
         @Params:
-        1. params: dictionary of parameters. Can be pruned to just zeta, or contain all set of parameters
-        2. update_only_params: if set to True, updates only constants and predictor parameters.
-        3. update_only_zeta: if set to True, updates only zeta.
-        4. t_idx: If >= 0, timestep to update zeta for.
+        1. parameters: dictionary of all parameters. zeta subset of parameters
+        2. t: timestep to update or start updating zeta for. NOTE: not all parameters require `t` indexing.
+        3. building_id: updating zeta for a specific building.
+        >>> See function below for info.
         """
-
-        # need to make sure params is not none
-        if self.params is None:
-            self.params = params
-            return
-
-        # update constants + predictors
-        if update_only_params:
-            for key, value in params.items():
-                if key not in self.zeta_keys:
-                    self.params[key] = value
 
         # update zeta
-        if update_only_zeta:
-            for key in self.zeta_keys:
-                self.params[key][t_idx] = params[key][t_idx]
+        # dimensions: 24, 9
+        self.zeta["p_ele"][t:, building_id] = parameters["p_ele"][t:, building_id]
+        self.zeta["eta_bat"][t:, building_id] = parameters["eta_bat"][t:, building_id]
+        self.zeta["eta_Hsto"][t:, building_id] = parameters["eta_Hsto"][t:, building_id]
+        self.zeta["eta_Csto"][t:, building_id] = parameters["eta_Csto"][t:, building_id]
+        # dimensions: 9
+        self.zeta["eta_ehH"][building_id] = (
+            parameters["eta_ehH"][building_id]
+            if len(parameters["eta_ehH"].shape) == 1
+            else parameters["eta_ehH"][t, building_id]
+        )
+        self.zeta["c_bat_end"][building_id] = (
+            parameters["c_bat_end"][building_id]
+            if len(parameters["c_bat_end"].shape) == 1
+            else parameters["c_bat_end"][t, building_id]
+        )
 
+    # TODO
     def target_update(self, local_params: dict, building_id: int):
         """Update rule for Target Actor."""
         assert (
@@ -562,16 +591,12 @@ class Actor:
                     + (1 - self.rho) * local_params[param][building_id]
                 )
 
-    def pre_initialize_target_params(self, local_params: dict):
-        """Initializes target actor parameters for the very first run."""
-        if self.params is None:
-            self.params = local_params
-
     # TODO: need to consider 0 <= t < 24. take ∑ grad. right now, only doing t=0.
     def backward(
         self,
         t: int,
         critic: Critic,  # Critic local-1
+        parameters: dict,
         building_id: int,
         E_grid: list,
         is_local: bool,
@@ -587,7 +612,7 @@ class Actor:
         """
         # problem formulation for Actor optimizaiton
         prob = critic.get_problem(
-            t, self.params, self.params, building_id, return_prob=True
+            t, parameters, self.zeta, building_id, return_prob=True
         )  # mu(s, zeta)
 
         (zeta_plus_params, variables_actor,) = (
@@ -629,9 +654,11 @@ class Actor:
             critic.get_alphas()
         ).float()
 
-        ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour) + torch.sum(
-            torch.abs(E_grid[1:] - E_grid[:-1])
-        )  # E_grid_t+1 - E_grid_t
+        ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour)
+        if len(E_grid) > 1:  # not at eod
+            ramping_cost += torch.sum(
+                torch.abs(E_grid[1:] - E_grid[:-1])
+            )  # E_grid_t+1 - E_grid_t
 
         peak_net_electricity_cost = torch.max(
             torch.tensor(E_grid.max()),
