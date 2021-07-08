@@ -21,7 +21,8 @@ class Adam:
 
     def update(self, t, w, dw):
         ## dw, db are from current minibatch
-        t = max(t, 1)  # prevent zero division
+        # t = max(t, 1)  # prevent zero division
+
         ## momentum beta 1
         # *** weights *** #
         self.m_dw = self.beta1 * self.m_dw + (1 - self.beta1) * dw
@@ -78,7 +79,7 @@ class ReplayBuffer:
             self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
         )
 
-    def sample(self, is_random=False):
+    def sample(self, is_random: bool = False):
         """Picks all samples within the replay_buffer"""
         # critic 1 last n days - sequential
         # critic 2 last n days - random
@@ -95,7 +96,7 @@ class ReplayBuffer:
         # combine all days together from DataLoader
         return days
 
-    def get(self, index):
+    def get(self, index: int):
         """Returns an element from deque specified by `index`"""
         try:
             return self.replay_memory[index]
@@ -103,7 +104,7 @@ class ReplayBuffer:
             print("Trying to access invalid index in replay buffer!")
             return None
 
-    def set(self, index, data: dict):
+    def set(self, index: int, data: dict):
         """Sets an element of replay buffer w/ dictionary"""
         try:
             self.replay_memory[index] = data
@@ -119,7 +120,7 @@ class ReplayBuffer:
 
 
 class RBC:
-    def __init__(self, actions_spaces):
+    def __init__(self, actions_spaces: list):
         """Rule based controller. Source: https://github.com/QasimWani/CityLearn/blob/master/agents/rbc.py"""
         self.actions_spaces = actions_spaces
 
