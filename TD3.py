@@ -34,7 +34,7 @@ class TD3(object):
             num_actions
         )  # runs for first 2 weeks (by default) to collect data
 
-        self.actor = Actor(num_actions, num_buildings)  # 1 local actor
+        self.actor = Actor(num_actions, num_buildings, rbc_threshold)  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
         self.actor_norl = deepcopy(
             self.actor
@@ -202,15 +202,26 @@ class TD3(object):
         for i in range(len(self.critic_target)):
             self.critic_target[i].target_update(self.critic[i].get_alphas())
 
-    def actor_update(self):
+    def actor_update(self, parameters: list):
         """Master Actor update"""
+        # pre-process each days information into numpy array and pass them to critic update
+        day_params = []
+        for params in parameters:
+            # deepcopy to prevent overriding issues
+            params = deepcopy(params)
+            # parse data for critic (in-place)
+            self.data_loader.model.convert_to_numpy(params)
+            self.data_loader.model.convert_to_numpy(params)
+            # add processed day info
+            day_params.append(params)
+
         for id in range(self.buildings):
             # local actor update
             self.actor.backward(
                 self.total_it % 24,
                 self.critic[0],
+                day_params,
                 id,
-                self.memory.get(-1)["E_grid"],
                 is_local=True,
             )
 
@@ -221,14 +232,14 @@ class TD3(object):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
 
         # gather data from memory for critic update
-        parameters_1 = self.memory.sample()  # critic 1
-        parameters_2 = self.memory.sample(is_random=False)  # critic 2
+        parameters_1 = self.memory.sample()  # critic 1 - sequential
+        parameters_2 = self.memory.sample(is_random=True)  # critic 2 - random
 
         # local + target critic update
         self.critic_update(parameters_1, parameters_2)
 
         # local + target actor update
-        self.actor_update()
+        self.actor_update(parameters_1)
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
