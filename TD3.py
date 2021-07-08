@@ -71,8 +71,6 @@ class TD3(object):
         """Returns epsilon-greedy action from RBC/Optimization"""
 
         if self.total_it >= self.rbc_threshold:  # run Actor
-            # pre-intialize actor network - will be done for first run only.
-            self.actor_target.pre_initialize_target_params(self.actor.params)
             # should return an empty dictionary if sod, else return up to current hour data
             data = deepcopy(self.memory.get_recent())
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
@@ -194,7 +192,7 @@ class TD3(object):
             self.critic_optim.backward(
                 day_params_1,
                 day_params_2,
-                self.actor_target.params,
+                self.actor_target.zeta,
                 id,
                 self.critic,
                 self.critic_target,
@@ -217,7 +215,7 @@ class TD3(object):
             )
 
             # target actor update - moving average
-            self.actor_target.target_update(self.actor.params, id)
+            self.actor_target.target_update(self.actor.zeta, id)
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""

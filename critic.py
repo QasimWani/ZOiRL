@@ -132,7 +132,9 @@ class Critic:  # decentralized version
             name="eta_ehH", value=zeta_target["eta_ehH"][building_id]
         )
         E_ehH_max = cp.Parameter(
-            name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
+            name="E_ehH_max",
+            value=parameters["H_max"][t, building_id]
+            / zeta_target["eta_ehH"][building_id],
         )
 
         # Battery
@@ -472,7 +474,9 @@ class Critic:  # decentralized version
 
         # Electric Heater
         problem_parameters["eta_ehH"].value = zeta_target["eta_ehH"][building_id]
-        problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
+        problem_parameters["E_ehH_max"].value = (
+            parameters["H_max"][t, building_id] / zeta_target["eta_ehH"][building_id]
+        )
 
         # Battery
         problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
@@ -696,8 +700,8 @@ class Optim:
             data["E_grid"].append(day_params["E_grid"][:, building_id])
 
             # clear Q-buffer for building x at each day
-            critic_target_1.Q_value[building_id].clear()
-            critic_target_2.Q_value[building_id].clear()
+            critic_target_1.Q_value[building_id] = [None] * 24
+            critic_target_2.Q_value[building_id] = [None] * 24
 
             for r in range(24):
                 y_r = self.obtain_target_Q(
