@@ -29,8 +29,10 @@ class Critic:  # decentralized version
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
 
-        # q value per building, recycled everyday - see `least_square_optimization`
-        self.Q_value = [[None] * 24] * num_buildings  # 9 x 24
+        # q value for latest building recycled everyday - see `least_absolute_optimization`.
+        # note that we don't need to creat 9 `Q_value` because we're clearing the data out
+        # per building in `least_absolute_optimization` which is called from `Optim.backward()`
+        self.Q_value = [None] * 24
 
     def create_problem(
         self, t: int, parameters: dict, zeta_target: dict, building_id: int
@@ -538,9 +540,9 @@ class Critic:  # decentralized version
         """Getter target alphas"""
         return np.array([self.alpha_ramp, self.alpha_peak1, self.alpha_peak2])
 
-    def get(self, index, building_id):
-        """Returns an element from Q-value array specified by `building_id` and `index`"""
-        return self.Q_value[building_id][index]
+    def get(self, index):
+        """Returns an element from Q-value array specified by `index`"""
+        return self.Q_value[index]
 
     def solve(
         self,
@@ -592,7 +594,7 @@ class Critic:  # decentralized version
         )
 
         # called only if no Q value exists for current timestep
-        self.Q_value[building_id][timestep] = Q_value
+        self.Q_value[timestep] = Q_value
 
         return Q_value
 
@@ -612,10 +614,10 @@ class Critic:  # decentralized version
         for n in range(1, 24 - t):
             # first check if we need to compute it at all. --> Saves computation
 
-            # if Q_value := self.get(t, building_id) is not None: # will break < 3.8.5
+            # if Q_value := self.get(t + n) is not None: # will break < 3.8.5
             #     return Q_value
 
-            Q_value = self.get(t + n, building_id)  # NOTE: n is an index from 0 - 23
+            Q_value = self.get(t + n)  # NOTE: n is an index from 0 - 23
 
             if Q_value is None:  # doesn't exist, solve
                 solution = self.solve(
@@ -699,9 +701,9 @@ class Optim:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
 
-            # clear Q-buffer for building x at each day
-            critic_target_1.Q_value[building_id] = [None] * 24
-            critic_target_2.Q_value[building_id] = [None] * 24
+            # clear Q-buffer at each day
+            critic_target_1.Q_value = [None] * 24
+            critic_target_2.Q_value = [None] * 24
 
             for r in range(24):
                 y_r = self.obtain_target_Q(

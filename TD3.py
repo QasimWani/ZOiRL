@@ -34,7 +34,9 @@ class TD3(object):
             num_actions
         )  # runs for first 2 weeks (by default) to collect data
 
-        self.actor = Actor(num_actions, num_buildings, rbc_threshold)  # 1 local actor
+        self.actor = Actor(
+            num_actions, num_buildings, rbc_threshold + meta_episode * 24
+        )  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
         self.actor_norl = deepcopy(
             self.actor
@@ -204,29 +206,22 @@ class TD3(object):
 
     def actor_update(self, parameters: list):
         """Master Actor update"""
-        # pre-process each days information into numpy array and pass them to critic update
+        # pre-process each days information into numpy array and pass them to actor update
         day_params = []
         for params in parameters:
             # deepcopy to prevent overriding issues
             params = deepcopy(params)
-            # parse data for critic (in-place)
-            self.data_loader.model.convert_to_numpy(params)
+            # parse data for actor (in-place)
             self.data_loader.model.convert_to_numpy(params)
             # add processed day info
             day_params.append(params)
 
         for id in range(self.buildings):
             # local actor update
-            self.actor.backward(
-                self.total_it % 24,
-                self.critic[0],
-                day_params,
-                id,
-                is_local=True,
-            )
+            self.actor.backward(self.total_it % 24, self.critic[0], day_params, id)
 
             # target actor update - moving average
-            self.actor_target.target_update(self.actor.zeta, id)
+            self.actor_target.target_update(self.actor.get_zeta(), id)
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
@@ -236,7 +231,11 @@ class TD3(object):
         parameters_2 = self.memory.sample(is_random=True)  # critic 2 - random
 
         # local + target critic update
+        start = time.time()
+
         self.critic_update(parameters_1, parameters_2)
+
+        print(f"\ncritic update time (min): {round((time.time() - start) / 60, 3)}")
 
         # local + target actor update
         self.actor_update(parameters_1)
