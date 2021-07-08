@@ -522,9 +522,16 @@ class Critic:  # decentralized version
 
         # Form and solve problem - automatically assigns to self.prob (DPP if problem already exists)
         self.get_problem(t, parameters, zeta_target, building_id)
-        status = self.prob[t % 24].solve(
-            verbose=debug, max_iters=1000
-        )  # output of reward warping function
+        try:
+            status = self.prob[t % 24].solve(
+                verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+        except:  # try another solver
+            print(f"\nSolving critic using SCS at t = {t} for building {building_id}")
+            status = self.prob[t].solve(
+                solver="SCS", verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+
         if float("-inf") < status < float("inf"):
             return (
                 self.prob[t % 24].var_dict["E_grid"].value,  # from Optim
@@ -779,7 +786,15 @@ class Optim:
 
         self.debug_l1 = prob
 
-        optim_solution = prob.solve()
+        try:
+            optim_solution = prob.solve(
+                verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+        except:  # try another solver
+            print(f"\nSolving L1 optimization using SCS for building {building_id}")
+            optim_solution = prob.solve(
+                solver="SCS", verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
 
         assert (
             float("-inf") < optim_solution < float("inf")
