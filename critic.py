@@ -2,12 +2,12 @@ import numpy as np
 import cvxpy as cp
 
 
-from collections import defaultdict, deque
+from collections import defaultdict
 
 from utils import *
 
 
-class Critic:  # Centralized for now.
+class Critic:  # decentralized version
     def __init__(
         self,
         num_buildings: int,
@@ -21,7 +21,8 @@ class Critic:  # Centralized for now.
         # Optim specific
         self.num_actions = num_actions
         self.constraints = []
-        self.costs = []
+        self.cost = None  # created at every call to `create_problem`. not used in DPP.
+
         self.alpha_ramp = [1] * num_buildings
         self.alpha_peak1 = [1] * num_buildings
         self.alpha_peak2 = [1] * num_buildings
@@ -29,7 +30,7 @@ class Critic:  # Centralized for now.
         self.prob = [None] * 24  # template for each hour
 
         # q value per building, recycled everyday - see `least_square_optimization`
-        self.Q_value = [deque(maxlen=24)] * num_buildings  # 9 x 24
+        self.Q_value = [[None] * 24] * num_buildings  # 9 x 24
 
     def create_problem(
         self, t: int, parameters: dict, zeta_target: dict, building_id: int
@@ -52,7 +53,8 @@ class Critic:  # Centralized for now.
         window = T - t
         # Reset data
         self.constraints = []
-        self.costs = []
+        # self.cost = None ### reassign to NONE. not needed.
+
         self.t = t
         # -- define action space -- #
         bounds_high, bounds_low = np.vstack(
@@ -127,7 +129,7 @@ class Critic:  # Centralized for now.
 
         # Electric Heater
         eta_ehH = cp.Parameter(
-            name="eta_ehH", value=zeta_target["eta_ehH"][t, building_id]
+            name="eta_ehH", value=zeta_target["eta_ehH"][building_id]
         )
         E_ehH_max = cp.Parameter(
             name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
@@ -141,13 +143,13 @@ class Critic:  # Centralized for now.
             name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
         )
         eta_bat = cp.Parameter(
-            name="eta_bat", value=zeta_target["eta_bat"][t, building_id]
+            name="eta_bat", shape=window, value=zeta_target["eta_bat"][t:, building_id]
         )
         soc_bat_init = cp.Parameter(
             name="c_bat_init", value=parameters["c_bat_init"][building_id]
         )
         soc_bat_norm_end = cp.Parameter(
-            name="c_bat_end", value=zeta_target["c_bat_end"][t, building_id]
+            name="c_bat_end", value=zeta_target["c_bat_end"][building_id]
         )
 
         # Heat (Energy->dhw) Storage
@@ -158,7 +160,9 @@ class Critic:  # Centralized for now.
             name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
         )
         eta_Hsto = cp.Parameter(
-            name="eta_Hsto", value=zeta_target["eta_Hsto"][t, building_id]
+            name="eta_Hsto",
+            shape=window,
+            value=zeta_target["eta_Hsto"][t:, building_id],
         )
         soc_Hsto_init = cp.Parameter(
             name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
@@ -172,7 +176,9 @@ class Critic:  # Centralized for now.
             name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
         )
         eta_Csto = cp.Parameter(
-            name="eta_Csto", value=zeta_target["eta_Csto"][t, building_id]
+            name="eta_Csto",
+            shape=window,
+            value=zeta_target["eta_Csto"][t:, building_id],
         )
         soc_Csto_init = cp.Parameter(
             name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
@@ -238,9 +244,12 @@ class Critic:  # Centralized for now.
             )  # cooling storage
 
         ### objective function
-        ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour) + cp.sum(
-            cp.abs(E_grid[1:] - E_grid[:-1])
-        )  # E_grid_t+1 - E_grid_t
+        ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour)
+        if window > 1:  # not at eod
+            ramping_cost += cp.sum(
+                cp.abs(E_grid[1:] - E_grid[:-1])
+            )  # E_grid_t+1 - E_grid_t
+
         peak_net_electricity_cost = cp.max(
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
@@ -259,7 +268,7 @@ class Critic:  # Centralized for now.
         SOC_Crelax_cost = cp.sum(cp.abs(SOC_Crelax))
         SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
 
-        self.costs.append(
+        self.cost = (
             0.1 * ramping_cost
             + 5 * peak_net_electricity_cost
             + electricity_cost
@@ -413,7 +422,7 @@ class Critic:  # Centralized for now.
         # Form objective.
         if self.prob[t % 24] is None:  # create problem
             self.create_problem(t, parameters, zeta_target, building_id)
-            obj = cp.Minimize(*self.costs)
+            obj = cp.Minimize(self.cost)
             # Form problem.
             if return_prob:
                 return cp.Problem(obj, self.constraints)
@@ -444,7 +453,9 @@ class Critic:  # Centralized for now.
         ]
 
         problem_parameters["E_grid_pkhist"].value = (
-            np.max([0, *parameters["E_grid"][:t, building_id]]) if t > 0 else 0
+            np.max([0, *parameters["E_grid"][:t, building_id]])
+            if t > 0
+            else max(0, parameters["E_grid_prevhour"][t, building_id])
         )
 
         # Loads
@@ -460,26 +471,26 @@ class Critic:  # Centralized for now.
         problem_parameters["E_hpC_max"].value = parameters["E_hpC_max"][t, building_id]
 
         # Electric Heater
-        problem_parameters["eta_ehH"].value = zeta_target["eta_ehH"][t, building_id]
+        problem_parameters["eta_ehH"].value = zeta_target["eta_ehH"][building_id]
         problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
 
         # Battery
         problem_parameters["C_f_bat"].value = parameters["C_f_bat"][t, building_id]
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
-        problem_parameters["eta_bat"].value = zeta_target["eta_bat"][t, building_id]
+        problem_parameters["eta_bat"].value = zeta_target["eta_bat"][t:, building_id]
         problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
-        problem_parameters["c_bat_end"].value = zeta_target["c_bat_end"][t, building_id]
+        problem_parameters["c_bat_end"].value = zeta_target["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_f_Hsto"].value = parameters["C_f_Hsto"][t, building_id]
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
-        problem_parameters["eta_Hsto"].value = zeta_target["eta_Hsto"][t, building_id]
+        problem_parameters["eta_Hsto"].value = zeta_target["eta_Hsto"][t:, building_id]
         problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_f_Csto"].value = parameters["C_f_Csto"][t, building_id]
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
-        problem_parameters["eta_Csto"].value = zeta_target["eta_Csto"][t, building_id]
+        problem_parameters["eta_Csto"].value = zeta_target["eta_Csto"][t:, building_id]
         problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
 
         ### current actions
@@ -524,11 +535,8 @@ class Critic:  # Centralized for now.
         return np.array([self.alpha_ramp, self.alpha_peak1, self.alpha_peak2])
 
     def get(self, index, building_id):
-        """Returns an element from Q-value deque specified by `building_id` and `index`"""
-        try:
-            return self.Q_value[building_id][index]
-        except IndexError:
-            return None
+        """Returns an element from Q-value array specified by `building_id` and `index`"""
+        return self.Q_value[building_id][index]
 
     def solve(
         self,
@@ -548,30 +556,30 @@ class Critic:  # Centralized for now.
         )  # output of reward warping function
         if float("-inf") < status < float("inf"):
             return (
-                self.prob[t % 24]
-                .var_dict["E_grid"]
-                .value  # from Optim
-                # self.prob[t % 24].param_dict["E_grid"].value,  # from env
-                # self.prob[t % 24].param_dict["E_grid_prevhour"].value,  # from env
+                self.prob[t % 24].var_dict["E_grid"].value,  # from Optim
+                parameters["E_grid"],  # from env
+                parameters["E_grid_prevhour"],  # from env
             )  # building specific sol.
 
         raise ValueError(f"Unbounded solution with status - {status}")
 
     def reward_warping_layer(
-        self, timestep: int, E_grid: list, zeta_target: dict, building_id: int
+        self, timestep: int, parameters_E_grid: dict, building_id: int
     ):
         """Calculates Q-value"""
-        E_grid_prevhour = zeta_target["E_grid_prevhour"][timestep, building_id]
+        E_grid, E_grid_true, E_grid_prevhour = parameters_E_grid
+
+        E_grid_prevhour = E_grid_prevhour[timestep, building_id]
         E_grid_pkhist = (
-            np.max([0, *zeta_target["E_grid"][:timestep, building_id]])
+            np.max([0, *E_grid_true[:timestep, building_id]])
             if timestep > 0
             else max(E_grid_prevhour, 0)
         )
 
         peak_hist_cost = np.max([*E_grid, E_grid_pkhist])
-        ramping_cost = np.abs(E_grid[0] - E_grid_prevhour) + np.sum(
-            np.abs(E_grid[1:] - E_grid[:-1])
-        )
+        ramping_cost = np.abs(E_grid[0] - E_grid_prevhour)
+        if len(E_grid) > 1:  # not at eod
+            ramping_cost += np.sum(np.abs(E_grid[1:] - E_grid[:-1]))
 
         Q_value = (
             -self.alpha_ramp[building_id] * ramping_cost
@@ -579,9 +587,8 @@ class Critic:  # Centralized for now.
             - self.alpha_peak2[building_id] * np.square(peak_hist_cost)
         )
 
-        self.Q_value[building_id].append(
-            Q_value
-        )  # called only if no Q value exists for current timestep
+        # called only if no Q value exists for current timestep
+        self.Q_value[building_id][timestep] = Q_value
 
         return Q_value
 
@@ -604,15 +611,17 @@ class Critic:  # Centralized for now.
             # if Q_value := self.get(t, building_id) is not None: # will break < 3.8.5
             #     return Q_value
 
-            Q_value = self.get(n, building_id)  # NOTE: n is an index from 0 - 23
+            Q_value = self.get(t + n, building_id)  # NOTE: n is an index from 0 - 23
 
             if Q_value is None:  # doesn't exist, solve
-                solution = self.solve(n, parameters, zeta_target, building_id, debug)
-                Q_value = self.reward_warping_layer(
-                    n, solution, zeta_target, building_id
+                solution = self.solve(
+                    t + n, parameters, zeta_target, building_id, debug
                 )
+                Q_value = self.reward_warping_layer(t + n, solution, building_id)
 
-            Gt_tn += np.sum(rewards[t + 1 : t + n + 1]) + Q_value
+            Gt_tn += (np.sum(rewards[t + 1 : t + n]) + Q_value) * self.lambda_ ** (
+                n - 1
+            )
 
         # compute TD(\lambda) rewards
         Gt_lambda = (1 - self.lambda_) * Gt_tn + np.sum(rewards[t:]) * self.lambda_ ** (
@@ -621,7 +630,7 @@ class Critic:  # Centralized for now.
 
         return Gt_lambda
 
-    def target_update(self, alphas_local: list):
+    def target_update(self, alphas_local: np.ndarray):
         """Updates alphas given from L1 optimization"""
         assert (
             len(alphas_local) == 3
@@ -629,7 +638,7 @@ class Critic:  # Centralized for now.
 
         ### main target update
         alpha_ramp, alpha_peak1, alpha_peak2 = (
-            self.rho * np.array(self.get_alphas())
+            self.rho * self.get_alphas()
             + (1 - self.rho) * alphas_local  # alphas_new comes from LS optim sol.
         )
 
@@ -712,9 +721,11 @@ class Optim:
                 )  # pkhist at 0th hour is 0.
                 clipped_values.append(y_r)
 
+        NUM_DAYS = len(parameters)
+
         # convert to ndarray
         clipped_values = np.array(clipped_values, dtype=float).reshape(
-            len(parameters), 24
+            NUM_DAYS, 24
         )  # number of days, 24 hours
 
         data["E_grid"] = np.array(data["E_grid"], dtype=float).reshape(
@@ -753,8 +764,8 @@ class Optim:
         )
 
         #### cost
-        self.cost = []
-        for i in range(len(parameters)):
+        cost = []
+        for i in range(NUM_DAYS):
             ramping_cost = cp.abs(E_grid[i][0] - E_grid_prevhour[i]) + cp.sum(
                 cp.abs(E_grid[i][1:] - E_grid[i][:-1])
             )  # E_grid_t+1 - E_grid_t
@@ -764,7 +775,7 @@ class Optim:
             )  # max(E_grid, E_gridpkhist)
 
             # L1 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
-            self.cost.append(
+            cost.append(
                 cp.sum(
                     cp.abs(
                         alpha_ramp * ramping_cost
@@ -776,24 +787,24 @@ class Optim:
             )
 
         #### constraints
-        self.constraints = []
+        constraints = []
 
         # alpha-peak
-        self.constraints.append(alpha_ramp <= 2)
-        self.constraints.append(alpha_ramp >= 0.1)
+        constraints.append(alpha_ramp <= 2)
+        constraints.append(alpha_ramp >= 0.1)
 
         # alpha-peak
-        self.constraints.append(alpha_peak1 <= 2)
-        self.constraints.append(alpha_peak1 >= 0.1)
+        constraints.append(alpha_peak1 <= 2)
+        constraints.append(alpha_peak1 >= 0.1)
 
         # alpha-peak
-        self.constraints.append(alpha_peak2 <= 2)
-        self.constraints.append(alpha_peak2 >= 0.1)
+        constraints.append(alpha_peak2 <= 2)
+        constraints.append(alpha_peak2 >= 0.1)
 
         # Form objective.
-        obj = cp.Minimize(cp.sum(self.cost))
+        obj = cp.Minimize(cp.sum(cost))
         # Form and solve problem.
-        prob = cp.Problem(obj, self.constraints)
+        prob = cp.Problem(obj, constraints)
 
         self.debug_l1 = prob
 
