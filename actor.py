@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import deepcopy
 from critic import Critic
 
@@ -10,7 +11,13 @@ import cvxpy as cp
 
 
 class Actor:
-    def __init__(self, num_actions: list, num_buildings: int, rho: float = 0.9):
+    def __init__(
+        self,
+        num_actions: list,
+        num_buildings: int,
+        offset: int,
+        rho: float = 0.9,
+    ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
         self.num_buildings = num_buildings
@@ -33,6 +40,8 @@ class Actor:
         self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
 
         self.optim = [Adam()] * num_buildings
+        # (t - offset + 1) see Adam.update
+        self.adam_offset = offset + 1  # +1 for 1-based indexing
 
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
@@ -540,116 +549,110 @@ class Actor:
         """Returns set of differentiable parameters, zeta"""
         return self.zeta
 
-    def set_zeta(self, parameters: dict, t: int, building_id: int):
-        """
-        Sets values for zeta
-        @Params:
-        1. parameters: dictionary of all parameters. zeta subset of parameters
-        2. t: timestep to update or start updating zeta for. NOTE: not all parameters require `t` indexing.
-        3. building_id: updating zeta for a specific building.
-        >>> See function below for info.
-        """
+    def set_zeta(
+        self,
+        zeta: tuple,
+        building_id: int,
+    ):
+        """Sets values for zeta"""
+        # get Zeta
+        (
+            p_ele_grad,
+            eta_bat_grad,
+            eta_Hsto_grad,
+            eta_Csto_grad,
+            eta_ehH_grad,
+            c_bat_end_grad,
+        ) = zeta
 
-        # update zeta
-        # dimensions: 24, 9
-        self.zeta["p_ele"][t:, building_id] = parameters["p_ele"][t:, building_id]
-        self.zeta["eta_bat"][t:, building_id] = parameters["eta_bat"][t:, building_id]
-        self.zeta["eta_Hsto"][t:, building_id] = parameters["eta_Hsto"][t:, building_id]
-        self.zeta["eta_Csto"][t:, building_id] = parameters["eta_Csto"][t:, building_id]
-        # dimensions: 9
+        # dimensions: 24
+        self.zeta["p_ele_grad"][:, building_id] = p_ele_grad
+        self.zeta["eta_bat_grad"][:, building_id] = eta_bat_grad
+        self.zeta["eta_Hsto_grad"][:, building_id] = eta_Hsto_grad
+        self.zeta["eta_Csto_grad"][:, building_id] = eta_Csto_grad
+
+        # dimensions: 1
+        self.zeta["eta_ehH_grad"][building_id] = eta_ehH_grad
+        self.zeta["c_bat_end_grad"][building_id] = c_bat_end_grad
+
+    def target_update(self, zeta_local: dict, building_id: int):
+        """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
+        # dimensions: 24
+        self.zeta["p_ele"][:, building_id] = (
+            self.rho * self.zeta["p_ele"][:, building_id]
+            + (1 - self.rho) * zeta_local["p_ele"][:, building_id]
+        )
+        self.zeta["eta_bat"][:, building_id] = (
+            self.rho * self.zeta["eta_bat"][:, building_id]
+            + (1 - self.rho) * zeta_local["eta_bat"][:, building_id]
+        )
+        self.zeta["eta_Hsto"][:, building_id] = (
+            self.rho * self.zeta["eta_Hsto"][:, building_id]
+            + (1 - self.rho) * zeta_local["eta_Hsto"][:, building_id]
+        )
+        self.zeta["eta_Csto"][:, building_id] = (
+            self.rho * self.zeta["eta_Csto"][:, building_id]
+            + (1 - self.rho) * zeta_local["eta_Csto"][:, building_id]
+        )
+
+        # dimensions: 1
         self.zeta["eta_ehH"][building_id] = (
-            parameters["eta_ehH"][building_id]
-            if len(parameters["eta_ehH"].shape) == 1
-            else parameters["eta_ehH"][t, building_id]
+            self.rho * self.zeta["eta_ehH"][building_id]
+            + (1 - self.rho) * zeta_local["eta_ehH"][building_id]
         )
         self.zeta["c_bat_end"][building_id] = (
-            parameters["c_bat_end"][building_id]
-            if len(parameters["c_bat_end"].shape) == 1
-            else parameters["c_bat_end"][t, building_id]
+            self.rho * self.zeta["c_bat_end"][building_id]
+            + (1 - self.rho) * zeta_local["c_bat_end"][building_id]
+        )
+        self.zeta["eta_Csto"][:, building_id] = (
+            self.rho * self.zeta["eta_Csto"][:, building_id]
+            + (1 - self.rho) * zeta_local["eta_Csto"][:, building_id]
         )
 
-    # TODO
-    def target_update(self, local_params: dict, building_id: int):
-        """Update rule for Target Actor."""
-        assert (
-            self.params is not None
-        ), "Zeta must be pre-initialized to local actor network. See `pre_initialize_target_params`"
+    def convert_to_torch_tensor(self, params: dict) -> dict:
+        """Converts cp.param to dict[torch.tensor]"""
+        params_dict = {}
+        for key, value in params.items():
+            # only compute gradient w.r.t zeta
+            params_dict[key] = torch.tensor(np.array(value.value), requires_grad=True)
+            params_dict[key].grad = None
 
-        for param, value in self.params.items():
-            if param not in self.zeta_keys:
-                continue
+        return params_dict
 
-            # current param is guaranteed to be Zeta
-            if len(self.params[param].shape) == 2:
-                self.params[param][:, building_id] = (
-                    self.rho * value[:, building_id]
-                    + (1 - self.rho) * local_params[param][:, building_id]
-                )
-            else:
-                self.params[param][building_id] = (
-                    self.rho * value[building_id]
-                    + (1 - self.rho) * local_params[param][building_id]
-                )
+    def E2E_grad(self, t: int, parameters: dict, critic: Critic, building_id: int):
+        """Utilizes Critic Optimization and forward (RWL) for a single hour and returns gradient for each param \in zeta"""
 
-    # TODO: need to consider 0 <= t < 24. take ∑ grad. right now, only doing t=0.
-    def backward(
-        self,
-        t: int,
-        critic: Critic,  # Critic local-1
-        parameters: dict,
-        building_id: int,
-        E_grid: list,
-        is_local: bool,
-    ):
-        """
-        Computes the gradient first for optimization given parameters `params`.
-        Updates actor parameters accordingly.
-
-        This function calculates math: \nabla_\zeta Q(s, \mu(s, \zeta), w) - see section 1.3.1
-        Step 1. Solve Actor optimization w/ actions this time as parameters, whose values were obtained in Actor forward pass.
-        Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
-        Step 3. Take backward pass of (2) with parameters \zeta.
-        """
-        # problem formulation for Actor optimizaiton
+        # problem formulation using Critic optimizaiton, i.e. setting current action as constant
         prob = critic.get_problem(
             t, parameters, self.zeta, building_id, return_prob=True
-        )  # mu(s, zeta)
+        )  # mu(s_t, a_t, zeta)
 
         (zeta_plus_params, variables_actor,) = (
             prob.param_dict,
             prob.var_dict,
         )
 
-        def convert_to_torch_tensor(params: dict) -> dict:
-            """Converts cp.param to dict:torch.tensor"""
-            params_dict = {}
-            for key, value in params.items():
-                if key in self.zeta_keys:
-                    # only compute gradient w.r.t zeta
-                    params_dict[key] = torch.tensor(
-                        np.array(value.value), requires_grad=True
-                    )
-                    params_dict[key].grad = None
-                else:
-                    params_dict[key] = torch.from_numpy(np.array(value.value)).float()
-
-            return params_dict
-
-        # Actor forward pass - Step 1
-        fit_actor = CvxpyLayer(
+        # Actor forward pass w/ Critic Optimization setup - Step 1
+        mu = CvxpyLayer(
             prob,
             parameters=list(zeta_plus_params.values()),
             variables=list(variables_actor.values()),
         )
+
         # fetch params in loss calculation
-        E_grid_prevhour = E_grid[building_id, -1]
-        E_grid_pkhist = E_grid[building_id][:t].max() if t > 0 else 0.0
+        E_grid_prevhour = parameters["E_grid_prevhour"][t, building_id]
+        E_grid_pkhist = (
+            max(0, parameters["E_grid_prevhour"][t, building_id])
+            if t == 0
+            else np.max([0, *parameters["E_grid"][:t, building_id]])
+        )
 
-        # typecast each param to tensor for autograd later
-        zeta_plus_params_tensor = convert_to_torch_tensor(zeta_plus_params)
-        E_grid, *_ = fit_actor(*zeta_plus_params_tensor.values())
+        zeta_plus_params_tensor_dict: dict = self.convert_to_torch_tensor(
+            zeta_plus_params
+        )
+        E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
 
-        # Q function forward pass - Step 2
+        # Reward Warping function, Critic forward pass - Step 2
         alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(
             critic.get_alphas()
         ).float()
@@ -674,17 +677,145 @@ class Actor:
         # Gradient w.r.t parameters (math: \zeta) - Step 3
         reward_warping_loss.backward()
 
-        if is_local:
-            # updated via Adam
-            for param in self.zeta_keys:
-                grad = zeta_plus_params_tensor[param].grad.item()
-                param_update = self.optim.update(
-                    t, zeta_plus_params_tensor[param].numpy(), grad
-                )
-                zeta_plus_params[param].value = param_update
+        # Pad zeta, only for non-scalars
+        # dimensions: 24
+        p_ele_grad = np.pad(
+            zeta_plus_params_tensor_dict["p_ele"].grad.item(), (23 - t, 0)
+        )
+        eta_bat_grad = np.pad(
+            zeta_plus_params_tensor_dict["eta_bat"].grad.item(), (23 - t, 0)
+        )
+        eta_Hsto_grad = np.pad(
+            zeta_plus_params_tensor_dict["eta_Hsto"].grad.item(), (23 - t, 0)
+        )
+        eta_Csto_grad = np.pad(
+            zeta_plus_params_tensor_dict["eta_Csto"].grad.item(), (23 - t, 0)
+        )
 
-            self.set_parameters(
-                zeta_plus_params, update_only_zeta=True, t_idx=t
-            )  # update zeta
+        # dimensions: 1
+        eta_ehH_grad = zeta_plus_params_tensor_dict["eta_ehH"].grad.item()
+        c_bat_end_grad = zeta_plus_params_tensor_dict["c_bat_end"].grad.item()
 
-        return zeta_plus_params
+        return (
+            p_ele_grad,
+            eta_bat_grad,
+            eta_Hsto_grad,
+            eta_Csto_grad,
+            eta_ehH_grad,
+            c_bat_end_grad,
+        )
+
+    def backward(
+        self,
+        t: int,
+        critic: Critic,  # Critic local-1
+        batch_parameters: list,
+        building_id: int,
+    ):
+        """
+        Computes the gradient first for optimization given parameters `params`.
+        Updates actor parameters accordingly.
+
+        This function calculates math: \nabla_\zeta Q(s, \mu(s, \zeta), w) - see section 1.3.1
+        Step 1. Solve Actor optimization w/ actions this time as parameters, whose values were obtained in Actor forward pass.
+        Step 2. Use reward warping function w/ E^grid given from (1) and perform forward pass.
+        Step 3. Take backward pass of (2) with parameters \zeta.
+        """
+
+        parameter_gradients = defaultdict(list)
+
+        for day_param in batch_parameters:
+            for r in range(24):
+                (
+                    p_ele_grad,
+                    eta_bat_grad,
+                    eta_Hsto_grad,
+                    eta_Csto_grad,
+                    eta_ehH_grad,
+                    c_bat_end_grad,
+                ) = self.E2E_grad(r, day_param, critic, building_id)
+
+                # store gradients
+                parameter_gradients["p_ele_grad"].append(p_ele_grad)
+                parameter_gradients["eta_bat_grad"].append(eta_bat_grad)
+                parameter_gradients["eta_Hsto_grad"].append(eta_Hsto_grad)
+                parameter_gradients["eta_Csto_grad"].append(eta_Csto_grad)
+                parameter_gradients["eta_ehH_grad"].append(eta_ehH_grad)
+                parameter_gradients["c_bat_end_grad"].append(c_bat_end_grad)
+
+        # compute average gradient
+
+        # dimension : 24
+        parameter_gradients["p_ele_grad"] = np.array(
+            parameter_gradients["p_ele_grad"]
+        ).mean(0)
+
+        # dimension : 24
+        parameter_gradients["eta_bat_grad"] = np.array(
+            parameter_gradients["eta_bat_grad"]
+        ).mean(0)
+
+        # dimension : 24
+        parameter_gradients["eta_Hsto_grad"] = np.array(
+            parameter_gradients["eta_Hsto_grad"]
+        ).mean(0)
+
+        # dimension : 24
+        parameter_gradients["eta_Csto_grad"] = np.array(
+            parameter_gradients["eta_Csto_grad"]
+        ).mean(0)
+
+        # dimension : 1
+        parameter_gradients["eta_ehH_grad"] = np.array(
+            parameter_gradients["eta_ehH_grad"]
+        ).mean(0)
+
+        # dimension : 1
+        parameter_gradients["c_bat_end_grad"] = np.array(
+            parameter_gradients["c_bat_end_grad"]
+        ).mean(0)
+
+        ### Update Parameter using Adam
+        p_ele = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["p_ele"],
+            parameter_gradients["p_ele_grad"],
+        )
+        eta_bat = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["eta_bat"],
+            parameter_gradients["eta_bat_grad"],
+        )
+        eta_Hsto = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["eta_Hsto"],
+            parameter_gradients["eta_Hsto_grad"],
+        )
+        eta_Csto = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["eta_Csto"],
+            parameter_gradients["eta_Csto_grad"],
+        )
+        eta_ehH = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["eta_ehH"],
+            parameter_gradients["eta_ehH_grad"],
+        )
+        c_bat_end = self.optim[building_id].update(
+            t - self.adam_offset,
+            self.zeta["c_bat_end"],
+            parameter_gradients["c_bat_end_grad"],
+        )
+
+        ## Update Zeta
+        self.set_zeta(
+            (
+                p_ele,
+                eta_bat,
+                eta_Hsto,
+                eta_Csto,
+                eta_ehH,
+                c_bat_end,
+            ),
+            building_id,
+        )
