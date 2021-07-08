@@ -127,8 +127,8 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 25  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 25. Can't run Oracle agent optimization."
+            len(current_data) == 22  # actions + rewards + E_grid_collect. Section 1.3.1
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 22. Can't run Oracle agent optimization."
 
         for key, value in current_data.items():
             if key not in data:
@@ -319,15 +319,15 @@ class Oracle:
         observation_data["t_C_hp"] = t_C_hp
         observation_data["COP_C"] = COP_C
 
-        observation_data["C_f_bat"] = C_f_bat
+        # observation_data["C_f_bat"] = C_f_bat
         observation_data["C_p_bat"] = C_p_bat
         observation_data["c_bat_init"] = c_bat_init
 
-        observation_data["C_f_Hsto"] = C_f_Hsto
+        # observation_data["C_f_Hsto"] = C_f_Hsto
         observation_data["C_p_Hsto"] = C_p_Hsto
         observation_data["c_Hsto_init"] = c_Hsto_init
 
-        observation_data["C_f_Csto"] = C_f_Csto
+        # observation_data["C_f_Csto"] = C_f_Csto
         observation_data["C_p_Csto"] = C_p_Csto
         observation_data["c_Csto_init"] = c_Csto_init
 

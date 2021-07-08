@@ -204,6 +204,10 @@ class TD3(object):
         for i in range(len(self.critic_target)):
             self.critic_target[i].target_update(self.critic[i].get_alphas())
 
+        # copy problem into critic local -- for use in actor backward
+        self.critic[0].prob = self.critic_target[0].prob
+        # self.critic[1].prob = self.critic_target[1].prob
+
     def actor_update(self, parameters: list):
         """Master Actor update"""
         # pre-process each days information into numpy array and pass them to actor update
@@ -218,7 +222,7 @@ class TD3(object):
 
         for id in range(self.buildings):
             # local actor update
-            self.actor.backward(self.total_it % 24, self.critic[0], day_params, id)
+            self.actor.backward(self.total_it, self.critic[0], day_params, id)
 
             # target actor update - moving average
             self.actor_target.target_update(self.actor.get_zeta(), id)
@@ -231,11 +235,7 @@ class TD3(object):
         parameters_2 = self.memory.sample(is_random=True)  # critic 2 - random
 
         # local + target critic update
-        start = time.time()
-
         self.critic_update(parameters_1, parameters_2)
-
-        print(f"\ncritic update time (min): {round((time.time() - start) / 60, 3)}")
 
         # local + target actor update
         self.actor_update(parameters_1)

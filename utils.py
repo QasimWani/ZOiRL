@@ -21,6 +21,7 @@ class Adam:
 
     def update(self, t, w, dw):
         ## dw, db are from current minibatch
+        t += 1  # 0 based
         # t = max(t, 1)  # prevent zero division
 
         ## momentum beta 1
