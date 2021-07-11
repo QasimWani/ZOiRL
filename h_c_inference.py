@@ -31,7 +31,7 @@ class Predictor:
         self.load_buffer = ReplayBuffer(buffer_size=365, batch_size=32)
         self.regr = LinearRegression(fit_intercept=False, positive=True)
         self.avg_h_load = {uid: np.zeros(24) for uid in building_ids}
-        self.avg_c_load = {uid: np.zeros(24) for uid in building_ids}
+        self.avg_c_load = {uid: np.ones(24) for uid in building_ids}
         self.timestep = 0
 
         pass
@@ -196,7 +196,7 @@ class Predictor:
                         next_t_out = next_state["t_out"][time+1][uid]
                         next_elec_con = next_state["elec_cons"][time+1][uid]
                         y = now_solar + next_elec_con - now_elec_dem - \
-                            (true_val_c[uid]/cop_c) * (next_c_soc - (1-CF_C) * now_c_soc)\
+                            (true_val_c[uid]/cop_c) * (next_c_soc - (1-CF_C) * now_c_soc) * 0.9\
                             - (true_val_h[uid]/effi_h) * (next_h_soc - (1-CF_H) * now_h_soc)\
                             - (next_b_soc - (1-CF_B) * now_b_soc) * true_val_b[uid] / 0.9
                     else:
@@ -206,7 +206,7 @@ class Predictor:
                         next_b_soc = next_state["soc_b"][0][uid]
                         next_t_out = next_state["t_out"][0][uid]
                         next_elec_con = next_state["elec_cons"][0][uid]
-                        y = now_solar + next_elec_con - now_elec_dem - (true_val_c[uid] / cop_c) * (next_c_soc - (1 - CF_C) * now_c_soc) * 1.1 \
+                        y = now_solar + next_elec_con - now_elec_dem - (true_val_c[uid] / cop_c) * (next_c_soc - (1 - CF_C) * now_c_soc) * 0.9 \
                             - (true_val_h[uid] / effi_h) * (next_h_soc - (1 - CF_H) * now_h_soc) - (next_b_soc - (1 - CF_B) * now_b_soc) \
                             * true_val_b[uid] / 0.9
 
@@ -264,6 +264,8 @@ class Predictor:
                                     reg_y.append([est_h_load[uid][min(time + 1, 23)]])
                             self.regr.fit(reg_x, reg_y)
                             [[c_load, h_load]] = self.regr.coef_
+                            c_load = max(0, (h_load*0.8-5)*0.6*cop_c)
+                            # c_load = max(c_load, self.avg_c_load[uid][time])
                             ## get results of slope in regr model
                         else:   # COP remaining the same (zero)
                             h_load = self.avg_h_load[uid][time]
