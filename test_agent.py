@@ -1,96 +1,99 @@
 import sys
 
-'''
+"""
 Please use python3+ THIS HASN'T BEEN TESTED w/ python <= 2.7
 
 Colab/Notebook : get python version
 
 >>> from platform import python_version
 >>> print(python_version())
-'''
+"""
 
 try:
     from platform import python_version
-    print(python_version())
+
+    print("Python Version", python_version())
 except:
     print("Unable to get python version!")
 
 ### testing package installation
 try:
     import numpy as np
+
+    print("numpy version", np.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
     import pandas as pd
+
+    print("pandas version", pd.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
     import json
+
+    print("json version", json.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
     import torch
+
+    print("pytorch version", torch.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
-    from copy import Error, deepcopy
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
-
-try:
-    from collections import defaultdict
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
-
-try:
+    import copy
+    import collections
     import time
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
-
-try:
     import warnings
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    import pathlib
 
-try:
-    from pathlib import Path
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
     import cvxpy as cp
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
 
+    print("cvxpy version", cp.__version__)
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.msg)
     # from cvxpylayers.torch import CvxpyLayer  ## COMMENT THIS IF NEEDED
 
-    
-try: # for prediction/estimation
-    from sklearn import linear_model
+try:
+    import sklearn
+
+    print("sklearn version", sklearn.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
+    print(error.__class__.__name__ + ": " + error.msg)
 
 try:
-    from sklearn.linear_model import LinearRegression
+    import statsmodels
+
+    print("statsmodels version", statsmodels.__version__)
 except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
-
-try:
-    from sklearn.linear_model import QuantileRegressor
-except ImportError as error:
-    print(error.__class__.__name__ + ": " + error.message)
-
-
+    print(error.__class__.__name__ + ": " + error.msg)
 
 ### testing RBC agent running
-class RBC:
-    def __init__(self, actions_spaces):
+class Agent:
+    def __init__(self, **parameters):
         """Rule based controller. Source: https://github.com/QasimWani/CityLearn/blob/master/agents/rbc.py"""
-        self.actions_spaces = actions_spaces
+        self.actions_spaces = parameters["action_spaces"]
+
+    def add_to_buffer(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        done,
+        coordination_vars,
+        coordination_vars_next,
+    ):
+        pass
 
     def select_action(self, states):
         hour_day = states[0][0]
@@ -151,57 +154,4 @@ class RBC:
                 for i in range(len(self.actions_spaces))
             ]
 
-        return np.array(a, dtype="object")
-
-
-## RUN simulation
-from citylearn import CityLearn  # assuming curr dir is in access to citylearn
-
-
-### TEST ALL ###
-if __name__ == "__main__":
-
-    # Load environment
-    climate_zone = 5
-    params = {
-        "data_path": Path("data/Climate_Zone_" + str(climate_zone)),
-        "building_attributes": "building_attributes.json",
-        "weather_file": "weather_data.csv",
-        "solar_profile": "solar_generation_1kW.csv",
-        "carbon_intensity": "carbon_intensity.csv",
-        "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
-        "buildings_states_actions": "buildings_state_action_space.json",
-        "simulation_period": (0, 8760 * 4 - 1),
-        "cost_function": [
-            "ramping",
-            "1-load_factor",
-            "average_daily_peak",
-            "peak_demand",
-            "net_electricity_consumption",
-            "carbon_emissions",
-        ],
-        "central_agent": False,
-        "save_memory": False,
-    }
-
-    # Contain the lower and upper bounds of the states and actions, to be provided to the agent to normalize the variables between 0 and 1.
-    env = CityLearn(**params)
-    observations_spaces, actions_spaces = env.get_state_action_spaces()
-
-    # Instantiating the control agent(s)
-    agents = RBC(actions_spaces)
-
-    state = env.reset()
-    done = False
-
-    action = agents.select_action(state)
-
-    while not done:
-        next_state, reward, done, _ = env.step(action)
-        action_next = agents.select_action(next_state)
-        state = next_state
-        action = action_next
-
-    env.cost()  # Comment it out if needed, this is guaranteed to work
-
-    print("NO ERRORS!")
+        return np.array(a, dtype="object"), None
