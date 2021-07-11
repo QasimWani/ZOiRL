@@ -9,31 +9,81 @@ Colab/Notebook : get python version
 >>> print(python_version())
 '''
 
+try:
+    from platform import python_version
+    print(python_version())
+except:
+    print("Unable to get python version!")
 
 ### testing package installation
 try:
-
     import numpy as np
-    import pandas as pd
-    import json
-
-    import torch
-
-    from copy import Error, deepcopy
-    from collections import defaultdict
-
-    import time
-    import warnings
-    from pathlib import Path
-
-    import cvxpy as cp
-    from cvxpylayers.torch import CvxpyLayer  ## COMMENT THIS IF NEEDED
-
-    from sklearn import linear_model
-    from sklearn.linear_model import LinearRegression, QuantileRegressor    # for prediction/estimation
-
 except ImportError as error:
     print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import pandas as pd
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import json
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import torch
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    from copy import Error, deepcopy
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    from collections import defaultdict
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import time
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import warnings
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    from pathlib import Path
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    import cvxpy as cp
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+    # from cvxpylayers.torch import CvxpyLayer  ## COMMENT THIS IF NEEDED
+
+    
+try: # for prediction/estimation
+    from sklearn import linear_model
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    from sklearn.linear_model import LinearRegression
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
+try:
+    from sklearn.linear_model import QuantileRegressor
+except ImportError as error:
+    print(error.__class__.__name__ + ": " + error.message)
+
 
 
 ### testing RBC agent running
