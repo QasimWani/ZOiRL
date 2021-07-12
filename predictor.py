@@ -113,14 +113,14 @@ class Predictor(DataLoader):
         self, replay_buffer: ReplayBuffer, state, action, reward, next_state, done
     ):
         """Main function to append eod data to main replaybuffer passed into optimization model"""
-        if self.timestep % 24 == 0:  # new day - add to buffer
+        self.record_dic(state, action, reward, next_state)
+
+        if self.timestep % 24 == 23:  # new day - add to buffer
             data = self.parse_data(
                 replay_buffer.get_recent(), self.get_day_data(replay_buffer)
             )
             replay_buffer.add(data)
             replay_buffer.total_it += 24
-        else:
-            self.record_dic(state, action, reward)
 
     def parse_data(self, data: dict, current_data: dict):  # override in child class
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
@@ -148,8 +148,8 @@ class Predictor(DataLoader):
         heating_estimate, cooling_estimate = self.infer_load()
 
         E_ns = np.array(
-            self.state_buffer.get(-2)["elec_cons"]
-        )  # net electricity consumption -2 to -1
+            self.state_buffer.get(-1)["elec_cons"]
+        )  # net electricity consumption -2 to -1--done
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
@@ -165,9 +165,9 @@ class Predictor(DataLoader):
         else:
             H_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
 
-        E_pv = np.array(self.state_buffer.get(-2)["solar_gen"])  # solar energy -2 to -1
+        E_pv = np.array(self.state_buffer.get(-1)["solar_gen"])  # solar energy -2 to -1--done
 
-        temp = np.array(self.state_buffer.get(-2)["t_out"])  # 24, 9 intermediate value
+        temp = np.array(self.state_buffer.get(-1)["t_out"])  # 24, 9 intermediate value
         COP_C = np.zeros((24, len(self.building_ids)))
         for hour in range(24):
             for bid in self.building_ids:
@@ -178,30 +178,30 @@ class Predictor(DataLoader):
         C_p_bat = np.full((24, len(self.building_ids)), fill_value=60)
 
         c_bat_init = (
-            np.array(self.state_buffer.get(-2)["soc_b"]) / C_p_bat
-        )  # -2 to -1 (confirm)
+            np.array(self.state_buffer.get(-1)["soc_b"]) / C_p_bat
+        )  # -2 to -1 (confirm)--done
         c_bat_init[c_bat_init == np.inf] = 0
 
         C_p_Hsto = 3 * H_max
 
         c_Hsto_init = (
-            np.array(self.state_buffer.get(-2)["soc_h"]) / C_p_Hsto
-        )  # -2 to -1 (confirm)
+            np.array(self.state_buffer.get(-1)["soc_h"]) / C_p_Hsto
+        )  # -2 to -1 (confirm)--done
         c_Hsto_init[c_Hsto_init == np.inf] = 0
         C_p_Csto = 2 * C_max
 
         c_Csto_init = (
-            np.array(self.state_buffer.get(-2)["soc_c"]) / C_p_Csto
-        )  # -2 to -1 (confirm)
+            np.array(self.state_buffer.get(-1)["soc_c"]) / C_p_Csto
+        )  # -2 to -1 (confirm)--done
         c_Csto_init[c_Csto_init == np.inf] = 0
 
         # add E-grid (part of E-grid_collect)
-        observation_data["E_grid"] = np.array(self.state_buffer.get(-2)["elec_cons"])
+        observation_data["E_grid"] = np.array(self.state_buffer.get(-1)["elec_cons"])
         observation_data["E_grid_prevhour"] = np.zeros((24, len(self.building_ids)))
         for hour in range(24):
             for bid in self.building_ids:
                 observation_data["E_grid_prevhour"][hour, bid] = (
-                    np.array(self.state_buffer.get(-3)["elec_cons"])[-1, bid]
+                    np.array(self.state_buffer.get(-2)["elec_cons"])[-1, bid]
                     if hour == 0
                     else observation_data["E_grid"][hour - 1, bid]
                 )
@@ -227,32 +227,36 @@ class Predictor(DataLoader):
         observation_data["C_p_Csto"] = C_p_Csto
         observation_data["c_Csto_init"] = c_Csto_init
 
-        observation_data["action_H"] = self.action_buffer.get(-2)["action_H"]
-        observation_data["action_C"] = self.action_buffer.get(-2)["action_C"]
-        observation_data["action_bat"] = self.action_buffer.get(-2)["action_bat"]
+        observation_data["action_H"] = self.action_buffer.get(-1)["action_H"]
+        observation_data["action_C"] = self.action_buffer.get(-1)["action_C"]
+        observation_data["action_bat"] = self.action_buffer.get(-1)["action_bat"]
 
         # add reward \in R^9 (scalar value for each building)
-        observation_data["reward"] = self.action_buffer.get(-2)["reward"]
+        observation_data["reward"] = self.action_buffer.get(-1)["reward"]
 
         return observation_data
 
     def record_dic(
-        self, current_state: list, current_action: list, current_reward: list
+        self, current_state: list, current_action: list, current_reward: list, next_state: list
     ):
         """
         call record_dic at the beginning of each step
         """
-        now_state = self.state_to_dic(current_state)
         state = self.state_buffer.get_recent()
+        now_state = self.state_to_dic(current_state, next_state)
         parse_state = self.parse_data(state, now_state)
         self.state_buffer.add(parse_state)
+
         current_action = self.action_reward_to_dic(current_action, current_reward)
         action = self.action_buffer.get_recent()
         parse_action = self.parse_data(action, current_action)
         self.action_buffer.add(parse_action)
 
-    def state_to_dic(self, state_list: list):
+
+
+    def state_to_dic(self, state_list: list, next_state_list: list):
         state_bdg = {}
+        next_state_bdg = {}
         for uid in self.building_ids:
             state = state_list[uid]
             s = {
@@ -288,6 +292,41 @@ class Predictor(DataLoader):
                 "carbon_intensity": state[29],
             }
             state_bdg[uid] = s
+        for uid in self.building_ids:
+            state = next_state_list[uid]
+            s = {
+                "month": state[0],
+                "day": state[1],
+                "hour": state[2],
+                "daylight_savings_status": state[3],
+                "t_out": state[4],
+                "t_out_pred_6h": state[5],
+                "t_out_pred_12h": state[6],
+                "t_out_pred_24h": state[7],
+                "rh_out": state[8],
+                "rh_out_pred_6h": state[9],
+                "rh_out_pred_12h": state[10],
+                "rh_out_pred_24h": state[11],
+                "diffuse_solar_rad": state[12],
+                "diffuse_solar_rad_pred_6h": state[13],
+                "diffuse_solar_rad_pred_12h": state[14],
+                "diffuse_solar_rad_pred_24h": state[15],
+                "direct_solar_rad": state[16],
+                "direct_solar_rad_pred_6h": state[17],
+                "direct_solar_rad_pred_12h": state[18],
+                "direct_solar_rad_pred_24h": state[19],
+                "t_in": state[20],
+                "avg_unmet_setpoint": state[21],
+                "rh_in": state[22],
+                "non_shiftable_load": state[23],
+                "solar_gen": state[24],
+                "cooling_storage_soc": state[25],
+                "dhw_storage_soc": state[26],
+                "electrical_storage_soc": state[27],
+                "net_electricity_consumption": state[28],
+                "carbon_intensity": state[29],
+            }
+            next_state_bdg[uid] = s
 
         s_dic = {}
         daytype = [state_bdg[i]["day"] for i in self.building_ids]
@@ -301,8 +340,19 @@ class Predictor(DataLoader):
         soc_c = [state_bdg[i]["cooling_storage_soc"] for i in self.building_ids]
         soc_h = [state_bdg[i]["dhw_storage_soc"] for i in self.building_ids]
         soc_b = [state_bdg[i]["electrical_storage_soc"] for i in self.building_ids]
-        elec_cons = [
-            state_bdg[i]["net_electricity_consumption"] for i in self.building_ids
+        next_daytype = [next_state_bdg[i]["day"] for i in self.building_ids]
+        next_hour = [next_state_bdg[i]["hour"] for i in self.building_ids]
+        next_t_out = [next_state_bdg[i]["t_out"] for i in self.building_ids]
+        next_rh_out = [next_state_bdg[i]["rh_out"] for i in self.building_ids]
+        next_t_in = [next_state_bdg[i]["t_in"] for i in self.building_ids]
+        next_rh_in = [next_state_bdg[i]["rh_in"] for i in self.building_ids]
+        next_elec_dem = [next_state_bdg[i]["non_shiftable_load"] for i in self.building_ids]
+        next_solar_gen = [next_state_bdg[i]["solar_gen"] for i in self.building_ids]
+        next_soc_c = [next_state_bdg[i]["cooling_storage_soc"] for i in self.building_ids]
+        next_soc_h = [next_state_bdg[i]["dhw_storage_soc"] for i in self.building_ids]
+        next_soc_b = [next_state_bdg[i]["electrical_storage_soc"] for i in self.building_ids]
+        next_elec_cons = [
+            next_state_bdg[i]["net_electricity_consumption"] for i in self.building_ids
         ]
 
         s_dic["daytype"] = daytype
@@ -317,6 +367,19 @@ class Predictor(DataLoader):
         s_dic["soc_h"] = soc_h
         s_dic["soc_b"] = soc_b
         s_dic["elec_cons"] = elec_cons
+
+        s_dic["next_daytype"] = next_daytype
+        s_dic["next_hour"] = next_hour
+        s_dic["next_t_out"] = next_t_out
+        s_dic["next_rh_out"] = next_rh_out
+        s_dic["next_t_in"] = next_t_in
+        s_dic["next_rh_in"] = next_rh_in
+        s_dic["next_elec_dem"] = next_elec_dem
+        s_dic["next_solar_gen"] = next_solar_gen
+        s_dic["next_soc_c"] = next_soc_c
+        s_dic["next_soc_h"] = next_soc_h
+        s_dic["next_soc_b"] = next_soc_b
+        s_dic["next_elec_cons"] = next_elec_cons
 
         return s_dic
 
