@@ -22,7 +22,7 @@ class TD3(object):
         rbc_threshold: int = 336,  # 2 weeks by default
         env: CityLearn = None,
         is_oracle: bool = True,
-        meta_episode: int = 2,
+        meta_episode: int = 50,
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
@@ -44,6 +44,7 @@ class TD3(object):
 
         ### --- log details ---
         self.logger = []
+        self.logger_data = []
         self.norl_logger = []
 
         self.critic = [
@@ -74,10 +75,21 @@ class TD3(object):
 
         if self.total_it >= self.rbc_threshold:  # run Actor
             # should return an empty dictionary if sod, else return up to current hour data
-            data = deepcopy(self.memory.get_recent())
+            if self.total_it % 24 == 0:
+                data = {}
+            elif self.total_it % 24 == 1:
+                data = self.data_loader.model.parse_data(  # this is just to add the immediate prev hour data
+                    {}, self.data_loader.model.get_current_data_oracle(
+                        env, self.total_it - 1, [x[28] for x in state], [x[28] for x in state],
+                        [np.zeros(3) for _ in range(9)], [0 for _ in range(9)]))
+            else:
+                data = deepcopy(self.memory.get_recent()) #note that the memory is lagging behind
+                data = self.data_loader.model.parse_data( #this is just to add the immediate prev hour data
+                data,self.data_loader.model.get_current_data_oracle(
+                    env, self.total_it-1, [x[28] for x in state], [x[28] for x in state], [np.zeros(3) for _ in range(9)],[0 for _ in range(9)]))
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
                 if self.total_it % 24 == 0:
-
+                    # data = {}
                     self.day_ahead_dispatch(env, data)
 
                 actions = [
@@ -85,26 +97,82 @@ class TD3(object):
                     for idx in range(len(self.num_actions))
                 ]
             else:  # adaptive dispatch
-                actions = self.adaptive_dispatch(env, data)
+                if self.total_it % 24 ==0:
+                    actions = self.adaptive_dispatch(env, data)
+                elif self.total_it % 24 <=8:
+                    actions = [
+                        np.array(self.action_planned_day[idx])[:, self.total_it % 24]
+                        for idx in range(len(self.num_actions))
+                    ]
+                elif self.total_it % 24 in [9,11,13]:
+                    actions = self.adaptive_dispatch(env, data)
+                elif self.total_it % 24 in [10,12,14]:
+                    actions = [
+                        np.array(self.action_planned_day[idx])[:, 1]
+                        for idx in range(len(self.num_actions))
+                    ]
+                elif self.total_it % 24 <=20:
+                    actions = self.adaptive_dispatch(env, data)
+                elif self.total_it % 24 in [22]:
+                    actions = self.adaptive_dispatch(env, data)
+                elif self.total_it % 24 in [21,23]:
+                    actions = [
+                        np.array(self.action_planned_day[idx])[:, 1]
+                        for idx in range(len(self.num_actions))
+                    ]
         else:  # run RBC
+
             actions = self.agent_rbc.select_action(state)
 
+        self.total_it += 1
         return actions
 
     def adaptive_dispatch(self, env: CityLearn, data: dict):
         """Computes next action"""
-        data_est = self.data_loader.model.estimate_data(
-            env, data, self.total_it, self.init_updates, self.memory
-        )
-        self.data_loader.model.convert_to_numpy(data_est)
+        # data_t = {}
+        # data_t["c_bat_init"] = [[]]
+        # data_t["c_Csto_init"] = [[]]
+        # data_t["c_Hsto_init"] = [[]]
+        # for bid in range(9):
+        #     data_t["c_Csto_init"][0].append(env.buildings[f'Building_{bid + 1}'].cooling_storage_soc[
+        #                                         -1] / env.buildings[f'Building_{bid + 1}'].cooling_storage.capacity)
+        #     data_t["c_Hsto_init"][0].append(env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
+        #                                     env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
+        #     data_t["c_bat_init"][0].append(env.buildings[f'Building_{bid + 1}'].electrical_storage_soc[
+        #                                        -1] / env.buildings[f'Building_{bid + 1}'].electrical_storage.capacity)
+        #
+        # if type(self.data_loader.model) == Oracle:
+        #     _, self.init_updates = self.data_loader.model.init_values(
+        #         data_t
+        #     )
+        # else:
+        #     raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
-        action, cost, _ = zip(
+        data_est = self.data_loader.model.estimate_data(
+            env, data, self.total_it, self.init_updates, self.memory #note that the init_updates are useless here
+        )
+        data_est['c_bat_init'] = [[]]
+        data_est['c_Hsto_init'] = [[]]
+        data_est['c_Csto_init'] = [[]]
+        for bid in range(9):
+            data_est["c_Csto_init"][0].append(env.buildings[f'Building_{bid + 1}'].cooling_storage_soc[
+                                                -1] / env.buildings[f'Building_{bid + 1}'].cooling_storage.capacity)
+            data_est["c_Hsto_init"][0].append(env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
+                                            env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
+            data_est["c_bat_init"][0].append(env.buildings[f'Building_{bid + 1}'].electrical_storage_soc[
+                                               -1] / env.buildings[f'Building_{bid + 1}'].electrical_storage.capacity)
+
+        self.data_loader.model.convert_to_numpy(data_est)
+        self.logger_data.append(data_est)
+        action, cost, action_planned_day = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
                 for id in range(self.buildings)
             ]
         )
+        self.action_planned_day = action_planned_day
 
+        self.logger.append(cost)  # add all variables - RL
         # _, _, E_grid = zip(
         #     *[
         #         self.actor_target.forward(
@@ -133,11 +201,50 @@ class TD3(object):
 
     def day_ahead_dispatch(self, env: CityLearn, data: dict):
         """Computes action for the current day (24hrs) in advance"""
+        if (self.total_it) % 24 == 0 and self.total_it > 0:  # reset values every day
+            data_t = {}
+            data_t["c_bat_init"] = [[]]
+            data_t["c_Csto_init"] = [[]]
+            data_t["c_Hsto_init"] = [[]]
+            for bid in range(9):
+                data_t["c_Csto_init"][0].append(env.buildings[f'Building_{bid + 1}'].cooling_storage_soc[
+                        -1] / env.buildings[f'Building_{bid + 1}'].cooling_storage.capacity)
+                data_t["c_Hsto_init"][0].append(env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
+                    env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
+                data_t["c_bat_init"][0].append(env.buildings[f'Building_{bid + 1}'].electrical_storage_soc[
+                        -1] /env.buildings[f'Building_{bid + 1}'].electrical_storage.capacity)
+
+
+            if type(self.data_loader.model) == Oracle:
+                _, self.init_updates = self.data_loader.model.init_values(
+                    data_t
+                )
+            else:
+                raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
+
+
         data_est = self.data_loader.model.estimate_data(
             env, data, self.total_it, self.init_updates, self.memory
         )
-        self.data_loader.model.convert_to_numpy(data_est)
+        #
+        #
+        # env.buildings['Building_1'].cooling_storage_soc[-1]/env.buildings['Building_1'].cooling_storage.capacity
+        # x = []
+        # for bid in range(9):
+        #     x.append(self.init_updates['c_Csto_init'][bid]-env.buildings[f'Building_{bid+1}'].cooling_storage_soc[-1]/env.buildings[f'Building_{bid+1}'].cooling_storage.capacity)
+        # y= []
+        # for bid in range(9):
+        #     y.append(
+        #         self.init_updates['c_Hsto_init'][bid] - env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
+        #         env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
+        # z = []
+        # for bid in range(9):
+        #     z.append(
+        #         self.init_updates['c_bat_init'][bid] - env.buildings[f'Building_{bid + 1}'].electric_storage_soc[-1] /
+        #         env.buildings[f'Building_{bid + 1}'].electric_storage.capacity)
 
+        self.data_loader.model.convert_to_numpy(data_est)
+        self.logger_data.append(data_est)
         self.action_planned_day, cost_dispatch, _ = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
@@ -146,15 +253,15 @@ class TD3(object):
         )
 
         # compute E-grid
-        _, _, self.E_grid_planned_day = zip(
-            *[
-                self.actor_target.forward(
-                    self.total_it % 24, data_est, id, dispatch=True
-                )
-                for id in range(self.buildings)
-            ]
-        )
-        self.E_grid_planned_day = np.array(self.E_grid_planned_day)
+        # _, _, self.E_grid_planned_day = zip(
+        #     *[
+        #         self.actor_target.forward(
+        #             self.total_it % 24, data_est, id, dispatch=True
+        #         )
+        #         for id in range(self.buildings)
+        #     ]
+        # )
+        # self.E_grid_planned_day = np.array(self.E_grid_planned_day)
 
         ### DEBUG ###
         # gather data for NORL agent
@@ -245,29 +352,29 @@ class TD3(object):
         raise NotImplementedError
 
     def add_to_buffer_oracle(
-        self, state: np.ndarray, env: CityLearn, action: list, reward: list
+        self, state: np.ndarray, env: CityLearn, action: list, reward: list, next_state: np.ndarray
     ):
         """Add to replay buffer"""
         # processing SOC's into suitable format
-        if self.total_it % 24 == 0 and self.total_it > 0:  # reset values every day
-            if type(self.data_loader.model) == Oracle:
-                _, self.init_updates = self.data_loader.model.init_values(
-                    self.memory.get(-1)
-                )
-            else:
-                raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
+        # if (self.total_it+1) % 24 == 0 and self.total_it > 0:  # reset values every day
+        #     if type(self.data_loader.model) == Oracle:
+        #         _, self.init_updates = self.data_loader.model.init_values(
+        #             self.memory.get(-1)
+        #         )
+        #     else:
+        #         raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
         # upload E-grid (containarizing E-grid_collect w/ other memory for fast computational efficiency)
         self.data_loader.upload_data(
             self.memory,
-            state[:, 28],  # current hour E_grid
+            next_state[:, 28],  # current hour E_grid
             action,
             reward,
             env,
             self.total_it,
         )
 
-        self.total_it += 1
+        # self.total_it += 1 MJ move to select_action
 
         # start training after end of first meta-episode
         if (

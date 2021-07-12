@@ -99,12 +99,13 @@ class Oracle:
         ), "Invalid argument passed. Missing env object and/or invalid time index passed"
 
         ## load current data and pass it as an argument to parse_data where data needs to be a dictionary.
-        if t_idx == 0:
-            E_grid_memory = [0] * len(self.action_space)
-        else:
-            # last hour or eod E_grid values.
-            E_grid_memory = replay_buffer.get(-1)["E_grid"][-1]
+        # if t_idx == 2:
+        #     E_grid_memory = [0] * len(self.action_space)
+        # else:
+        #     # last hour or eod E_grid values.
+        #     E_grid_memory = replay_buffer.get(-1)["E_grid"][-1]
 
+        E_grid_memory = E_grid
         data = self.parse_data(
             replay_buffer.get_recent(),
             self.get_current_data_oracle(
@@ -227,9 +228,7 @@ class Oracle:
 
         # Heat Pump
         eta_hp = [0.22] * _num_buildings  # P
-        t_C_hp = [
-            8
-        ] * _num_buildings  # P target cooling temperature (universal constant)
+        t_C_hp = [8] * _num_buildings  # P target cooling temperature (universal constant)
 
         COP_C = [None for i in range(_num_buildings)]  # DP
 
@@ -304,7 +303,7 @@ class Oracle:
         observation_data["E_grid"] = (
             E_grid if E_grid is not None else [0] * _num_buildings
         )
-        observation_data["E_grid_prevhour"] = E_grid_memory
+        observation_data["E_grid_prevhour"] = E_grid if E_grid is not None else [0] * _num_buildings#E_grid_memory
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
@@ -348,23 +347,22 @@ class Oracle:
         init_updates: dict,
         replay_buffer: ReplayBuffer,
         t_end: int = 24,
+        E_grid_memory: list = [0]*9
     ):
         """Returns data for hours `t_start` - 24 using `surrogate_env` running RBC `agent`"""
-        for i in range(t_start % 24, t_end):
+        for i in range(t_end-t_start % 24):
             data = self.parse_data(
                 data,
                 self.get_current_data_oracle(
                     surrogate_env,
                     t_start + i,
                     E_grid=None,
-                    E_grid_memory=replay_buffer.get(-2)["E_grid"][
-                        (t_start + i) % 24
-                    ],  # -2 : previous day E_grid values
+                    E_grid_memory=np.array(E_grid_memory)#replay_buffer.get(-1)["E_grid"][(t_start + i) % 24],  # -2 : previous day E_grid values
                 ),
             )
 
         return (
-            self.init_values(data, init_updates)[0] if t_start % 24 == 0 else data
+            self.init_values(data, init_updates)[0]# if t_start % 24 == 0 else data
         )  # only load previous values at start of day
 
     def init_values(self, data: dict, update_values: dict = None):

@@ -74,7 +74,7 @@ class Actor:
 
         return zeta
 
-    def create_problem(self, t: int, parameters: dict, building_id: int):
+    def create_problem(self, t: int, parameters: dict, building_id: int,dispatch=True):
         """
         @Param:
         - `t` : hour to solve optimization for.
@@ -319,14 +319,14 @@ class Actor:
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Brelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat[0] + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
-                + action_bat[i] * eta_bat
+                + action_bat[i] * eta_bat[i]
                 + SOC_Brelax[i]
             )
         self.constraints.append(
@@ -338,14 +338,14 @@ class Actor:
         # Heat Storage constraints
         self.constraints.append(
             SOC_H[0]
-            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto + SOC_Hrelax[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto[0] + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
-                + action_H[i] * eta_Hsto
+                + action_H[i] * eta_Hsto[i]
                 + SOC_Hrelax[i]
             )
         self.constraints.append(SOC_H >= 0)  # battery SOC bounds
@@ -354,14 +354,14 @@ class Actor:
         # Cooling Storage constraints
         self.constraints.append(
             SOC_C[0]
-            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto + SOC_Crelax[0]
+            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto[0] + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
-                + action_C[i] * eta_Csto
+                + action_C[i] * eta_Csto[i]
                 + SOC_Crelax[i]
             )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
@@ -390,13 +390,13 @@ class Actor:
                 self.constraints.append(action_bat <= h)
                 self.constraints.append(action_bat >= l)
 
-    def get_problem(self, t: int, parameters: dict, building_id: int):
+    def get_problem(self, t: int, parameters: dict, building_id: int,dispatch=True):
         """Returns raw problem"""
         assert 0 <= t < 24, f"Invalid range for t. Found {t}, needs to be (0, 24]"
         # Form objective.
         if self.prob[t] is None:
             self.create_problem(
-                t, parameters, building_id
+                t, parameters, building_id,dispatch
             )  # problem formulation for Actor optimizaiton
             obj = cp.Minimize(self.cost)
             # Form problem.
@@ -415,9 +415,8 @@ class Actor:
         ### --- Parameters ---
         problem_parameters["p_ele"].value = self.zeta["p_ele"][t:, building_id]
 
-        problem_parameters["E_grid_prevhour"].value = parameters["E_grid_prevhour"][
-            t, building_id
-        ]
+        problem_parameters["E_grid_prevhour"].value = parameters["E_grid"][t-1, building_id] \
+            if t > 0 else 0
 
         problem_parameters["E_grid_pkhist"].value = (
             np.max([0, *parameters["E_grid"][:t, building_id]])
@@ -476,10 +475,10 @@ class Actor:
         dispatch=False,
     ):
         """Actor Optimization"""
-        self.get_problem(t, parameters, building_id)  # Form problem using DPP
+        self.get_problem(t, parameters, building_id,dispatch)  # Form problem using DPP
 
         actions = {}
-
+        actions_all = {}
         try:
             status = self.prob[t].solve(
                 verbose=debug, max_iters=1000
@@ -487,7 +486,7 @@ class Actor:
         except:  # try another solver
             print(f"\nSolving using SCS at t = {t} for building {building_id}")
             status = self.prob[t].solve(
-                solver="SCS", verbose=debug, max_iters=1000
+                solver="SCS", verbose=debug#, max_iters=1000
             )  # Returns the optimal value.
 
         if float("-inf") < status < float("inf"):
@@ -500,6 +499,7 @@ class Actor:
                 actions[var.name()] = np.array(var.value)
             else:
                 actions[var.name()] = np.array(var.value)[0]
+                actions_all[var.name()] = np.array(var.value)
 
         # prune out zeta - set zeta values for later use in backward pass.
         # self.prune_update_zeta(t, prob.param_dict, building_id)
@@ -537,8 +537,12 @@ class Actor:
                 actions["action_H"],
                 actions["action_bat"],
             ],
-            actions,  # debug
-            actions["E_grid"],  # + actions["E_grid_sell"]
+            actions if dispatch else actions_all,  # debug
+            None if dispatch else [
+                actions_all["action_C"],
+                actions_all["action_H"],
+                actions_all["action_bat"],
+            ],  # + actions["E_grid_sell"]
         )
 
     def get_zeta(self):
