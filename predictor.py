@@ -196,10 +196,15 @@ class Predictor(DataLoader):
         c_Csto_init[c_Csto_init == np.inf] = 0
 
         # add E-grid (part of E-grid_collect)
-        observation_data["E_grid"] = (
-            E_grid if E_grid is not None else [0] * _num_buildings
-        )
-        observation_data["E_grid_prevhour"] = E_grid_memory
+        observation_data["E_grid"] = np.array(self.state_buffer.get(-2)["elec_cons"])
+        observation_data["E_grid_prevhour"] = np.zeros((24, len(self.building_ids)))
+        for hour in range(24):
+            for bid in self.building_ids:
+                observation_data["E_grid_prevhour"][hour, bid] = (
+                    np.array(self.state_buffer.get(-3)["elec_cons"])[-1, bid]
+                    if hour == 0
+                    else observation_data["E_grid"][hour - 1, bid]
+                )
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
