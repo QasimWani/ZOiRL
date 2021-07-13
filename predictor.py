@@ -543,35 +543,36 @@ class Predictor(DataLoader):
                             or prev_t_cop != next_t_cop
                             or now_t_cop != next_t_cop
                         ):
-                            reg_x = []
-                            reg_y = []
-                            reg_x.append([1 / prev_t_cop, 1 / 0.9])
-                            reg_y.append([y])
-                            reg_x.append([1 / now_t_cop, 1 / 0.9])
-                            reg_y.append([y])
-                            reg_x.append([1 / next_t_cop, 1 / 0.9])
-                            reg_y.append([y])
-                            c_hasest[uid][time], h_hasest[uid][time] = 1, 1
-                            if (
-                                c_hasest[uid][max(time - 1, 0)] == -1
-                                or c_hasest[uid][min(time + 1, 23)] == -1
-                            ):
-                                # t-1 or t+1 has clipped est (both h and c since they couple)
-                                if c_hasest[uid][max(time - 1, 0)] == -1:
-                                    reg_x.append([1, 0])
-                                    reg_y.append([est_c_load[uid][max(time - 1, 0)]])
-                                    reg_x.append([0, 1])
-                                    reg_y.append([est_h_load[uid][max(time - 1, 0)]])
-                                if c_hasest[uid][min(time + 1, 23)] == -1:
-                                    reg_x.append([1, 0])
-                                    reg_y.append([est_c_load[uid][min(time + 1, 23)]])
-                                    reg_x.append([0, 1])
-                                    reg_y.append([est_h_load[uid][min(time + 1, 23)]])
-                            self.regr.fit(reg_x, reg_y)
-                            [[c_load, h_load]] = self.regr.coef_
-                            c_load = max(0, (h_load * 0.8 - 5) * 0.6 * cop_c)
+                            # reg_x = []
+                            # reg_y = []
+                            # reg_x.append([1 / prev_t_cop, 1 / 0.9])
+                            # reg_y.append([y])
+                            # reg_x.append([1 / now_t_cop, 1 / 0.9])
+                            # reg_y.append([y])
+                            # reg_x.append([1 / next_t_cop, 1 / 0.9])
+                            # reg_y.append([y])
+                            # c_hasest[uid][time], h_hasest[uid][time] = 1, 1
+                            # if (
+                            #     c_hasest[uid][max(time - 1, 0)] == -1
+                            #     or c_hasest[uid][min(time + 1, 23)] == -1
+                            # ):
+                            #     # t-1 or t+1 has clipped est (both h and c since they couple)
+                            #     if c_hasest[uid][max(time - 1, 0)] == -1:
+                            #         reg_x.append([1, 0])
+                            #         reg_y.append([est_c_load[uid][max(time - 1, 0)]])
+                            #         reg_x.append([0, 1])
+                            #         reg_y.append([est_h_load[uid][max(time - 1, 0)]])
+                            #     if c_hasest[uid][min(time + 1, 23)] == -1:
+                            #         reg_x.append([1, 0])
+                            #         reg_y.append([est_c_load[uid][min(time + 1, 23)]])
+                            #         reg_x.append([0, 1])
+                            #         reg_y.append([est_h_load[uid][min(time + 1, 23)]])
+                            # self.regr.fit(reg_x, reg_y)
+                            # [[c_load, h_load]] = self.regr.coef_
+                            # c_load = max(0, (h_load * 0.8 - 5) * 0.6 * cop_c)
                             # c_load = max(c_load, self.avg_c_load[uid][time])
                             ## get results of slope in regr model
+                            c_load = h_load = max(1, y-(1/now_t_cop + 1/0.9))
                         else:  # COP remaining the same (zero)
                             h_load = self.avg_h_load[uid][time]
                             c_load = self.avg_c_load[uid][time]
