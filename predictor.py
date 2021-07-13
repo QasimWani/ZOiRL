@@ -191,7 +191,6 @@ class Predictor(DataLoader):
     def get_day_data(self, replay_buffer: ReplayBuffer):
         """Helper method for uploading data to memory. This is for estimation only!!!"""
         observation_data = {}
-        print("in here")
 
         # get current day's buffer
         data = replay_buffer[-1] if len(replay_buffer) > 0 else None
@@ -911,7 +910,6 @@ class Predictor(DataLoader):
                 time = (time + 1) % 24
                 jump_out = True
                 for i in range(24):
-                    print(c_hasest[uid][i], h_hasest[uid][i])
                     if c_hasest[uid][i] == 0 or h_hasest[uid][i] == 0:
                         jump_out = False
                 if jump_out is True:
