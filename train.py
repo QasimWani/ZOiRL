@@ -78,8 +78,8 @@ while not done and t_idx <= end_time:
         next_state, env
     )  # passing in environment for Oracle agent.
 
-    agents.add_to_buffer_oracle(state, env, action, reward)
-    # agents.add_to_buffer(state, action, reward, next_state, done)
+    # agents.add_to_buffer_oracle(state, env, action, reward)
+    agents.add_to_buffer(state, action, reward, next_state, done)
     state = next_state
     action = action_next
 
