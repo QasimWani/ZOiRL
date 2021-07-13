@@ -1,4 +1,4 @@
-from citylearn import  CityLearn
+from citylearn import CityLearn
 from pathlib import Path
 from agents.rbc import RBC
 import numpy as np
@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from sklearn import datasets, linear_model
 from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.linear_model import LinearRegression, QuantileRegressor
+from sklearn.linear_model import LinearRegression
 
 true_val_h = [10.68, 49.35, 1e-05, 1e-05, 60.12, 105.12, 85.44, 111.96, 102.24]
 true_val_b = [140, 80, 50, 75, 50, 30, 40, 30, 35]
@@ -83,7 +83,8 @@ class Predictor:
                 "dhw_storage_soc": state[26],
                 "electrical_storage_soc": state[27],
                 "net_electricity_consumption": state[28],
-                "carbon_intensity": state[29]}
+                "carbon_intensity": state[29],
+            }
             state_bdg[uid] = s
 
         s_dic = {}
@@ -98,7 +99,9 @@ class Predictor:
         soc_c = [state_bdg[i]["cooling_storage_soc"] for i in self.building_ids]
         soc_h = [state_bdg[i]["dhw_storage_soc"] for i in self.building_ids]
         soc_b = [state_bdg[i]["electrical_storage_soc"] for i in self.building_ids]
-        elec_cons = [state_bdg[i]["net_electricity_consumption"] for i in self.building_ids]
+        elec_cons = [
+            state_bdg[i]["net_electricity_consumption"] for i in self.building_ids
+        ]
 
         s_dic["daytype"] = daytype
         s_dic["hour"] = hour
@@ -159,7 +162,9 @@ class Predictor:
         """
         est_c_load = {uid: np.zeros(24) for uid in self.building_ids}
         est_h_load = {uid: np.zeros(24) for uid in self.building_ids}
-        c_hasest = {uid: np.zeros(24) for uid in self.building_ids} # -1:clipped, 0:non-est, 1:regression, 2: moving avg
+        c_hasest = {
+            uid: np.zeros(24) for uid in self.building_ids
+        }  # -1:clipped, 0:non-est, 1:regression, 2: moving avg
         h_hasest = {uid: np.zeros(24) for uid in self.building_ids}
         # hasest indicates whether every hour of the day has estimation.
         # only when all 0 become 1 in has_est, the function runs over.
@@ -187,18 +192,29 @@ class Predictor:
                     now_action_h = now_action["a_h"][time][uid]
                     now_action_b = now_action["a_b"][time][uid]
                     prev_state = now_state if time != 0 else self.state_buffer.get(-3)
-                    prev_t_out = prev_state["t_out"][time - 1][uid]  # when time=0, time-1=-1
+                    prev_t_out = prev_state["t_out"][time - 1][
+                        uid
+                    ]  # when time=0, time-1=-1
                     if time != 23:
                         next_state = now_state
-                        next_c_soc = next_state["soc_c"][time+1][uid]
-                        next_h_soc = next_state["soc_h"][time+1][uid]
-                        next_b_soc = next_state["soc_b"][time+1][uid]
-                        next_t_out = next_state["t_out"][time+1][uid]
-                        next_elec_con = next_state["elec_cons"][time+1][uid]
-                        y = now_solar + next_elec_con - now_elec_dem - \
-                            (true_val_c[uid]/cop_c) * (next_c_soc - (1-CF_C) * now_c_soc) * 0.9\
-                            - (true_val_h[uid]/effi_h) * (next_h_soc - (1-CF_H) * now_h_soc)\
-                            - (next_b_soc - (1-CF_B) * now_b_soc) * true_val_b[uid] / 0.9
+                        next_c_soc = next_state["soc_c"][time + 1][uid]
+                        next_h_soc = next_state["soc_h"][time + 1][uid]
+                        next_b_soc = next_state["soc_b"][time + 1][uid]
+                        next_t_out = next_state["t_out"][time + 1][uid]
+                        next_elec_con = next_state["elec_cons"][time + 1][uid]
+                        y = (
+                            now_solar
+                            + next_elec_con
+                            - now_elec_dem
+                            - (true_val_c[uid] / cop_c)
+                            * (next_c_soc - (1 - CF_C) * now_c_soc)
+                            * 0.9
+                            - (true_val_h[uid] / effi_h)
+                            * (next_h_soc - (1 - CF_H) * now_h_soc)
+                            - (next_b_soc - (1 - CF_B) * now_b_soc)
+                            * true_val_b[uid]
+                            / 0.9
+                        )
                     else:
                         next_state = self.state_buffer.get_recent()
                         next_c_soc = next_state["soc_c"][0][uid]
@@ -206,14 +222,26 @@ class Predictor:
                         next_b_soc = next_state["soc_b"][0][uid]
                         next_t_out = next_state["t_out"][0][uid]
                         next_elec_con = next_state["elec_cons"][0][uid]
-                        y = now_solar + next_elec_con - now_elec_dem - (true_val_c[uid] / cop_c) * (next_c_soc - (1 - CF_C) * now_c_soc) * 0.9 \
-                            - (true_val_h[uid] / effi_h) * (next_h_soc - (1 - CF_H) * now_h_soc) - (next_b_soc - (1 - CF_B) * now_b_soc) \
-                            * true_val_b[uid] / 0.9
+                        y = (
+                            now_solar
+                            + next_elec_con
+                            - now_elec_dem
+                            - (true_val_c[uid] / cop_c)
+                            * (next_c_soc - (1 - CF_C) * now_c_soc)
+                            * 0.9
+                            - (true_val_h[uid] / effi_h)
+                            * (next_h_soc - (1 - CF_H) * now_h_soc)
+                            - (next_b_soc - (1 - CF_B) * now_b_soc)
+                            * true_val_b[uid]
+                            / 0.9
+                        )
 
-                    a_clip_c = next_c_soc - (1-CF_C) * now_c_soc
-                    a_clip_h = next_h_soc - (1-CF_H) * now_h_soc
+                    a_clip_c = next_c_soc - (1 - CF_C) * now_c_soc
+                    a_clip_h = next_h_soc - (1 - CF_H) * now_h_soc
 
-                    if repeat_times == 0:   # can we calculate direct when now_action > 0?
+                    if (
+                        repeat_times == 0
+                    ):  # can we calculate direct when now_action > 0?
                         if uid in [2, 3]:
                             c_load = max(0, y * cop_c)
                             h_load = 0
@@ -221,16 +249,24 @@ class Predictor:
                             est_c_load[uid][time] = c_load
                             c_hasest[uid][time], h_hasest[uid][time] = -1, -1
                         else:
-                            if abs(a_clip_c - now_action_c) > 0.001 and now_action_c < 0: # cooling get clipped
+                            if (
+                                abs(a_clip_c - now_action_c) > 0.001
+                                and now_action_c < 0
+                            ):  # cooling get clipped
                                 c_load = abs(a_clip_c * true_val_c[uid])
-                                if abs(a_clip_h - now_action_h) > 0.001 and now_action_h < 0:  # heating get clipped
+                                if (
+                                    abs(a_clip_h - now_action_h) > 0.001
+                                    and now_action_h < 0
+                                ):  # heating get clipped
                                     h_load = a_clip_h * true_val_h[uid]
-                                else:   # heating not clipped
+                                else:  # heating not clipped
                                     h_load = (y - c_load / cop_c) * effi_h
                                 est_h_load[uid][time] = h_load
                                 est_c_load[uid][time] = c_load
                                 c_hasest[uid][time], h_hasest[uid][time] = -1, -1
-                            elif abs(a_clip_h > now_action_h) > 0.01 and a_clip_h < 0:  # h clipped but c not clipped
+                            elif (
+                                abs(a_clip_h > now_action_h) > 0.01 and a_clip_h < 0
+                            ):  # h clipped but c not clipped
                                 h_load = abs(a_clip_h * true_val_h[uid])
                                 c_load = (y - h_load / effi_h) * cop_c
                                 c_hasest[uid][time], h_hasest[uid][time] = -1, -1
@@ -240,17 +276,24 @@ class Predictor:
                         prev_t_cop = self.cop_cal(prev_t_out)
                         now_t_cop = self.cop_cal(now_t_out)
                         next_t_cop = self.cop_cal(next_t_out)
-                        if prev_t_cop != now_t_cop or prev_t_cop != next_t_cop or now_t_cop != next_t_cop:
+                        if (
+                            prev_t_cop != now_t_cop
+                            or prev_t_cop != next_t_cop
+                            or now_t_cop != next_t_cop
+                        ):
                             reg_x = []
                             reg_y = []
-                            reg_x.append([1/prev_t_cop, 1/0.9])
+                            reg_x.append([1 / prev_t_cop, 1 / 0.9])
                             reg_y.append([y])
-                            reg_x.append([1/now_t_cop, 1/0.9])
+                            reg_x.append([1 / now_t_cop, 1 / 0.9])
                             reg_y.append([y])
-                            reg_x.append([1/next_t_cop, 1/0.9])
+                            reg_x.append([1 / next_t_cop, 1 / 0.9])
                             reg_y.append([y])
                             c_hasest[uid][time], h_hasest[uid][time] = 1, 1
-                            if c_hasest[uid][max(time - 1, 0)] == -1 or c_hasest[uid][min(time + 1, 23)] == -1:
+                            if (
+                                c_hasest[uid][max(time - 1, 0)] == -1
+                                or c_hasest[uid][min(time + 1, 23)] == -1
+                            ):
                                 # t-1 or t+1 has clipped est (both h and c since they couple)
                                 if c_hasest[uid][max(time - 1, 0)] == -1:
                                     reg_x.append([1, 0])
@@ -264,26 +307,33 @@ class Predictor:
                                     reg_y.append([est_h_load[uid][min(time + 1, 23)]])
                             self.regr.fit(reg_x, reg_y)
                             [[c_load, h_load]] = self.regr.coef_
-                            c_load = max(0, (h_load*0.8-5)*0.6*cop_c)
+                            c_load = max(0, (h_load * 0.8 - 5) * 0.6 * cop_c)
                             # c_load = max(c_load, self.avg_c_load[uid][time])
                             ## get results of slope in regr model
-                        else:   # COP remaining the same (zero)
+                        else:  # COP remaining the same (zero)
                             h_load = self.avg_h_load[uid][time]
                             c_load = self.avg_c_load[uid][time]
                             c_hasest[uid][time], h_hasest[uid][time] = 2, 2
-                    # save load est to buffer
+                        # save load est to buffer
                         est_h_load[uid][time] = np.round(h_load, 2)
                         est_c_load[uid][time] = np.round(c_load, 2)
-                    if c_hasest[uid][time] not in [0, 2]:   # meaning that avg can be updated
+                    if c_hasest[uid][time] not in [
+                        0,
+                        2,
+                    ]:  # meaning that avg can be updated
                         if self.timestep >= 1:
-                            self.avg_h_load[uid][time] = self.avg_h_load[uid][time] * 0.8 + h_load * 0.2
-                            self.avg_c_load[uid][time] = self.avg_c_load[uid][time] * 0.8 + c_load * 0.2
+                            self.avg_h_load[uid][time] = (
+                                self.avg_h_load[uid][time] * 0.8 + h_load * 0.2
+                            )
+                            self.avg_c_load[uid][time] = (
+                                self.avg_c_load[uid][time] * 0.8 + c_load * 0.2
+                            )
                         else:
                             self.avg_h_load[uid][time] = h_load
                             self.avg_c_load[uid][time] = c_load
 
                 repeat_times += 1 if time == 23 else 0
-                time = (time+1) % 24
+                time = (time + 1) % 24
                 jump_out = True
                 for i in range(24):
                     if c_hasest[uid][i] == 0 or h_hasest[uid][i] == 0:
@@ -293,10 +343,10 @@ class Predictor:
                     break
         return est_h_load, est_c_load
 
-            # jumping out criteria: every hour has loads est
+        # jumping out criteria: every hour has loads est
 
 
-for algorithm in ['RBC']:
+for algorithm in ["RBC"]:
     for climate in [5]:
         climate_zone = climate
         TOTAL_TIME_STEP = 8760  # 8760
@@ -304,18 +354,29 @@ for algorithm in ['RBC']:
         CF_H = 0.008
         CF_B = 0
         pred = Predictor()
-        params = {'data_path': Path("D:/Reinforcement Learning/CityLearn-master/CityLearn-master/data/Climate_Zone_" + str(climate_zone)),
-                  'building_attributes': 'building_attributes.json',
-                  'weather_file': 'weather_data.csv',
-                  'solar_profile': 'solar_generation_1kW.csv',
-                  'carbon_intensity': 'carbon_intensity.csv',
-                  'building_ids': ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
-                  'buildings_states_actions': 'buildings_state_action_space.json',
-                  'simulation_period': (0, TOTAL_TIME_STEP - 1),  # 8760
-                  'cost_function': ['ramping', '1-load_factor', 'average_daily_peak', 'peak_demand',
-                                    'net_electricity_consumption', 'carbon_emissions'],
-                  'central_agent': False,
-                  'save_memory': False}
+        params = {
+            "data_path": Path(
+                "D:/Reinforcement Learning/CityLearn-master/CityLearn-master/data/Climate_Zone_"
+                + str(climate_zone)
+            ),
+            "building_attributes": "building_attributes.json",
+            "weather_file": "weather_data.csv",
+            "solar_profile": "solar_generation_1kW.csv",
+            "carbon_intensity": "carbon_intensity.csv",
+            "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
+            "buildings_states_actions": "buildings_state_action_space.json",
+            "simulation_period": (0, TOTAL_TIME_STEP - 1),  # 8760
+            "cost_function": [
+                "ramping",
+                "1-load_factor",
+                "average_daily_peak",
+                "peak_demand",
+                "net_electricity_consumption",
+                "carbon_emissions",
+            ],
+            "central_agent": False,
+            "save_memory": False,
+        }
 
         # Contain the lower and upper bounds of the states and actions, to be provided to the agent to normalize the variables between 0 and 1.
         env = CityLearn(**params)
@@ -326,7 +387,7 @@ for algorithm in ['RBC']:
         state = env.reset()  # hour 0
         done = False
         # test for RBC
-        action = agents.select_action(state)    # action for hour 0
+        action = agents.select_action(state)  # action for hour 0
         pred.record_dic(state, action)
         # print(action)
         while not done:
@@ -336,13 +397,12 @@ for algorithm in ['RBC']:
             state = next_state
             action = action_next
             pred.record_dic(state, action)
-            if env.time_step % 24 == 0 and env.time_step >= 24*7-1:
+            if env.time_step % 24 == 0 and env.time_step >= 24 * 7 - 1:
                 est_h, est_c = pred.infer_load()
-                if env.time_step >= 24*30 + 24*7:
+                if env.time_step >= 24 * 30 + 24 * 7:
                     print("day: ", env.time_step)
                     print("estimation of cooling: ", est_c)
                     print("estimation of heating: ", est_h)
-
 
         # plot_cap_b(cap_b_all, climate, type="elec")
         # plot_cap_h(cap_c_all, climate, type="cooling")
