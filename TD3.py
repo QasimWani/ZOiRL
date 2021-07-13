@@ -79,7 +79,7 @@ class TD3(object):
             data = deepcopy(self.memory.get_recent())
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
                 if self.total_it % 24 == 0:
-                    self.day_ahead_dispatch(env, {})
+                    self.day_ahead_dispatch_pred()
 
                 actions = [
                     np.array(self.action_planned_day[idx])[:, self.total_it % 24]
@@ -94,6 +94,7 @@ class TD3(object):
 
     def adaptive_dispatch(self, env: CityLearn, data: dict):
         """Computes next action"""
+        raise NotImplementedError
         data_est = self.data_loader.model.estimate_data(
             env, data, self.total_it, self.init_updates, self.memory
         )
@@ -131,6 +132,16 @@ class TD3(object):
         ### DEBUG ###
 
         return action
+
+    def day_ahead_dispatch_pred(self):
+        """Returns day-ahead dispatch"""
+        data_est = self.data_loader.estimate_data(self.memory)
+        self.action_planned_day, _, _ = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
 
     def day_ahead_dispatch(self, env: CityLearn, data: dict):
         """Computes action for the current day (24hrs) in advance"""
@@ -275,7 +286,7 @@ class TD3(object):
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
         self.data_loader.upload_data(
-            self.memory, state, action, reward, next_state, done
+            state, action, reward, next_state, done
         )  # upload data to memory
 
     def add_to_buffer_oracle(
