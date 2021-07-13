@@ -138,9 +138,7 @@ class Critic:  # decentralized version
             name="eta_ehH", value=zeta_target["eta_ehH"][building_id]
         )
         E_ehH_max = cp.Parameter(
-            name="E_ehH_max",
-            value=parameters["H_max"][t, building_id]
-            / zeta_target["eta_ehH"][building_id],
+            name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
         )
 
         # Battery
@@ -308,14 +306,14 @@ class Critic:  # decentralized version
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat + SOC_Brelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat[0] + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
-                + action_bat[i] * eta_bat
+                + action_bat[i] * eta_bat[i]
                 + SOC_Brelax[i]
             )
         self.constraints.append(
@@ -327,14 +325,16 @@ class Critic:  # decentralized version
         # Heat Storage constraints
         self.constraints.append(
             SOC_H[0]
-            == (1 - C_f_Hsto) * soc_Hsto_init + action_H[0] * eta_Hsto + SOC_Hrelax[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init
+            + action_H[0] * eta_Hsto[0]
+            + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
-                + action_H[i] * eta_Hsto
+                + action_H[i] * eta_Hsto[i]
                 + SOC_Hrelax[i]
             )
         self.constraints.append(SOC_H >= 0)  # battery SOC bounds
@@ -343,14 +343,16 @@ class Critic:  # decentralized version
         # Cooling Storage constraints
         self.constraints.append(
             SOC_C[0]
-            == (1 - C_f_Csto) * soc_Csto_init + action_C[0] * eta_Csto + SOC_Crelax[0]
+            == (1 - C_f_Csto) * soc_Csto_init
+            + action_C[0] * eta_Csto[0]
+            + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
-                + action_C[i] * eta_Csto
+                + action_C[i] * eta_Csto[i]
                 + SOC_Crelax[i]
             )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
@@ -448,9 +450,7 @@ class Critic:  # decentralized version
 
         # Electric Heater
         problem_parameters["eta_ehH"].value = zeta_target["eta_ehH"][building_id]
-        problem_parameters["E_ehH_max"].value = (
-            parameters["H_max"][t, building_id] / zeta_target["eta_ehH"][building_id]
-        )
+        problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
 
         # Battery
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
@@ -524,12 +524,12 @@ class Critic:  # decentralized version
         self.get_problem(t, parameters, zeta_target, building_id)
         try:
             status = self.prob[t % 24].solve(
-                verbose=debug, max_iters=1000
+                verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
         except:  # try another solver
             print(f"\nSolving critic using SCS at t = {t} for building {building_id}")
             status = self.prob[t].solve(
-                solver="SCS", verbose=debug, max_iters=1000
+                solver="SCS", verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
 
         if float("-inf") < status < float("inf"):
@@ -788,12 +788,12 @@ class Optim:
 
         try:
             optim_solution = prob.solve(
-                verbose=debug, max_iters=1000
+                verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
         except:  # try another solver
             print(f"\nSolving L1 optimization using SCS for building {building_id}")
             optim_solution = prob.solve(
-                solver="SCS", verbose=debug, max_iters=1000
+                solver="SCS", verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
 
         assert (
