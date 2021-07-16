@@ -231,6 +231,7 @@ class Predictor(DataLoader):
         E_ehH_max = H_max / 0.9
         C_p_bat = np.full((24, len(self.building_ids)), fill_value=60)
 
+        # TODO: "soc" is already normalized, so no need to divide it by capacity.
         c_bat_init = (
             np.array(self.state_buffer.get(-1)["soc_b"]) / C_p_bat
         )  # -2 to -1 (confirm)--done
