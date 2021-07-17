@@ -885,6 +885,7 @@ class Predictor(DataLoader):
                         ):
                             ## get results of slope in regr model
                             c_load = h_load = max(1, y - (1 / now_t_cop + 1 / 0.9))
+                            c_hasest[uid][time], h_hasest[uid][time] = 1, 1
                         else:  # COP remaining the same (zero)
                             h_load = self.avg_h_load[uid][time]
                             c_load = self.avg_c_load[uid][time]
