@@ -1,9 +1,11 @@
+from copy import Error
 from utils import ReplayBuffer
 
 from citylearn import CityLearn
 
 import numpy as np
 import pandas as pd
+import sys
 
 from scipy import stats
 from sklearn import datasets, linear_model
@@ -12,6 +14,8 @@ from sklearn.linear_model import LinearRegression
 
 
 class DataLoader:
+    """Base Class"""
+
     def __init__(self, action_space: list) -> None:
         self.action_space = action_space
 
@@ -23,7 +27,7 @@ class DataLoader:
         """Optional: not directly called. Should be called within `upload_data` if used."""
         raise NotImplementedError
 
-    def parse_data(self, data: dict, current_data: dict) -> list:
+    def parse_data(self, data: dict, current_data: dict):
         """Parses `current_data` for optimization and loads into `data`"""
         for key, value in current_data.items():
             if key not in data:
@@ -59,6 +63,7 @@ class DataLoader:
         return data
 
 
+# TODO: @Zhiyao - add in parameter/initialization for capacity as discussed.
 class Predictor(DataLoader):
     def __init__(self, action_space: list) -> None:
         super().__init__(action_space)
@@ -116,15 +121,40 @@ class Predictor(DataLoader):
         self.regr_solar = {uid: LinearRegression() for uid in self.building_ids}
         self.regr_elec = {uid: LinearRegression() for uid in self.building_ids}
 
-    def upload_data(self, state, action, reward, next_state, done):
-        """Uploads state and next state information to state and action_reward replay buffer"""
-        self.record_dic(state, action, reward, next_state)
+    def upload_data(self, state, action):
+        """Uploads state and action_reward replay buffer"""
+        raise Error("This function is not called, and should not be called anywhere")
 
-    def estimate_data(self, replay_buffer: ReplayBuffer):
-        """Estimates data to be pased into Optimization model for 24hours into future."""
-        data = self.full_parse_data({}, self.get_day_data(replay_buffer))
-        replay_buffer.add(data)
-        replay_buffer.total_it += 24
+    # TODO: @Zhiyao - needs implementation. See comment below
+    def upload_state(self, state):
+        print(
+            "@Zhiyao, you'd need to implement `record_dic` functionality in here where you're only adding to `state_buffer`.\nFrom `record_dic`, extract state information."
+        )
+        raise NotImplementedError
+
+    # TODO: @Zhiyao - needs implementation. See comment below
+    def upload_action(self, action):
+        print(
+            "@Zhiyao, you'd need to implement `record_dic` functionality in here where you're only adding to `action_buffer`\nFrom `record_dic`, extract action information."
+        )
+        raise NotImplementedError
+
+    # TODO: @Zhiyao + @Qasim - this function has not tested. Depends on internal predictor to work.
+    def estimate_data(
+        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
+    ):
+        """Estimates data to be passed into Optimization model for 24hours into future."""
+        if is_adaptive:
+            # if hour start of day, `get_recent()` will automatically return an empty dictionary
+            data = self.parse_data(
+                replay_buffer.get_recent(), self.get_day_data(replay_buffer, timestep)
+            )
+            replay_buffer.add(data)
+            replay_buffer.total_it += 1
+        else:
+            data = self.full_parse_data({}, self.get_day_data(replay_buffer, timestep))
+            replay_buffer.add(data)
+            replay_buffer.total_it += 24  # this is incorrect.
 
     def full_parse_data(
         self, data: dict, current_data: dict
@@ -134,7 +164,7 @@ class Predictor(DataLoader):
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. Can't run Oracle agent optimization."
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. Can't run Predictor agent optimization.\n@Zhiyao, these parameters come from `get_day_data`. Count the number of keys returned in that function and make sure its equal to `current_data` parameter. Otherwise, there's a mismatch that the actor wont be able to run. 23 is set on previous version. Change this is you believe you'd need more parameters."
 
         for key, value in current_data.items():
             if key not in data:
@@ -145,63 +175,76 @@ class Predictor(DataLoader):
 
         return data
 
-    def calculate_avg(self, pred_buffer: ReplayBuffer):
+    # TODO: @Zhiyao - needs fixing
+    def calculate_avg(self):
         """calculate hourly avg value of the day"""
-        buffer = pred_buffer
-        daytype = {i: [] for i in range(self.action_space)}
-        elec_dem = {i: [] for i in range(self.action_space)}
-        solar_gen = {i: [] for i in range(self.action_space)}
-        elec_weekday = {i: np.zeros([24]) for i in range(self.action_space)}
-        elec_weekend1 = {i: np.zeros([24]) for i in range(self.action_space)}
-        elec_weekend2 = {i: np.zeros([24]) for i in range(self.action_space)}
-        solar_alldays = {i: np.zeros([24]) for i in range(self.action_space)}
+        buffer = self.state_buffer
+        daytype = {i: [] for i in self.building_ids}
+        elec_dem = {i: [] for i in self.building_ids}
+        solar_gen = {i: [] for i in self.building_ids}
+        elec_weekday = {i: np.zeros([24]) for i in self.building_ids}
+        elec_weekend1 = {i: np.zeros([24]) for i in self.building_ids}
+        elec_weekend2 = {i: np.zeros([24]) for i in self.building_ids}
+        solar_alldays = {i: np.zeros([24]) for i in self.building_ids}
         weekend1, weekend2, weekday = 0, 0, 0
 
-        for i in range(-15, -1):
-            for uid in range(self.action_space):
-                daytype[uid].append(buffer.get(i)["day"][:][uid])
-                elec_dem[uid].append(buffer.get(i)["non_shiftable_load"][:][uid])
-                solar_gen[uid].append(buffer.get(i)["solar_gen"][:][uid])
+        for i in range(-14, 0):
+            for uid in self.building_ids:
+                daytype[uid].append(np.array(buffer.get(i)["daytype"])[0, uid])
+                elec_dem[uid].append(np.array(buffer.get(i)["elec_dem"])[:, uid])
+                solar_gen[uid].append(np.array(buffer.get(i)["solar_gen"])[:, uid])
 
         for i in range(len(elec_dem[0])):
-            for uid in range(self.action_space):
+            for uid in self.building_ids:
                 solar_alldays[i % 24] += solar_gen[uid][i]
+
             if daytype[0][i] in [7]:
                 weekend1 += 1
-                for uid in range(self.action_space):
+                for uid in self.building_ids:
                     elec_weekend1[i % 24] += elec_dem[uid][i]
             elif daytype[0][i] in [1, 8]:
                 weekend2 += 1
-                for uid in range(self.action_space):
+                for uid in self.building_ids:
                     elec_weekend2[i % 24] += elec_dem[uid][i]
             else:
                 weekday += 1
-                for uid in range(self.action_space):
+                for uid in self.building_ids:
                     elec_weekday[i % 24] += elec_dem[uid][i]
         weekday /= 24
         weekend1 /= 24
         weekend2 /= 24
 
-        for uid in range(self.action_space):
+        for uid in self.building_ids:
             self.solar_avg[uid] = solar_alldays[uid] / 14
             self.elec_weekday_avg[uid] = elec_weekday[uid] / weekday
             self.elec_weekend1_avg[uid] = elec_weekend1[uid] / weekend1
             self.elec_weekend2_avg[uid] = elec_weekend1[uid] / weekend2
 
-    def get_day_data(self, replay_buffer: ReplayBuffer):
+    # TODO: @Zhiyao - make sure in the case of adaptive this returns (and is sent to actor.py --> see TD3.py (select_action)) data of dimensions (window, 9)
+    # >>> Now, in the case of adaptive, say we're on hour 10. So, we only need to make predictions from hour 10 - 24 (1-based indexing).
+    # >>> You should return of dimensions (24 - 10, 9) and NOT 24, 9. This is because we've already observed loads in the first 9 hours and nothing can be changed for that.
+    # >>> You should make use of observed state & action information in `infer_load` functions. That should make use of observed information in the current day.
+    # NOTE: I think this should work fine, but you may need to change `state_buffer.get(-1)`. If this confuses you, and EVERYTHING else is working properly, ping me ASAP
+    # >>> and I can fix it accordingly.
+
+    def get_day_data(self, replay_buffer: ReplayBuffer, timestep: int):
         """Helper method for uploading data to memory. This is for estimation only!!!"""
+        T = 24
+        window = T - timestep % 24
+
         observation_data = {}
 
         # get current day's buffer
         data = replay_buffer[-1] if len(replay_buffer) > 0 else None
 
+        # NOTE: @Zhiyao - dimensions should be of `window, num_buildings`
         # get heating, cooling, electricity, and solar estimate
         (
             heating_estimate,
             cooling_estimate,
             solar_estimate,
             electricity_estimate,
-        ) = self.infer_load()
+        ) = self.infer_load(timestep)
 
         E_ns = np.array([electricity_estimate[key] for key in self.building_ids]).T
         E_pv = np.array([solar_estimate[key] for key in self.building_ids]).T
@@ -221,7 +264,11 @@ class Predictor(DataLoader):
         else:
             H_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
 
-        temp = np.array(self.state_buffer.get(-1)["t_out"])  # 24, 9 intermediate value
+        temp = np.append(
+            np.array(self.state_buffer.get(-1)["t_out"]),
+            np.array(self.state_buffer.get(-1)["next_t_out"]),
+            axis=1,
+        )  # 24, 9 intermediate value
         COP_C = np.zeros((24, len(self.building_ids)))
         for hour in range(24):
             for bid in self.building_ids:
@@ -231,40 +278,27 @@ class Predictor(DataLoader):
         E_ehH_max = H_max / 0.9
         C_p_bat = np.full((24, len(self.building_ids)), fill_value=60)
 
-        # TODO: "soc" is already normalized, so no need to divide it by capacity.
-        c_bat_init = (
-            np.array(self.state_buffer.get(-1)["soc_b"]) / C_p_bat
+        c_bat_init = np.array(
+            self.state_buffer.get(-1)["soc_b"]
         )  # -2 to -1 (confirm)--done
         c_bat_init[c_bat_init == np.inf] = 0
 
         C_p_Hsto = 3 * H_max
 
-        c_Hsto_init = (
-            np.array(self.state_buffer.get(-1)["soc_h"]) / C_p_Hsto
+        c_Hsto_init = np.array(
+            self.state_buffer.get(-1)["soc_h"]
         )  # -2 to -1 (confirm)--done
         c_Hsto_init[c_Hsto_init == np.inf] = 0
         C_p_Csto = 2 * C_max
 
-        c_Csto_init = (
-            np.array(self.state_buffer.get(-1)["soc_c"]) / C_p_Csto
+        c_Csto_init = np.array(
+            self.state_buffer.get(-1)["soc_c"]
         )  # -2 to -1 (confirm)--done
         c_Csto_init[c_Csto_init == np.inf] = 0
 
-        # add E-grid (part of E-grid_collect)
-        # ! temp !
-        observation_data["E_grid"] = np.zeros((24, len(self.building_ids)))
-        observation_data["E_grid_prevhour"] = np.zeros((24, len(self.building_ids)))
-        # ! temp !
-
-        # observation_data["E_grid"] = np.array(self.state_buffer.get(-1)["elec_cons"])
-        # observation_data["E_grid_prevhour"] = np.zeros((24, len(self.building_ids)))
-        # for hour in range(24):
-        #     for bid in self.building_ids:
-        #         observation_data["E_grid_prevhour"][hour, bid] = (
-        #             np.array(self.state_buffer.get(-2)["elec_cons"])[-1, bid]
-        #             if hour == 0
-        #             else observation_data["E_grid"][hour - 1, bid]
-        #         )
+        # add E-grid - default day-ahead
+        observation_data["E_grid"] = np.zeros((window, len(self.building_ids)))
+        observation_data["E_grid_prevhour"] = np.zeros((window, len(self.building_ids)))
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
@@ -296,16 +330,16 @@ class Predictor(DataLoader):
 
         return observation_data
 
-    def record_dic(
-        self,
-        current_state: list,
-        current_action: list,
-        current_reward: list,
-        next_state: list,
-    ):
+    # TODO: @Zhiyao - `record_dic` should be split into `record_state` and `record_action` which are being called by `upload_state` and `upload_action` respectively.
+    # >>> see comments in those functions (and TD3.py pipeline) for expected use.
+    def record_dic(self, current_state: list, current_action: list):
         """
         call record_dic at the beginning of each step
         """
+        raise Error(
+            "Implementation not correct - see comments in predictor.py for more info"
+        )
+
         state = self.state_buffer.get_recent()
         now_state = self.state_to_dic(current_state, next_state)
         parse_state = self.parse_data(state, now_state)
@@ -316,6 +350,9 @@ class Predictor(DataLoader):
         parse_action = self.parse_data(action, current_action)
         self.action_buffer.add(parse_action)
 
+    # TODO: @Zhiyao - This needs significant modification. only make use of `next_state` which will come from ** main.py **
+    # >>> this should include state information required for both heating, cooling, solar, electricity, and if necessary capcity estimation.
+    # >>> make sure to use only 2 buffers, one for state and one for action. You can make use of state buffer for various purposes - heating, cooling, etc. estimation.
     def state_to_dic(self, state_list: list, next_state_list: list):
         state_bdg = {}
         next_state_bdg = {}
@@ -544,6 +581,7 @@ class Predictor(DataLoader):
         s_dic["next_t_out_24h"] = next_t_out_24h
         return s_dic
 
+    # TODO: @Zhiyao - no need to store reward. No RL happening. Plz remove functionality.
     def action_reward_to_dic(self, action, reward):
         s_dic = {}
         a_c = [action[i][0] for i in self.building_ids]
@@ -568,71 +606,117 @@ class Predictor(DataLoader):
             cop_c = 20
         return cop_c
 
+    def gather_input(self, timestep):
+        assert timestep % 24 == 0, "only gather input at the beginning of the day"
+        """buffer(-1) is the current day record, so buffer(-2) is for yesterday"""
+        buffer = self.state_buffer.get(-1)
+
+        input_solar = {uid: np.zeros([24, 2]) for uid in self.building_ids}
+        input_elec = {uid: np.zeros([24, 1]) for uid in self.building_ids}
+        for uid in self.building_ids:
+            x_diffuse_6h = buffer["diffuse_6h"][-6:][uid]
+            x_diffuse_12h = buffer["diffuse_12h"][-6:][uid]
+            x_diffuse_24h = buffer["diffuse_24h"][-12:][uid]
+            x_direct_6h = buffer["direct_6h"][-6:][uid]
+            x_direct_12h = buffer["direct_12h"][-6:][uid]
+            x_direct_24h = buffer["direct_24h"][-12:][uid]
+
+            input_solar[uid][0:6, 0] = x_diffuse_6h
+            input_solar[uid][0:6, 1] = x_direct_6h
+            input_solar[uid][6:12, 0] = x_diffuse_12h
+            input_solar[uid][6:12, 1] = x_direct_12h
+            input_solar[uid][12:, 0] = x_diffuse_24h
+            input_solar[uid][12:, 1] = x_direct_24h
+
+            x_elec_6h = buffer["t_out_6h"][-6:][uid]
+            x_elec_12h = buffer["t_out_12h"][-6:][uid]
+            x_elec_24h = buffer["t_out_24h"][-12:][uid]
+
+            input_elec[uid][0:6, :] = x_elec_6h
+            input_elec[uid][6:12, :] = x_elec_12h
+            input_elec[uid][12:, :] = x_elec_24h
+
+        return input_solar, input_elec
+
     # make day ahead prediction by running this function, pls run it after recording the first-hour state of the day
-    def infer_solar_electricity_load(self, pred_buffer: ReplayBuffer, timestep):
+    def infer_solar_electricity_load(self, timestep: int):
         assert (
             timestep % 24 == 0
         ), "only make day-ahead prediction at the first hour of the day"
-        self.calculate_avg(pred_buffer)
+        self.calculate_avg()
         """
         1) gathering all values that are necessary to make prediction
         2) refit the model by latest 2-week data
         3) make day-ahead prediction
         """
+        pred_buffer = self.state_buffer
+
         x_solar, y_solar, x_elec, y_elec = self.reshape_array(pred_buffer)
-        for uid in range(self.action_space):
+        for uid in self.building_ids:
             self.regr_solar[uid].fit(x_solar[uid], y_solar[uid])
             self.regr_elec[uid].fit(x_elec[uid], y_elec[uid])
 
-        input_solar, input_elec = self.gather_input(pred_buffer, timestep)
-        solar_gen = {uid: np.zeros([25]) for uid in range(self.action_space)}
-        elec_dem = {uid: np.zeros([25]) for uid in range(self.action_space)}
+        input_solar, input_elec = self.gather_input(timestep)
+        solar_gen = {uid: np.zeros([26]) for uid in self.building_ids}
+        elec_dem = {uid: np.zeros([26]) for uid in self.building_ids}
 
-        daytype = {uid: 0 for uid in range(self.action_space)}
-        day_pred_solar = {uid: np.zeros([23]) for uid in range(self.action_space)}
-        day_pred_elec = {uid: np.zeros([23]) for uid in range(self.action_space)}
+        daytype = {uid: 0 for uid in self.building_ids}
+        day_pred_solar = {uid: np.zeros([24]) for uid in self.building_ids}
+        day_pred_elec = {uid: np.zeros([24]) for uid in self.building_ids}
         buffer = pred_buffer
 
-        for uid in range(self.action_space):
+        for uid in self.building_ids:
             solar_gen[uid][0] = (
-                pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
+                pred_buffer.get(-2)["solar_gen"][-2][uid] - self.solar_avg[uid][22]
             )
             solar_gen[uid][1] = (
-                pred_buffer.get_recent()["solar_gen"][0][uid] - self.solar_avg[uid][0]
+                pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
             )
             daytype[uid] = pred_buffer.get(-2)["day"][-1][uid]
             if daytype[uid] in [7]:
                 elec_dem[uid][0] = (
+                    pred_buffer.get(-2)["non_shiftable_load"][-2][uid]
+                    - self.elec_weekend1_avg[uid][22]
+                )
+                elec_dem[uid][1] = (
                     pred_buffer.get(-2)["non_shiftable_load"][-1][uid]
                     - self.elec_weekend1_avg[uid][23]
                 )
             elif daytype[uid] in [1, 8]:
                 elec_dem[uid][0] = (
+                    pred_buffer.get(-2)["non_shiftable_load"][-2][uid]
+                    - self.elec_weekend2_avg[uid][22]
+                )
+                elec_dem[uid][1] = (
                     pred_buffer.get(-2)["non_shiftable_load"][-1][uid]
                     - self.elec_weekend2_avg[uid][23]
                 )
             else:
                 elec_dem[uid][0] = (
+                    pred_buffer.get(-2)["non_shiftable_load"][-2][uid]
+                    - self.elec_weekday_avg[uid][22]
+                )
+                elec_dem[uid][1] = (
                     pred_buffer.get(-2)["non_shiftable_load"][-1][uid]
                     - self.elec_weekday_avg[uid][23]
                 )
 
-            daytype[uid] = pred_buffer.get_recent()["day"][0][uid]
-            if daytype[uid] in [7]:
-                elec_dem[uid][1] = (
-                    pred_buffer.get(-1)["non_shiftable_load"][0][uid]
-                    - self.elec_weekend1_avg[uid][0]
-                )
-            elif daytype[uid] in [1, 8]:
-                elec_dem[uid][1] = (
-                    pred_buffer.get(-1)["non_shiftable_load"][0][uid]
-                    - self.elec_weekend2_avg[uid][0]
-                )
-            else:
-                elec_dem[uid][1] = (
-                    pred_buffer.get(-1)["non_shiftable_load"][0][uid]
-                    - self.elec_weekday_avg[uid][0]
-                )
+            # # daytype[uid] = pred_buffer.get_recent()["day"][0][uid]
+            # if daytype[uid] in [7]:
+            #     elec_dem[uid][1] = (
+            #         pred_buffer.get(-1)["non_shiftable_load"][0][uid]
+            #         - self.elec_weekend1_avg[uid][0]
+            #     )
+            # elif daytype[uid] in [1, 8]:
+            #     elec_dem[uid][1] = (
+            #         pred_buffer.get(-1)["non_shiftable_load"][0][uid]
+            #         - self.elec_weekend2_avg[uid][0]
+            #     )
+            # else:
+            #     elec_dem[uid][1] = (
+            #         pred_buffer.get(-1)["non_shiftable_load"][0][uid]
+            #         - self.elec_weekday_avg[uid][0]
+            #     )
 
             for i in range(len(input_solar[uid])):
                 x_pred = [
@@ -666,10 +750,10 @@ class Predictor(DataLoader):
     # reshape input for fitting the model
     def reshape_array(self, pred_buffer: ReplayBuffer):
         """only reshape array at the beginning of the day"""
-        x_solar = {i: [] for i in range(self.action_space)}
-        y_solar = {i: [] for i in range(self.action_space)}
-        x_elec = {i: [] for i in range(self.action_space)}
-        y_elec = {i: [] for i in range(self.action_space)}
+        x_solar = {i: [] for i in self.building_ids}
+        y_solar = {i: [] for i in self.building_ids}
+        x_elec = {i: [] for i in self.building_ids}
+        y_elec = {i: [] for i in self.building_ids}
         solar_gen = []
         elec_dem = []
         x_diffuse = []
@@ -677,7 +761,7 @@ class Predictor(DataLoader):
         x_tout = []
         daytype = []
 
-        for i in range(-15, -1):
+        for i in range(-14, 0):
             solar_gen.append(
                 pred_buffer.get(i)["solar_gen"]
             )  # expect solar_gen to be [24*7, 9] vertically sequential
@@ -687,7 +771,7 @@ class Predictor(DataLoader):
             x_tout.append(pred_buffer.get(i)["t_out"])
             daytype.append(pred_buffer.get(i)["day"])
 
-        for uid in range(self.action_space):
+        for uid in self.building_ids:
             for i in range(2, np.shape(solar_gen)[0] - 1):
                 x_append1 = [
                     solar_gen[i - 2][uid] - self.solar_avg[uid][(i - 2) % 24],
@@ -740,13 +824,16 @@ class Predictor(DataLoader):
 
         return x_solar, y_solar, x_elec, y_elec
 
-    def infer_load(self):
+    # TODO: @Zhiyao - need to add in capacity estimation
+    def infer_load(self, timestep: int):
         """Returns heating, cooling, solar and electricity loads"""
         return [
             *self.infer_heating_cooling_estimate(),
-            *self.infer_solar_electricity_load(),
+            *self.infer_solar_electricity_load(timestep),
         ]
 
+    # TODO: @Zhiyao - state_buffer is appended before calling action. So at start of day, we have already stored state data for hour 0.
+    # >>> We infer at start of day, not end of day (in case of day-ahead). In case of adaptive, the dimensions need to be 24 - t, where t [0, 23].
     def infer_heating_cooling_estimate(self):
         """
         Note: h&c should be inferred simultaneously
@@ -777,7 +864,7 @@ class Predictor(DataLoader):
             jump_out = False
             while not jump_out:
                 if c_hasest[uid][time] in [0, 2]:
-                    now_state = self.state_buffer.get(-2)  # this is previous, not now!
+                    now_state = self.state_buffer.get(-1)
                     now_c_soc = now_state["soc_c"][time][uid]
                     now_h_soc = now_state["soc_h"][time][uid]
                     now_b_soc = now_state["soc_b"][time][uid]
@@ -785,15 +872,11 @@ class Predictor(DataLoader):
                     now_solar = now_state["solar_gen"][time][uid]
                     now_elec_dem = now_state["elec_dem"][time][uid]
                     cop_c = self.cop_cal(now_t_out)  # cop at t
-                    now_action = self.action_buffer.get(
-                        -2
-                    )  # this is previous, not now!
+                    now_action = self.action_buffer.get(-1)
                     now_action_c = now_action["action_C"][time][uid]
                     now_action_h = now_action["action_H"][time][uid]
                     now_action_b = now_action["action_bat"][time][uid]
-                    prev_state = (
-                        now_state if time != 0 else self.state_buffer.get(-3)
-                    )  # this is 2 days ago, not previous
+                    prev_state = now_state
                     prev_t_out = prev_state["t_out"][time - 1][
                         uid
                     ]  # when time=0, time-1=-1
@@ -818,12 +901,12 @@ class Predictor(DataLoader):
                             / 0.9
                         )
                     else:
-                        next_state = self.state_buffer.get_recent()
-                        next_c_soc = next_state["soc_c"][0][uid]
-                        next_h_soc = next_state["soc_h"][0][uid]
-                        next_b_soc = next_state["soc_b"][0][uid]
-                        next_t_out = next_state["t_out"][0][uid]
-                        next_elec_con = next_state["elec_cons"][0][uid]
+                        next_state = now_state
+                        next_c_soc = next_state["next_soc_c"][-1][uid]
+                        next_h_soc = next_state["next_soc_h"][-1][uid]
+                        next_b_soc = next_state["next_soc_b"][-1][uid]
+                        next_t_out = next_state["next_t_out"][-1][uid]
+                        next_elec_con = next_state["next_elec_cons"][-1][uid]
                         y = (
                             now_solar
                             + next_elec_con

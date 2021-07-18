@@ -69,28 +69,39 @@ class TD3(object):
     def select_action(
         self,
         state,
-        env: CityLearn = None,
         day_ahead: bool = True,
     ):
-        """Returns epsilon-greedy action from RBC/Optimization"""
+        """Returns action from RBC/Optimization"""
+        # 3 policies:
+        # 1. RBC (utils.py)
+        # 2. Online Exploration. (utils.py)
+        # 3. Optimizatio (actor.py)
+        actions = np.zeros((24, self.buildings))
+        # upload state to memory
+        self._add_to_buffer(state, None)
 
         if self.total_it >= self.rbc_threshold:  # run Actor
-            # should return an empty dictionary if sod, else return up to current hour data
-            data = deepcopy(self.memory.get_recent())
-            if day_ahead:  # run day ahead dispatch w/ true loads from the future
-                if self.total_it % 24 == 0:
-                    self.day_ahead_dispatch_pred()
-
-                actions = [
-                    np.array(self.action_planned_day[idx])[:, self.total_it % 24]
-                    for idx in range(len(self.num_actions))
-                ]
-            else:  # adaptive dispatch
-                actions = self.adaptive_dispatch(env, data)
+            if day_ahead:
+                actions = self.day_ahead_dispatch_pred()
+            else:
+                actions = self.adaptive_dispatch_pred()
         else:  # run RBC
             actions = self.agent_rbc.select_action(state)
-        self.total_it += 1
+
+        # upload action to memory
+        self._add_to_buffer(None, actions)
         return actions
+
+    def _add_to_buffer(self, state, action):
+        """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
+        assert bool(state) != bool(action), "Need to have either state or action"
+
+        if state:
+            self.data_loader.upload_state(state)
+
+        if action:
+            self.data_loader.upload_action(action)
+            self.total_it += 1
 
     def adaptive_dispatch(self, env: CityLearn, data: dict):
         """Computes next action"""
@@ -135,13 +146,27 @@ class TD3(object):
 
     def day_ahead_dispatch_pred(self):
         """Returns day-ahead dispatch"""
-        data_est = self.data_loader.estimate_data(self.memory)
-        self.action_planned_day, _, _ = zip(
+        if self.total_it % 24 == 0:  # save actions for 24hours
+            data_est = self.data_loader.estimate_data(self.memory, self.total_it)
+            self.action_planned_day, _, _ = zip(
+                *[
+                    self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                    for id in range(self.buildings)
+                ]
+            )
+        action_planned_day = self.action_planned_day[:, self.total_it % 24]
+        return action_planned_day
+
+    def adaptive_dispatch_pred(self):
+        """Returns adaptive dispatch for current hour"""
+        data_est = self.data_loader.estimate_data(self.memory, self.total_it, True)
+        action_planned_day, _, _ = zip(
             *[
-                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
                 for id in range(self.buildings)
             ]
         )
+        return action_planned_day
 
     def day_ahead_dispatch(self, env: CityLearn, data: dict):
         """Computes action for the current day (24hrs) in advance"""
@@ -285,9 +310,11 @@ class TD3(object):
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
-        self.data_loader.upload_data(
-            state, action, reward, next_state, done
-        )  # upload data to memory
+        # self.data_loader.upload_data(
+        #     state, action, reward, next_state, done
+        # )  # upload data to memory
+        pass
+        # self.total_it += 1
 
     def add_to_buffer_oracle(
         self, state: np.ndarray, env: CityLearn, action: list, reward: list
