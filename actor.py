@@ -288,6 +288,9 @@ class Actor:
             + SOC_Brelax_cost * 1e4
             + SOC_Crelax_cost * 1e4
             + SOC_Hrelax_cost * 1e4
+            + cp.sum(action_bat)
+            + cp.sum(action_C)
+            + cp.sum(action_H)
         )
 
         ### constraints
