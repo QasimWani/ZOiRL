@@ -345,5 +345,5 @@ class TD3(object):
             and self.memory.total_it > self.rbc_threshold
         ):
             start = time.time()
-            self.train()  # begin critic and actor update
+            # self.train()  # begin critic and actor update
             print(f"\nTime taken (min): {round((time.time() - start) / 60, 3)}")
