@@ -2,7 +2,7 @@ from collections import defaultdict
 from copy import deepcopy
 from critic import Critic
 
-from utils import Adam
+from utils import Adam, RBC
 import numpy as np
 import torch
 
@@ -47,6 +47,9 @@ class Actor:
 
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
+
+        ### RBC deviation
+        self.rbc = RBC(num_actions)
 
     def initialize_zeta(
         self,
@@ -288,9 +291,9 @@ class Actor:
             + SOC_Brelax_cost * 1e4
             + SOC_Crelax_cost * 1e4
             + SOC_Hrelax_cost * 1e4
-            + cp.sum(action_bat)
-            + cp.sum(action_C)
-            + cp.sum(action_H)
+            # + cp.sum(action_bat)
+            # + cp.sum(action_C)
+            # + cp.sum(action_H)
         )
 
         ### constraints
