@@ -69,7 +69,7 @@ class TD3(object):
     def select_action(
         self,
         state,
-        day_ahead: bool = True,
+        day_ahead: bool = False,
     ):
         """Returns action from RBC/Optimization"""
         # 3 policies:
@@ -163,7 +163,11 @@ class TD3(object):
 
     def adaptive_dispatch_pred(self):
         """Returns adaptive dispatch for current hour"""
-        data_est = self.data_loader.estimate_data(self.memory, self.total_it, True)
+        data_est = self.data_loader.estimate_data(
+            self.memory, self.total_it, is_adaptive=True
+        )
+        self.data_loader.convert_to_numpy(data_est)
+
         action_planned_day, _, _ = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)

@@ -127,23 +127,21 @@ class Predictor(DataLoader):
 
     # TODO: @Zhiyao + @Qasim - this function has not tested. Depends on internal predictor to work.
     def estimate_data(
-        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
+        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool
     ):
         """Estimates data to be passed into Optimization model for 24hours into future."""
         if is_adaptive:
             # if hour start of day, `get_recent()` will automatically return an empty dictionary
-            data = self.parse_data(
-                replay_buffer.get_recent(), self.get_day_data(replay_buffer, timestep)
+            data = self.full_parse_data(
+                self.get_day_data(replay_buffer, timestep), 24 - timestep % 24
             )
             replay_buffer.add(data)
-            replay_buffer.total_it += 1
         else:
             data = self.full_parse_data(self.get_day_data(replay_buffer, timestep))
-            replay_buffer.add(data)
-            replay_buffer.total_it += 24  # this is incorrect.
+            replay_buffer.add(data, full_day=True)
         return data
 
-    def full_parse_data(self, current_data: dict):
+    def full_parse_data(self, current_data: dict, window: int = 24):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
         TOTAL_PARAMS = 20
         assert (
@@ -161,8 +159,10 @@ class Predictor(DataLoader):
         for key, value in current_data.items():
             value = np.array(value)
             if len(value.shape) == 1:
-                value = np.repeat(value, 24).reshape(24, len(self.building_ids))
-            data[key] = value
+                value = np.repeat(value, window).reshape(window, len(self.building_ids))
+            data[key] = np.pad(
+                value, ((24 - window, 0), (0, 0))
+            )  # makes sure horizontal dimensions are 24
 
         return data
 
