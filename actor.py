@@ -26,7 +26,7 @@ class Actor:
         self.constraints = []
         self.cost = None  # created at every call to `create_problem`. not used in DPP.
         # list of parameter names for Zeta
-        self.zeta_keys = set(
+        zeta_keys = set(
             [
                 "p_ele",
                 "eta_ehH",
@@ -40,7 +40,7 @@ class Actor:
         self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
 
         self.optim = [
-            {key: Adam() for key in self.zeta_keys}
+            {key: Adam() for key in zeta_keys}
         ] * num_buildings  # per building per parameter 9 x 6
 
         self.adam_offset = offset  # (t - offset + 1) see Adam.update
