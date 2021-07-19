@@ -94,12 +94,10 @@ class TD3(object):
 
     def _add_to_buffer(self, state, action):
         """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
-        assert bool(state) != bool(action), "Need to have either state or action"
-
-        if state:
+        if state is not None:
             self.data_loader.upload_state(state)
 
-        if action:
+        if action is not None:
             self.data_loader.upload_action(action)
             self.total_it += 1
 
@@ -148,13 +146,19 @@ class TD3(object):
         """Returns day-ahead dispatch"""
         if self.total_it % 24 == 0:  # save actions for 24hours
             data_est = self.data_loader.estimate_data(self.memory, self.total_it)
-            self.action_planned_day, _, _ = zip(
+            self.data_loader.convert_to_numpy(data_est)
+
+            self.action_planned_day, optim_values, _ = zip(
                 *[
                     self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
                     for id in range(self.buildings)
                 ]
             )
-        action_planned_day = self.action_planned_day[:, self.total_it % 24]
+            # Shape: 9, 3, 24
+            self.action_planned_day = np.array(self.action_planned_day)
+            self.logger.append(optim_values)  # add all variables - Optimization
+
+        action_planned_day = self.action_planned_day[:, :, self.total_it % 24]
         return action_planned_day
 
     def adaptive_dispatch_pred(self):
@@ -345,5 +349,5 @@ class TD3(object):
             and self.memory.total_it > self.rbc_threshold
         ):
             start = time.time()
-            # self.train()  # begin critic and actor update
+            self.train()  # begin critic and actor update
             print(f"\nTime taken (min): {round((time.time() - start) / 60, 3)}")

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from copy import Error
 from utils import ReplayBuffer
 
@@ -46,7 +47,7 @@ class DataLoader:
     def get_dimensions(self, data: dict):
         """Prints shape of each param"""
         for key in data.keys():
-            print(data[key].shape)
+            print(key, data[key].shape)
 
     def get_building(self, data: dict, building_id: int):
         """Loads data (dict) from a particular building. 1-based indexing for building"""
@@ -106,7 +107,7 @@ class Predictor(DataLoader):
         )  # , positive=True) # version error
         self.avg_h_load = {uid: np.zeros(24) for uid in self.building_ids}
         self.avg_c_load = {uid: np.ones(24) for uid in self.building_ids}
-        self.daystep = 0   # this is for h/c loads estimation--not real daystep!
+        self.daystep = 0  # this is for h/c loads estimation--not real daystep!
         self.h_peak = {uid: np.zeros(24, dtype=int) for uid in self.building_ids}
         self.c_peak = {uid: np.zeros(24, dtype=int) for uid in self.building_ids}
 
@@ -124,8 +125,6 @@ class Predictor(DataLoader):
         self.regr_solar = {uid: LinearRegression() for uid in self.building_ids}
         self.regr_elec = {uid: LinearRegression() for uid in self.building_ids}
 
-
-
     # TODO: @Zhiyao + @Qasim - this function has not tested. Depends on internal predictor to work.
     def estimate_data(
         self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
@@ -139,32 +138,31 @@ class Predictor(DataLoader):
             replay_buffer.add(data)
             replay_buffer.total_it += 1
         else:
-            data = self.full_parse_data({}, self.get_day_data(replay_buffer, timestep))
+            data = self.full_parse_data(self.get_day_data(replay_buffer, timestep))
             replay_buffer.add(data)
             replay_buffer.total_it += 24  # this is incorrect.
         return data
 
-    def full_parse_data(
-        self, data: dict, current_data: dict
-    ):  # override in child class
+    def full_parse_data(self, current_data: dict):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
-        TOTAL_PARAMS = 23
+        TOTAL_PARAMS = 20
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. " \
-           f"Can't run Predictor agent optimization.\n" \
-           f"@Zhiyao, these parameters come from `get_day_data`. " \
-           f"Count the number of keys returned in that function and make sure its equal to `current_data` parameter. " \
-           f"Otherwise, there's a mismatch that the actor wont be able to run. 23 is set on previous version. " \
-           f"Change this is you believe you'd need more parameters."
-
+        ), (
+            f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. "
+            f"Can't run Predictor agent optimization.\n"
+            f"@Zhiyao, these parameters come from `get_day_data`. "
+            f"Count the number of keys returned in that function and make sure its equal to `current_data` parameter. "
+            f"Otherwise, there's a mismatch that the actor wont be able to run. 23 is set on previous version. "
+            f"Change this is you believe you'd need more parameters."
+        )
+        data = {}
         for key, value in current_data.items():
-            if key not in data:
-                data[key] = []
+            value = np.array(value)
             if len(value.shape) == 1:
                 value = np.repeat(value, 24).reshape(24, len(self.building_ids))
-            data[key].append(value)
+            data[key] = value
 
         return data
 
@@ -224,8 +222,8 @@ class Predictor(DataLoader):
 
         observation_data = {}
 
-        # get current day's buffer
-        data = replay_buffer.get(-2) if len(replay_buffer) > 0 else None
+        # get previous day's buffer
+        data = replay_buffer.get(-1) if len(replay_buffer) > 0 else None
 
         # NOTE: @Zhiyao - dimensions should be of `window, num_buildings`
         # get heating, cooling, electricity, and solar estimate
@@ -234,7 +232,7 @@ class Predictor(DataLoader):
             cooling_estimate,
             solar_estimate,
             electricity_estimate,
-            future_temp
+            future_temp,
         ) = self.infer_load(timestep)
 
         E_ns = np.array([electricity_estimate[key] for key in self.building_ids]).T
@@ -243,13 +241,17 @@ class Predictor(DataLoader):
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
-        H_max = None if data is None else data["H_max"]  # load previous H_max
+        H_max = (
+            None if data is None else data["H_max"].max(axis=0)
+        )  # load previous H_max
         if H_max is None:
             H_max = np.max(H_bd, axis=0)
         else:
             H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
 
-        C_max = None if data is None else data["C_max"]  # load previous C_max
+        C_max = (
+            None if data is None else data["C_max"].max(axis=0)
+        )  # load previous C_max
         if C_max is None:
             C_max = np.max(C_bd, axis=0)
         else:
@@ -519,8 +521,8 @@ class Predictor(DataLoader):
             input_elec_full[uid][6:12, 0] = x_elec_12h
             input_elec_full[uid][12:, 0] = x_elec_24h
 
-            input_solar[uid][:, :] = input_solar_full[uid][timestep % 24: , :]
-            input_elec[uid][:, :] = input_elec_full[uid][timestep % 24: , :]
+            input_solar[uid][:, :] = input_solar_full[uid][timestep % 24 :, :]
+            input_elec[uid][:, :] = input_elec_full[uid][timestep % 24 :, :]
 
         return input_solar, input_elec
 
@@ -530,7 +532,7 @@ class Predictor(DataLoader):
         # ), "only make day-ahead prediction at the first hour of the day"
         """changed for adaptive dispatch--make inference every hour"""
         if timestep % 24 == 0:
-            self.calculate_avg()    # make sure get_recent() returns in 24*9 shape
+            self.calculate_avg()  # make sure get_recent() returns in 24*9 shape
 
         T = 24
         window = T - timestep % 24
@@ -543,8 +545,8 @@ class Predictor(DataLoader):
             self.regr_elec[uid].fit(x_elec[uid], y_elec[uid])
         # ------------------start prediction-------------------
         input_solar, input_elec = self.gather_input(timestep)
-        solar_gen = {uid: np.zeros([window+2]) for uid in self.building_ids}
-        elec_dem = {uid: np.zeros([window+2]) for uid in self.building_ids}
+        solar_gen = {uid: np.zeros([window + 2]) for uid in self.building_ids}
+        elec_dem = {uid: np.zeros([window + 2]) for uid in self.building_ids}
 
         daytype = {uid: 0 for uid in self.building_ids}
         day_pred_solar = {uid: np.zeros([window]) for uid in self.building_ids}
@@ -556,14 +558,17 @@ class Predictor(DataLoader):
                     pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
                 )
                 solar_gen[uid][1] = (
-                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid] - self.solar_avg[uid][0]
+                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
+                    - self.solar_avg[uid][0]
                 )
             else:
                 solar_gen[uid][0] = (
-                        pred_buffer.get(-1)["solar_gen"][(timestep-1) % 24][uid] - self.solar_avg[uid][(timestep-1) % 24]
+                    pred_buffer.get(-1)["solar_gen"][(timestep - 1) % 24][uid]
+                    - self.solar_avg[uid][(timestep - 1) % 24]
                 )
                 solar_gen[uid][1] = (
-                        pred_buffer.get(-1)["solar_gen"][timestep % 24][uid] - self.solar_avg[uid][timestep % 24]
+                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
+                    - self.solar_avg[uid][timestep % 24]
                 )
             daytype[uid] = pred_buffer.get(-1)["daytype"][0][uid]
 
@@ -598,8 +603,8 @@ class Predictor(DataLoader):
             else:
                 if daytype[uid] in [7]:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
-                        - self.elec_weekend1_avg[uid][(timestep-1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekend1_avg[uid][(timestep - 1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -607,8 +612,8 @@ class Predictor(DataLoader):
                     )
                 elif daytype[uid] in [1, 8]:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
-                        - self.elec_weekend2_avg[uid][(timestep-1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekend2_avg[uid][(timestep - 1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -616,8 +621,8 @@ class Predictor(DataLoader):
                     )
                 else:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
-                        - self.elec_weekday_avg[uid][(timestep-1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekday_avg[uid][(timestep - 1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -654,8 +659,10 @@ class Predictor(DataLoader):
                 avg = self.solar_avg[uid][(i + 1 + timestep) % 24]
                 day_pred_solar[uid][i] = max(0, y_pred.item() + avg)
                 solar_gen[uid][i + 2] = y_pred.item()
-            day_pred_solar[uid] = np.append(np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
-                                           day_pred_solar[uid][0: window-1])
+            day_pred_solar[uid] = np.append(
+                np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
+                day_pred_solar[uid][0 : window - 1],
+            )
 
             for i in range(len(input_elec[uid])):
                 x_pred = [
@@ -670,8 +677,10 @@ class Predictor(DataLoader):
                     avg = self.elec_weekday_avg[uid][(i + 1 + timestep) % 24]
                 day_pred_elec[uid][i] = max(0, y_pred.item() + avg)
                 elec_dem[uid][i + 2] = y_pred.item()
-            day_pred_elec[uid] = np.append(np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
-                                       day_pred_elec[uid][ : window-1])
+            day_pred_elec[uid] = np.append(
+                np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
+                day_pred_elec[uid][: window - 1],
+            )
 
         return day_pred_solar, day_pred_elec, input_elec
 
@@ -692,11 +701,11 @@ class Predictor(DataLoader):
         for i in range(-14, 0):
             solar_gen = pred_buffer.get(i)["solar_gen"]
             # expect solar_gen to be [24*7, 9] vertically sequential
-            elec_dem = (pred_buffer.get(i)["elec_dem"])
-            x_diffuse = (pred_buffer.get(i)["diffuse_solar_rad"])
-            x_direct = (pred_buffer.get(i)["direct_solar_rad"])
-            x_tout = (pred_buffer.get(i)["t_out"])
-            daytype = (pred_buffer.get(i)["daytype"])
+            elec_dem = pred_buffer.get(i)["elec_dem"]
+            x_diffuse = pred_buffer.get(i)["diffuse_solar_rad"]
+            x_direct = pred_buffer.get(i)["direct_solar_rad"]
+            x_tout = pred_buffer.get(i)["t_out"]
+            daytype = pred_buffer.get(i)["daytype"]
 
             for uid in self.building_ids:
                 for i in range(2, np.shape(solar_gen)[0] - 1):
@@ -712,32 +721,37 @@ class Predictor(DataLoader):
                 for i in range(2, np.shape(elec_dem)[0] - 1):
                     if daytype[i - 2][uid] in [7]:
                         x_temp1 = (
-                            elec_dem[i - 2][uid] - self.elec_weekend1_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid]
+                            - self.elec_weekend1_avg[uid][(i - 2) % 24]
                         )
                     elif daytype[i - 2][uid] in [1, 8]:
                         x_temp1 = (
-                            elec_dem[i - 2][uid] - self.elec_weekend2_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid]
+                            - self.elec_weekend2_avg[uid][(i - 2) % 24]
                         )
                     else:
                         x_temp1 = (
-                            elec_dem[i - 2][uid] - self.elec_weekday_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid]
+                            - self.elec_weekday_avg[uid][(i - 2) % 24]
                         )
                     if daytype[i - 1][uid] in [7]:
                         x_temp2 = (
-                            elec_dem[i - 1][uid] - self.elec_weekend1_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid]
+                            - self.elec_weekend1_avg[uid][(i - 1) % 24]
                         )
                     elif daytype[i - 1][uid] in [1, 8]:
                         x_temp2 = (
-                            elec_dem[i - 1][uid] - self.elec_weekend2_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid]
+                            - self.elec_weekend2_avg[uid][(i - 1) % 24]
                         )
                     else:
                         x_temp2 = (
-                            elec_dem[i - 1][uid] - self.elec_weekday_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid]
+                            - self.elec_weekday_avg[uid][(i - 1) % 24]
                         )
 
                     x_append1 = [x_temp1, x_temp2]
                     x_append2 = [x_tout[i][uid]]
-                    print(i, uid)
 
                     if daytype[i][uid] in [7]:
                         y = elec_dem[i][uid] - self.elec_weekend1_avg[uid][i % 24]
@@ -812,7 +826,9 @@ class Predictor(DataLoader):
 
                 if time != 0:
                     prev_state = now_state
-                    prev_t_out = prev_state["t_out"][time - 1][uid]   # when time=0, time-1=-1
+                    prev_t_out = prev_state["t_out"][time - 1][
+                        uid
+                    ]  # when time=0, time-1=-1
                 else:
                     prev_state = self.state_buffer.get(-3)
                     prev_t_out = prev_state["t_out"][-1][uid]
@@ -909,7 +925,7 @@ class Predictor(DataLoader):
                     #     or prev_t_cop != next_t_cop
                     #     or now_t_cop != next_t_cop
                     # ):
-                        ## get results of slope in regr model
+                    ## get results of slope in regr model
                     c_load = h_load = max(1, y - (1 / now_t_cop + 1 / 0.9))
                     c_hasest[uid][time], h_hasest[uid][time] = 1, 1
                     # else:  # COP remaining the same (zero)
@@ -947,8 +963,8 @@ class Predictor(DataLoader):
         for uid in self.building_ids:
             est_h_load[uid] *= 1.5
             est_c_load[uid] *= 1.5
-            adaptive_h_load[uid] = est_h_load[uid][T-window:]
-            adaptive_c_load[uid] = est_c_load[uid][T-window:]
+            adaptive_h_load[uid] = est_h_load[uid][T - window :]
+            adaptive_c_load[uid] = est_c_load[uid][T - window :]
         return adaptive_h_load, adaptive_c_load
 
 
@@ -1073,8 +1089,8 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 23  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 23. Can't run Oracle agent optimization."
+            len(current_data) == 20  # actions E_grid_collect. Section 1.3.1
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 20. Can't run Oracle agent optimization."
 
         for key, value in current_data.items():
             if key not in data:
