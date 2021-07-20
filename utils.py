@@ -128,10 +128,9 @@ class RBC:
     def __init__(self, actions_spaces: list):
         """Rule based controller. Source: https://github.com/QasimWani/CityLearn/blob/master/agents/rbc.py"""
         self.actions_spaces = actions_spaces
-        self.idx_hour = self.get_idx_hour()
 
-    def select_action(self, states: float):
-        hour_day = states
+    def select_action(self, states):
+        hour_day = states[0][0]
         multiplier = 0.4
         # Daytime: release stored energy  2*0.08 + 0.1*7 + 0.09
         a = [
@@ -195,13 +194,14 @@ class RBC:
         self,
         surrogate_env: CityLearn,
         state: np.ndarray,
+        indx_hour: int,
         run_timesteps: int,
     ):
         """Runs RBC for x number of timesteps"""
         ## --- RBC generation ---
         E_grid = []
         for _ in range(run_timesteps):
-            hour_state = state[0][self.idx_hour]
+            hour_state = np.array([[state[0][indx_hour]]])
             action = self.select_action(
                 hour_state
             )  # using RBC to select next action given current sate
@@ -210,23 +210,18 @@ class RBC:
             E_grid.append([x[28] for x in state])
         return E_grid
 
-    def load_day_actions(self):
-        """Generate template of actions for RBC for a day"""
-        return np.array([self.select_action(hour) for hour in range(24)]).transpose(
-            [2, 1, 0]
-        )
 
-    def get_idx_hour(self):
-        # Finding which state
-        with open("buildings_state_action_space.json") as file:
-            actions_ = json.load(file)
+def get_idx_hour():
+    # Finding which state
+    with open("buildings_state_action_space.json") as file:
+        actions_ = json.load(file)
 
-        indx_hour = -1
-        for obs_name, selected in list(actions_.values())[0]["states"].items():
-            indx_hour += 1
-            if obs_name == "hour":
-                break
-            assert (
-                indx_hour < len(list(actions_.values())[0]["states"].items()) - 1
-            ), "Please, select hour as a state for Building_1 to run the RBC"
-        return indx_hour
+    indx_hour = -1
+    for obs_name, selected in list(actions_.values())[0]["states"].items():
+        indx_hour += 1
+        if obs_name == "hour":
+            break
+        assert (
+            indx_hour < len(list(actions_.values())[0]["states"].items()) - 1
+        ), "Please, select hour as a state for Building_1 to run the RBC"
+    return indx_hour

@@ -49,9 +49,7 @@ class Actor:
         self.prob = [None] * 24  # template for each hour
 
         ### RBC deviation
-        a, b, c = RBC(num_actions).load_day_actions()
-        # a, b, c = np.zeros((3, self.num_buildings, 24))
-        self.rbc_actions = {"action_C": a, "action_H": b, "action_bat": c}
+        self.rbc = RBC(num_actions)
 
     def initialize_zeta(
         self,
@@ -305,24 +303,14 @@ class Actor:
         # energy balance constraints
         self.constraints.append(
             E_pv + E_grid + E_grid_sell + E_bal_relax
-            == E_ns
-            + E_hpC
-            + E_ehH
-            + (action_bat + self.rbc_actions["action_bat"][building_id, T - window :])
-            * C_p_bat
+            == E_ns + E_hpC + E_ehH + action_bat * C_p_bat
         )  # electricity balance
         self.constraints.append(
-            E_ehH * eta_ehH + H_bal_relax
-            == (action_H + self.rbc_actions["action_H"][building_id, T - window :])
-            * C_p_Hsto
-            + H_bd
+            E_ehH * eta_ehH + H_bal_relax == action_H * C_p_Hsto + H_bd
         )  # heat balance
 
         self.constraints.append(
-            E_hpC * COP_C + C_bal_relax
-            == (action_C + self.rbc_actions["action_C"][building_id, T - window :])
-            * C_p_Csto
-            + C_bd
+            E_hpC * COP_C + C_bal_relax == action_C * C_p_Csto + C_bd
         )  # cooling balance
 
         # heat pump constraints
@@ -335,21 +323,14 @@ class Actor:
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init
-            + (action_bat[0] + self.rbc_actions["action_bat"][building_id, T - window])
-            * eta_bat[0]
-            + SOC_Brelax[0]
+            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat[0] + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
-                + (
-                    action_bat[i]
-                    + self.rbc_actions["action_bat"][building_id, T - window + i]
-                )
-                * eta_bat[i]
+                + action_bat[i] * eta_bat[i]
                 + SOC_Brelax[i]
             )
         self.constraints.append(
@@ -362,8 +343,7 @@ class Actor:
         self.constraints.append(
             SOC_H[0]
             == (1 - C_f_Hsto) * soc_Hsto_init
-            + (action_H[0] + self.rbc_actions["action_H"][building_id, T - window])
-            * eta_Hsto[0]
+            + action_H[0] * eta_Hsto[0]
             + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
@@ -371,11 +351,7 @@ class Actor:
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
-                + (
-                    action_H[i]
-                    + self.rbc_actions["action_H"][building_id, T - window + i]
-                )
-                * eta_Hsto[i]
+                + action_H[i] * eta_Hsto[i]
                 + SOC_Hrelax[i]
             )
         self.constraints.append(SOC_H >= 0)  # battery SOC bounds
@@ -385,8 +361,7 @@ class Actor:
         self.constraints.append(
             SOC_C[0]
             == (1 - C_f_Csto) * soc_Csto_init
-            + (action_C[0] + self.rbc_actions["action_bat"][building_id, T - window])
-            * eta_Csto[0]
+            + action_C[0] * eta_Csto[0]
             + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
@@ -394,11 +369,7 @@ class Actor:
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
-                + (
-                    action_C[i]
-                    + self.rbc_actions["action_bat"][building_id, T - window + i]
-                )
-                * eta_Csto[i]
+                + action_C[i] * eta_Csto[i]
                 + SOC_Crelax[i]
             )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
@@ -416,36 +387,16 @@ class Actor:
 
             # heating action
             if key == "action_C":
-                self.constraints.append(
-                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
-                    <= h
-                )
-                self.constraints.append(
-                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
-                    >= l
-                )
+                self.constraints.append(action_C <= h)
+                self.constraints.append(action_C >= l)
             # cooling action
             elif key == "action_H":
-                self.constraints.append(
-                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
-                    <= h
-                )
-                self.constraints.append(
-                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
-                    >= l
-                )
+                self.constraints.append(action_H <= h)
+                self.constraints.append(action_H >= l)
             # Battery action
             elif key == "action_bat":
-                self.constraints.append(
-                    action_bat
-                    + self.rbc_actions["action_bat"][building_id, T - window :]
-                    <= h
-                )
-                self.constraints.append(
-                    action_bat
-                    + self.rbc_actions["action_bat"][building_id, T - window :]
-                    >= l
-                )
+                self.constraints.append(action_bat <= h)
+                self.constraints.append(action_bat >= l)
 
     def get_problem(self, t: int, parameters: dict, building_id: int):
         """Returns raw problem"""
@@ -552,15 +503,9 @@ class Actor:
 
         for var in self.prob[t].variables():
             if dispatch:
-                offset = np.zeros(len(var.value))
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, 24 - t % 24 :]
-                actions[var.name()] = np.array(var.value) + offset
+                actions[var.name()] = np.array(var.value)
             else:
-                offset = 0
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, t % 24]
-                actions[var.name()] = np.array(var.value)[0] + offset
+                actions[var.name()] = np.array(var.value)[0]
 
         # prune out zeta - set zeta values for later use in backward pass.
         # self.prune_update_zeta(t, prob.param_dict, building_id)

@@ -40,14 +40,14 @@ class Agent(TD3):
 
         self.zeta = []  # zeta for all buidling for 24 hours (24x9)
 
-        self.zeta_eta_bat = np.ones(((1, 24, self.buildings)))
-        self.zeta_eta_Hsto = np.ones(((1, 24, self.buildings)))
-        self.zeta_eta_Csto = np.ones(((1, 24, self.buildings)))
+        self.zeta_eta_bat = np.ones(((1, 24, 9)))
+        self.zeta_eta_Hsto = np.ones(((1, 24, 9)))
+        self.zeta_eta_Csto = np.ones(((1, 24, 9)))
         self.zeta_eta_ehH = 0.9
         self.zeta_c_bat_end = 0.1
 
-        self.mean_p_ele = [[1]] * self.buildings
-        self.std_p_ele = [[0.2]] * self.buildings
+        self.mean_p_ele = [[1]] * 9
+        self.std_p_ele = [[0.2]] * 9
         self.range_p_ele = [0.1, 5]
 
         # Initialising the elite sets
@@ -60,12 +60,6 @@ class Agent(TD3):
         self.costs = []
 
     def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
-        """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
-        we will only have p_ele as the zeta parameter. This get_zeta function calls the set_EliteSet_EliteSetPrev
-        to get the elite_set and then selects zeta from that. Elite set stores the best zetas."""
-
-        # Getting the elite_set and elite_set_prev
-        elite_set_eliteset_prev = self.set_EliteSet_EliteSetPrev()
 
         if len(self.elite_set_prev) and self.k <= self.K_keep:
 
@@ -77,18 +71,18 @@ class Agent(TD3):
         else:
 
             # Initialising parameters for the rest of the day for 24 hrs for 9 buildings
-            zeta_p_ele = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_ehH = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_bat = np.zeros(((1, 24, self.buildings)))
-            zeta_c_bat_end = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_Hsto = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_Csto = np.zeros(((1, 24, self.buildings)))
+            zeta_p_ele = np.zeros(((1, 24, 9)))
+            zeta_eta_ehH = np.zeros(((1, 24, 9)))
+            zeta_eta_bat = np.zeros(((1, 24, 9)))
+            zeta_c_bat_end = np.zeros(((1, 24, 9)))
+            zeta_eta_Hsto = np.zeros(((1, 24, 9)))
+            zeta_eta_Csto = np.zeros(((1, 24, 9)))
 
             mean_sigma_range = (
                 self.get_mean_sigma_range()
             )  # Getting a list of lists for mean, std and ranges
 
-            for i in range(self.buildings):
+            for i in range(9):
 
                 zeta_p_ele[:, :, i] = np.clip(
                     np.random.normal(
@@ -96,6 +90,42 @@ class Agent(TD3):
                     ),
                     mean_sigma_range[2][0],
                     mean_sigma_range[2][1],
+                )
+
+                zeta_eta_ehH[:, :, i] = np.clip(
+                    np.random.normal(
+                        mean_sigma_range[1][0][i], mean_sigma_range[1][1][i], 24
+                    ),
+                    mean_sigma_range[1][2][0],
+                    mean_sigma_range[1][2][1],
+                )
+                zeta_eta_bat[:, :, i] = np.clip(
+                    np.random.normal(
+                        mean_sigma_range[2][0][i], mean_sigma_range[2][1][i], 24
+                    ),
+                    mean_sigma_range[2][2][0],
+                    mean_sigma_range[2][2][1],
+                )
+                zeta_c_bat_end[:, :, i] = np.clip(
+                    np.random.normal(
+                        mean_sigma_range[3][0][i], mean_sigma_range[3][1][i], 24
+                    ),
+                    mean_sigma_range[3][2][0],
+                    mean_sigma_range[3][2][1],
+                )
+                zeta_eta_Hsto[:, :, i] = np.clip(
+                    np.random.normal(
+                        mean_sigma_range[4][0][i], mean_sigma_range[4][1][i], 24
+                    ),
+                    mean_sigma_range[4][2][0],
+                    mean_sigma_range[4][2][1],
+                )
+                zeta_eta_Csto[:, :, i] = np.clip(
+                    np.random.normal(
+                        mean_sigma_range[5][0][i], mean_sigma_range[5][1][i], 24
+                    ),
+                    mean_sigma_range[5][2][0],
+                    mean_sigma_range[5][2][1],
                 )
 
                 self.zeta = np.vstack(
@@ -109,17 +139,15 @@ class Agent(TD3):
                     )
                 )
 
-            # self.zeta = zeta_p_ele
-            # will set this zeta for the rest of the day
-            zeta_k = self.zeta = zeta_p_ele
+            self.zeta = zeta_p_ele
+
+            zeta_k = self.zeta  # will set this zeta for the rest of the day
 
         self.p_ele_logger.append(zeta_k)
 
         return zeta_k
 
     def get_mean_sigma_range(self):
-        """This function is called to get the current mean, standard deviation and allowed range for the
-        parameter p_ele. We can access these 3 quantities by calling this function."""
 
         # ADD ALL PARAMS
         mean_sigma_range = [self.mean_p_ele, self.std_p_ele, self.range_p_ele]
@@ -127,15 +155,12 @@ class Agent(TD3):
         return mean_sigma_range
 
     def get_cost_day_end(self):
-        """This function calculates the cost at the end of each day after using certain zeta.
-        This function is called at the end of each day. Cost is calculated using the recorded
-        outputs/states from the environment in the past 24 hours using a certain value of zeta- p_ele."""
 
         # outputs act as the next_state that we get after taking actions
         #  outputs = {'E_netelectric_hist': E_netelectric_hist, 'E_NS_hist': E_NS_hist, 'C_bd_hist': C_bd_hist, 'H_bd_hist': H_bd_hist}
         # outputs includes the history of all observed states during the day
 
-        cost = np.zeros((1, self.buildings))
+        cost = np.zeros((1, 9))
         self.outputs["E_netelectric_hist"] = np.array(
             self.outputs["E_netelectric_hist"]
         )  # size 24*9
@@ -154,7 +179,7 @@ class Agent(TD3):
         self.outputs["H_bd_hist"] = np.array(self.outputs["H_bd_hist"])
         self.outputs["COP_C_hist"] = np.array(self.outputs["COP_C_hist"])
 
-        for i in range(self.buildings):
+        for i in range(9):
             num = np.max(self.outputs["E_netelectric_hist"][:, i])
 
             C_bd_div_COP_C = np.divide(
@@ -174,9 +199,6 @@ class Agent(TD3):
         return cost
 
     def set_EliteSet_EliteSetPrev(self):
-        """This function is called by get_zeta() - see first line in get_zeta(). After this function is called inside
-        get_zeta, it updates the self.elite_set according to the value of self.k. Once the elite_set is updated inside this
-        function, get_zeta can use self.elite_set to get the zeta- p_ele to be passed through the actor."""
 
         if self.k == 1:
 
@@ -191,13 +213,13 @@ class Agent(TD3):
             )  # Converting self.costs to np.array   dimensions = k*1*9
             #             print(np.shape(self.costs))
             best_zeta_args = np.zeros(
-                (self.k - 1, self.buildings)
+                (self.k - 1, 9)
             )  # Will store the arguments of the sort
 
             elite_set_dummy = self.elite_set
             #             print('dummy_elite_set = ',np.array(elite_set_dummy)[:,0:3,0:6,0])
 
-            for i in range(self.buildings):
+            for i in range(9):
                 best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
                     -1
                 )  # Arranging costs for the i-th building
@@ -210,12 +232,12 @@ class Agent(TD3):
 
             self.elite_set = self.elite_set[0 : self.K]
 
-            self.mean_p_ele = [[]] * self.buildings
-            self.std_p_ele = [[]] * self.buildings
+            self.mean_p_ele = [[]] * 9
+            self.std_p_ele = [[]] * 9
 
             A = np.hstack(self.elite_set)
 
-            for i in range(self.buildings):
+            for i in range(9):
                 self.mean_p_ele[i] = np.mean(A[:, :, i], axis=1)
                 self.std_p_ele[i] = np.std(A[:, :, i], axis=1)
 
@@ -267,7 +289,7 @@ class Agent(TD3):
 
         self.eta_ehH_hist = [
             0.9
-        ] * self.buildings  # For 9 buildings and 24 hours - list of 9 lists of size 24
+        ] * 9  # For 9 buildings and 24 hours - list of 9 lists of size 24
 
         # Appending the current states to the day history list of states
         self.E_netelectric_hist.append(E_observed)  # List of 24 lists each list size 9
@@ -313,7 +335,7 @@ class Agent(TD3):
         if self.total_it >= self.rbc_threshold and self.total_it % 24 == 0:
             zeta_k = self.get_zeta()  # put into actor
             self.elite_set.append(zeta_k)
-            for i in range(self.buildings):
+            for i in range(9):
                 zeta_tuple = (
                     zeta_k[0, :, i],
                     self.zeta_eta_bat[:, :, i],
