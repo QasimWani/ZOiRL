@@ -2,7 +2,7 @@ from collections import defaultdict
 from copy import Error
 from utils import ReplayBuffer
 
-from citylearn import CityLearn
+from citylearn import CityLearn, building_loader
 
 import numpy as np
 import pandas as pd
@@ -160,9 +160,11 @@ class Predictor(DataLoader):
             value = np.array(value)
             if len(value.shape) == 1:
                 value = np.repeat(value, window).reshape(window, len(self.building_ids))
-            data[key] = np.pad(
-                value, ((24 - window, 0), (0, 0))
-            )  # makes sure horizontal dimensions are 24
+            if np.shape(value) == (24, len(self.building_ids)):
+                data[key] = value
+            else:
+                # makes sure horizontal dimensions are 24
+                data[key] = np.pad(value, ((24 - window, 0), (0, 0)))
 
         return data
 
@@ -268,7 +270,9 @@ class Predictor(DataLoader):
         C_p_bat = np.full((len(self.building_ids)), fill_value=60)
 
         c_bat_init = np.array(
-            self.state_buffer.get(-1)["soc_b"][-1]
+            self.state_buffer.get(-1)["soc_b"][-2]
+            if timestep % 24 > 0
+            else self.state_buffer.get(-2)["soc_b"][-1]
         )  # -2 to -1 (confirm)--done
         c_bat_init[c_bat_init == np.inf] = 0
 
@@ -276,18 +280,31 @@ class Predictor(DataLoader):
 
         c_Hsto_init = np.array(
             self.state_buffer.get(-1)["soc_h"][-1]
+            if timestep % 24 > 0
+            else self.state_buffer.get(-2)["soc_h"][-1]
         )  # -2 to -1 (confirm)--done
         c_Hsto_init[c_Hsto_init == np.inf] = 0
         C_p_Csto = 2 * C_max
 
         c_Csto_init = np.array(
             self.state_buffer.get(-1)["soc_c"][-1]
+            if timestep % 24 > 0
+            else self.state_buffer.get(-2)["soc_c"][-1]
         )  # -2 to -1 (confirm)--done
         c_Csto_init[c_Csto_init == np.inf] = 0
 
         # add E-grid - default day-ahead
-        observation_data["E_grid"] = np.zeros((window, len(self.building_ids)))
-        observation_data["E_grid_prevhour"] = np.zeros((window, len(self.building_ids)))
+        egc = np.array(self.state_buffer.get(-1)["elec_cons"])
+        observation_data["E_grid"] = np.pad(egc, ((0, T - egc.shape[0]), (0, 0)))
+
+        observation_data["E_grid_prevhour"] = np.zeros((T, len(self.building_ids)))
+        observation_data["E_grid_prevhour"][0] = np.array(
+            self.state_buffer.get(-2)["elec_cons"]
+        )[-1]
+        for hour in range(1, timestep % 24):
+            observation_data["E_grid_prevhour"][hour] = observation_data["E_grid"][
+                hour - 1
+            ]
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
