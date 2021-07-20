@@ -139,39 +139,199 @@ class Agent(TD3):
 
     def get_mean_sigma_range(self):
 
-        if self.flag == 0:
-
-            mean_p_ele = [1] * 9
-            std_p_ele = [0.2] * 9
-            range_p_ele = [0.1, 5]
-
-            mean_eta_ehH = [0.9] * 9
-            std_eta_ehH = [0.1] * 9
-            range_eta_ehH = [0.7, 1.3]
-
-            mean_eta_bat = [1] * 9
-            std_eta_bat = [0.2] * 9
-            range_eta_bat = [0.7, 1.3]
-
-            mean_c_bat_end = [0.1] * 9
-            std_c_bat_end = [0.1] * 9
-            range_c_bat_end = [0.01, 0.5]
-
-            mean_eta_Hsto = [1] * 9
-            std_eta_Hsto = [0.2] * 9
-            range_eta_Hsto = [0.7, 1.3]
-
-            mean_eta_Csto = [1] * 9
-            std_eta_Csto = [0.2] * 9
-            range_eta_Csto = [0.7, 1.3]
-
+        # ADD ALL PARAMS
         mean_sigma_range = [self.mean_p_ele, self.std_p_ele, self.range_p_ele]
 
-        #         mean_sigma_range = [[mean_p_ele, std_p_ele, range_p_ele],
-        #                             [mean_eta_ehH, std_eta_ehH, range_eta_ehH],
-        #                             [mean_eta_bat, std_eta_bat, range_eta_bat],
-        #                             [mean_c_bat_end, std_c_bat_end, range_c_bat_end],
-        #                             [mean_eta_Hsto, std_eta_Hsto, range_eta_Hsto],
-        #                             [mean_eta_Csto, std_eta_Csto, range_eta_Csto]]
-
         return mean_sigma_range
+
+    def get_cost_day_end(self):
+
+        # outputs act as the next_state that we get after taking actions
+        #  outputs = {'E_netelectric_hist': E_netelectric_hist, 'E_NS_hist': E_NS_hist, 'C_bd_hist': C_bd_hist, 'H_bd_hist': H_bd_hist}
+        # outputs includes the history of all observed states during the day
+
+        cost = np.zeros((1, 9))
+        self.outputs["E_netelectric_hist"] = np.array(
+            self.outputs["E_netelectric_hist"]
+        )  # size 24*9
+        #         print(np.shape(self.outputs['E_netelectric_hist']))
+        self.outputs["E_NS_hist"] = np.array(self.outputs["E_NS_hist"])  # size 2*9
+        #         print(np.shape(self.outputs['E_NS_hist']))
+        self.outputs["eta_ehH_hist"] = np.array(
+            self.outputs["eta_ehH_hist"]
+        )  # size 9*24
+
+        self.C_bd_hist = np.vstack(self.C_bd_hist)
+        self.H_bd_hist = np.vstack(self.H_bd_hist)
+        self.COP_C_hist = np.vstack(self.COP_C_hist)
+
+        self.outputs["C_bd_hist"] = np.array(self.outputs["C_bd_hist"])
+        self.outputs["H_bd_hist"] = np.array(self.outputs["H_bd_hist"])
+        self.outputs["COP_C_hist"] = np.array(self.outputs["COP_C_hist"])
+
+        for i in range(9):
+            num = np.max(self.outputs["E_netelectric_hist"][:, i])
+
+            C_bd_div_COP_C = np.divide(
+                self.outputs["C_bd_hist"][:, i], self.outputs["COP_C_hist"][:, i]
+            )
+
+            H_bd_div_eta_ehH = self.outputs["H_bd_hist"][:, i] / self.zeta_eta_ehH
+
+            den = np.max(
+                self.outputs["E_NS_hist"][1, i] * np.ones((24, 1))
+                + C_bd_div_COP_C
+                + H_bd_div_eta_ehH
+            )
+
+            cost[:, i] = num / den
+
+        return cost
+
+    def set_EliteSet_EliteSetPrev(self):
+
+        if self.k == 1:
+
+            self.elite_set_prev = self.elite_set
+            self.elite_set = []
+
+        if self.k > self.N_samples:  # Enough samples of zeta collected
+
+            # Finding best k samples according to cost y_k
+            self.costs = np.array(
+                self.costs
+            )  # Converting self.costs to np.array   dimensions = k*1*9
+            #             print(np.shape(self.costs))
+            best_zeta_args = np.zeros(
+                (self.k - 1, 9)
+            )  # Will store the arguments of the sort
+
+            elite_set_dummy = self.elite_set
+            #             print('dummy_elite_set = ',np.array(elite_set_dummy)[:,0:3,0:6,0])
+
+            for i in range(9):
+                best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
+                    -1
+                )  # Arranging costs for the i-th building
+                #                 print("costs = ", self.costs[:,:,i])
+                #                 print("zeta_zrgs = ", best_zeta_args[:,i])
+                # Finding the best K samples from the elite set
+                for Kbest in range(self.K):
+                    a = best_zeta_args[:, i][Kbest].astype(np.int32)
+                    self.elite_set[Kbest][:, :, i] = elite_set_dummy[a][:, :, i]
+
+            self.elite_set = self.elite_set[0 : self.K]
+
+            self.mean_p_ele = [[]] * 9
+            self.std_p_ele = [[]] * 9
+
+            A = np.hstack(self.elite_set)
+
+            for i in range(9):
+                self.mean_p_ele[i] = np.mean(A[:, :, i], axis=1)
+                self.std_p_ele[i] = np.std(A[:, :, i], axis=1)
+
+            self.elite_set_prev = self.elite_set
+            self.elite_set = []
+
+            self.k = 1  # Reset the sample index
+
+            self.costs = []
+
+        elite_set = self.elite_set
+        elite_set_prev = self.elite_set_prev
+
+        eliteSet_eliteSetPrev = [elite_set, elite_set_prev]
+
+        return eliteSet_eliteSetPrev
+
+    def select_action(self, state, day_ahead: bool):
+        # update zeta
+        self.set_zeta()
+        # run forward pass
+        actions = super().select_action(state, day_ahead=day_ahead)
+        # evaluate agent
+        self.evaluate_cost(state)
+        return actions
+
+    def evaluate_cost(self, state):
+        """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
+        if self.total_it < self.rbc_threshold:
+            return
+
+        E_observed = state[:, 28]  # For all buildings
+
+        E_NS_t = state[:, 23]  # For all buildings
+
+        data_output = self.memory.get(-1)
+
+        C_bd_hist = data_output["C_bd"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and current hour - np.array size - 1*9
+
+        H_bd_hist = data_output["H_bd"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and 24 hours - np.array size - 1*9
+
+        COP_C_hist = data_output["COP_C"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and 24 hours - np.array size - 1*9
+
+        self.eta_ehH_hist = [
+            0.9
+        ] * 9  # For 9 buildings and 24 hours - list of 9 lists of size 24
+
+        # Appending the current states to the day history list of states
+        self.E_netelectric_hist.append(E_observed)  # List of 24 lists each list size 9
+        self.E_NS_hist.append(E_NS_t)  # List of 24 lists each list of size 9
+        self.C_bd_hist.append(C_bd_hist)
+        self.H_bd_hist.append(H_bd_hist)
+        self.COP_C_hist.append(COP_C_hist)
+
+        if self.total_it % 24 == 23:  # Calculate cost at the end of the day
+
+            self.outputs = {
+                "E_netelectric_hist": self.E_netelectric_hist,
+                "E_NS_hist": self.E_NS_hist,
+                "C_bd_hist": self.C_bd_hist,
+                "H_bd_hist": self.H_bd_hist,
+                "COP_C_hist": self.COP_C_hist,
+                "eta_ehH_hist": self.eta_ehH_hist,
+            }  # List for observed states for the last 24 hours for the 9 buildings
+
+            cost = self.get_cost_day_end()  # Calculating cost at the end of the day
+
+            self.costs.append(cost)
+
+            self.all_costs.append(cost)
+
+            self.k = self.k + 1
+
+            self.C_bd_hist = []
+
+            self.E_netelectric_hist = []
+
+            self.H_bd_hist = []
+
+            self.COP_C_hist = []
+
+            self.E_NS_hist = []
+
+        self.mean_elite_set.append(self.mean_p_ele)
+
+    def set_zeta(self):
+        """Update zeta which will be supplied to `select_action`"""
+
+        if self.total_it >= self.rbc_threshold and self.total_it % 24 == 0:
+            zeta_k = self.get_zeta()  # put into actor
+            self.elite_set.append(zeta_k)
+            for i in range(9):
+                zeta_tuple = (
+                    zeta_k[0, :, i],
+                    self.zeta_eta_bat[:, :, i],
+                    self.zeta_eta_Hsto[:, :, i],
+                    self.zeta_eta_Csto[:, :, i],
+                    self.zeta_eta_ehH,
+                    self.zeta_c_bat_end,
+                )
+                self.actor.set_zeta(zeta_tuple, i)
