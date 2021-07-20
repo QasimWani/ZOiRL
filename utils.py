@@ -67,12 +67,16 @@ class ReplayBuffer:
         self.total_it = 0
         self.max_it = buffer_size * 24
 
-    def add(self, data: dict):
+    def add(self, data: dict, full_day: bool = False):
         """Adds an experience to existing memory - Oracle"""
         if self.total_it % 24 == 0:
             self.replay_memory.append({})
         self.replay_memory[-1] = data
-        self.total_it += 1
+
+        if full_day:
+            self.total_it += 24
+        else:
+            self.total_it += 1
 
     def get_recent(self):
         """Returns most recent data from memory"""
