@@ -17,13 +17,13 @@ from critic import Critic, Optim
 
 
 class TD3(object):
+    """Base Agent class"""
+
     def __init__(
         self,
         num_actions: list,
         num_buildings: int,
         rbc_threshold: int = 336,  # 2 weeks by default
-        env: CityLearn = None,
-        is_oracle: bool = True,
         meta_episode: int = 2,
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
@@ -75,7 +75,7 @@ class TD3(object):
         # 3 policies:
         # 1. RBC (utils.py)
         # 2. Online Exploration. (utils.py)
-        # 3. Optimizatio (actor.py)
+        # 3. Optimization (actor.py)
         actions = np.zeros((24, self.buildings))
         # upload state to memory
         self._add_to_buffer(state, None)
@@ -100,47 +100,6 @@ class TD3(object):
         if action is not None:
             self.data_loader.upload_action(action)
             self.total_it += 1
-
-    def adaptive_dispatch(self, env: CityLearn, data: dict):
-        """Computes next action"""
-        raise NotImplementedError
-        data_est = self.data_loader.model.estimate_data(
-            env, data, self.total_it, self.init_updates, self.memory
-        )
-        self.data_loader.model.convert_to_numpy(data_est)
-
-        action, cost, _ = zip(
-            *[
-                self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
-                for id in range(self.buildings)
-            ]
-        )
-
-        # _, _, E_grid = zip(
-        #     *[
-        #         self.actor_target.forward(
-        #             self.total_it % 24, data_est, id, dispatch=False
-        #         )
-        #         for id in range(self.buildings)
-        #     ]
-        # )
-        # self.E_grid_planned_day[:, self.total_it % 24] = E_grid  # adaptive update
-
-        ### DEBUG ###
-        # gather data for NORL agent
-        # _, norl_cost, _ = zip(
-        #     *[
-        #         self.actor_norl.forward(
-        #             self.total_it % 24, data_est, id, dispatch=False
-        #         )
-        #         for id in range(self.buildings)
-        #     ]
-        # )
-        # self.logger.append(cost)  # add all variables - RL
-        # self.norl_logger.append(norl_cost)  # add all variables - Pure Optim
-        ### DEBUG ###
-
-        return action
 
     def day_ahead_dispatch_pred(self):
         """Returns day-ahead dispatch"""
