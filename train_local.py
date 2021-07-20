@@ -70,6 +70,8 @@ done = False
 
 agents_rbc = RBC(actions_spaces)
 RBC_Egrid = []
+
+
 def get_idx_hour():
     # Finding which state
     with open("buildings_state_action_space.json") as file:
@@ -86,14 +88,14 @@ def get_idx_hour():
     return indx_hour
 
 
-
 E_grid = []
-action = agents.select_action(state,env,True)
+action = agents.select_action(state, env, True)
 
 t_idx = 0
 end_time = RBC_THRESHOLD + 24 * 5  # run for a month
 
 indx_hour = get_idx_hour()
+
 
 def get_rbc_data(
     surrogate_env: CityLearn, state, indx_hour: int, dump_data: list, run_timesteps: int
@@ -109,6 +111,7 @@ def get_rbc_data(
         state = next_state
         dump_data.append([x[28] for x in state])
 
+
 get_rbc_data(deepcopy(env), state, indx_hour, RBC_Egrid, end_time)
 
 
@@ -118,7 +121,9 @@ costs_peak_net_ele = []
 while not done and t_idx <= end_time:
     print(f"\rTime step: {t_idx}", end="")
     next_state, reward, done, _ = env.step(action)
-    action_next = agents.select_action(next_state, env,True)  # passing in environment for Oracle agent.
+    action_next = agents.select_action(
+        next_state, env, True
+    )  # passing in environment for Oracle agent.
 
     agents.add_to_buffer_oracle(state, env, action, reward)
     # agents.add_to_buffer(state, action, reward, next_state, done)
@@ -132,9 +137,6 @@ while not done and t_idx <= end_time:
 
 print(f"Total time to run {end_time // 24} days: {time.time() - start_time}")
 # env.cost()
-
-
-
 
 
 vars_RL = agents.logger
@@ -180,7 +182,7 @@ for key in debug_params:
 # collect all data
 start_time = end_time - 24 * 5
 for i in range(end_time - start_time):
-    optim_var = vars_RL[start_time+i-RBC_THRESHOLD]
+    optim_var = vars_RL[start_time + i - RBC_THRESHOLD]
     for key in debug_item:
         for bid in range(9):
             check_data[key][bid].append(optim_var[bid][key])
@@ -216,13 +218,13 @@ for i in range(3):
         bid = i * 3 + j
         axs[i, j].set_title(f"Building {bid + 1}")
         axs[i, j].plot(
-            E_grid_true[bid][week:(week+24)], label="True E grid: Optim"
+            E_grid_true[bid][week : (week + 24)], label="True E grid: Optim"
         )  # plot true E grid
         for t in range(24):
-            data_np = np.array(check_data['E_grid'][bid][week+t]).T
-            data_np2 = np.array(check_data['E_grid_sell'][bid][week+t]).T
-            axs[i, j].plot(np.arange(t,24),
-                data_np[:]+data_np2[:], label=f"Optim hour {t}"
+            data_np = np.array(check_data["E_grid"][bid][week + t]).T
+            data_np2 = np.array(check_data["E_grid_sell"][bid][week + t]).T
+            axs[i, j].plot(
+                np.arange(t, 24), data_np[:] + data_np2[:], label=f"Optim hour {t}"
             )  # plot true E grid
         axs[i, j].grid()
         if j == 0:
@@ -236,8 +238,14 @@ fig.savefig("images/Egrid_compare_adaptive.pdf", bbox_inches="tight")
 # plot predicted variable and true variables
 week = end_time - 24 * 3  # plots last week of the month data
 fig, axs = plt.subplots(3, 3, figsize=(15, 15))
-check_keys = ["E_hpC","E_ehH","SOC_bat","SOC_H","SOC_C"]
-env_comp_item = ["electric_consumption_cooling", "electric_consumption_dhw","electrical_storage_soc","dhw_storage_soc","cooling_storage_soc"]
+check_keys = ["E_hpC", "E_ehH", "SOC_bat", "SOC_H", "SOC_C"]
+env_comp_item = [
+    "electric_consumption_cooling",
+    "electric_consumption_dhw",
+    "electrical_storage_soc",
+    "dhw_storage_soc",
+    "cooling_storage_soc",
+]
 for key_i in range(len(check_keys)):
     for i in range(3):
         for j in range(3):
@@ -247,11 +255,13 @@ for key_i in range(len(check_keys)):
             )
             axs[i, j].set_title(f"Building {bid + 1}")
             axs[i, j].plot(
-                data_env[week:(week+24)], label=f"True {check_keys[key_i]}"
+                data_env[week : (week + 24)], label=f"True {check_keys[key_i]}"
             )  # plot true E grid
             for t in range(24):
-                data_np = np.array(check_data[check_keys[key_i]][week+t]).T
-                axs[i, j].plot(np.arange(t,24),data_np[bid][:], label=f"Optim hour {t}")
+                data_np = np.array(check_data[check_keys[key_i]][week + t]).T
+                axs[i, j].plot(
+                    np.arange(t, 24), data_np[bid][:], label=f"Optim hour {t}"
+                )
             axs[i, j].grid()
             if j == 0:
                 axs[i, j].set_ylabel(f"{check_keys[key_i]}")
@@ -261,7 +271,6 @@ for key_i in range(len(check_keys)):
     fig.savefig(f"images/{check_keys[key_i]}_optim_env_plot.pdf", bbox_inches="tight")
 
 
-
 # plot predicted variable and true variables
 numdays = 3
 week = end_time - 24 * numdays  # plots last week of the month data
@@ -269,9 +278,9 @@ fig, axs = plt.subplots(3, 3, figsize=(15, 15))
 hour_index = []
 for hour_i in range(24):
     hour_t = []
-    hour_base = np.arange(hour_i,24)
+    hour_base = np.arange(hour_i, 24)
     for day_i in range(numdays):
-        hour_t.extend(hour_base+day_i*24)
+        hour_t.extend(hour_base + day_i * 24)
     hour_index.append(np.array(hour_t))
 
 for key_i in range(len(debug_item)):
@@ -282,10 +291,14 @@ for key_i in range(len(debug_item)):
             for t in range(24):
                 data_np = []
                 for day_i in range(numdays):
-                    data_np_t = np.array(check_data[debug_item[key_i]][week + t+day_i*24]).T
+                    data_np_t = np.array(
+                        check_data[debug_item[key_i]][week + t + day_i * 24]
+                    ).T
                     data_np.extend(np.array(data_np_t[bid][:]))
 
-                axs[i, j].plot(hour_index[t],np.array(data_np), label=f"Optim hour {t}")
+                axs[i, j].plot(
+                    hour_index[t], np.array(data_np), label=f"Optim hour {t}"
+                )
             axs[i, j].grid()
             if j == 0:
                 axs[i, j].set_ylabel(f"{debug_item[key_i]}")
@@ -295,7 +308,7 @@ for key_i in range(len(debug_item)):
     fig.savefig(f"images/{debug_item[key_i]}_OPTIM_plot.pdf", bbox_inches="tight")
 
 # Plot energy balance
-env_comp_item = ["electrical_storage", "cooling_storage","dhw_storage"]
+env_comp_item = ["electrical_storage", "cooling_storage", "dhw_storage"]
 env_comp_item_check = ["action_bat", "action_C", "action_H"]
 env_comp_item_check2 = ["SOC_bat", "SOC_C", "SOC_H"]
 env_comp_item_check3 = ["C_p_bat", "C_p_Csto", "C_p_Hsto"]
@@ -308,15 +321,29 @@ for key_i in range(len(env_comp_item)):
     for i in range(3):
         for j in range(3):
             bid = i * 3 + j
-            data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
-                    ),"energy_balance"))
-            data_env2 = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
-                    ),"soc"))
+            data_env = np.array(
+                getattr(
+                    getattr(
+                        env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
+                    ),
+                    "energy_balance",
+                )
+            )
+            data_env2 = np.array(
+                getattr(
+                    getattr(
+                        env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
+                    ),
+                    "soc",
+                )
+            )
             axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
-            axs[i, j].plot(data_np[bid][week:] * data_est[env_comp_item_check3[key_i]][0, bid],
+            axs[i, j].plot(
+                data_np[bid][week:] * data_est[env_comp_item_check3[key_i]][0, bid],
                 label="optimization",
             )  # plot true E grid
-            axs[i, j].plot(data_np2[bid][week:] * data_est[env_comp_item_check3[key_i]][0, bid],
+            axs[i, j].plot(
+                data_np2[bid][week:] * data_est[env_comp_item_check3[key_i]][0, bid],
                 label="optimization SOC",
             )
             axs[i, j].plot(data_env[week:], label="environment")
@@ -328,7 +355,9 @@ for key_i in range(len(env_comp_item)):
             if i == 0:
                 axs[i, j].set_xlabel("Hour")
     plt.legend()
-    fig.savefig(f"images/{env_comp_item_check[key_i]}_optim_env_plot.pdf", bbox_inches="tight")
+    fig.savefig(
+        f"images/{env_comp_item_check[key_i]}_optim_env_plot.pdf", bbox_inches="tight"
+    )
 
 # Plot loads
 week = end_time - 24 * 3  # plots last week of the month data
@@ -423,5 +452,3 @@ for i in range(3):
             axs[i, j].set_xlabel("Day")
 plt.legend()
 fig.savefig(f"images/total_cost_ratio.pdf", bbox_inches="tight")
-
-
