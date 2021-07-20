@@ -1,4 +1,3 @@
-from collections import defaultdict
 from copy import Error
 from utils import ReplayBuffer
 
@@ -12,6 +11,8 @@ from scipy import stats
 from sklearn import datasets, linear_model
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
 
 
 class DataLoader:
@@ -47,7 +48,7 @@ class DataLoader:
     def get_dimensions(self, data: dict):
         """Prints shape of each param"""
         for key in data.keys():
-            print(key, data[key].shape)
+            print(data[key].shape)
 
     def get_building(self, data: dict, building_id: int):
         """Loads data (dict) from a particular building. 1-based indexing for building"""
@@ -107,7 +108,7 @@ class Predictor(DataLoader):
         )  # , positive=True) # version error
         self.avg_h_load = {uid: np.zeros(24) for uid in self.building_ids}
         self.avg_c_load = {uid: np.ones(24) for uid in self.building_ids}
-        self.daystep = 0  # this is for h/c loads estimation--not real daystep!
+        self.daystep = 0   # this is for h/c loads estimation--not real daystep!
         self.h_peak = {uid: np.zeros(24, dtype=int) for uid in self.building_ids}
         self.c_peak = {uid: np.zeros(24, dtype=int) for uid in self.building_ids}
 
@@ -124,45 +125,93 @@ class Predictor(DataLoader):
         self.elec_weekend2_avg = {i: np.zeros(24) for i in self.building_ids}
         self.regr_solar = {uid: LinearRegression() for uid in self.building_ids}
         self.regr_elec = {uid: LinearRegression() for uid in self.building_ids}
+        # ----------below vars are for capacity estimation-------------
+        self.timestep = 0
+        #-----------thresholds-------------
+        self.tau_c = {uid: 0.2 for uid in self.building_ids}
+        self.tau_h = {uid: 0.2 for uid in self.building_ids}
+        self.tau_b = {uid: 0.5 for uid in self.building_ids}
+        self.tau_cplus = {uid: 0.1 for uid in self.building_ids}
+        self.tau_hplus = {uid: 0.1 for uid in self.building_ids}
+        self.action_c = {uid: 0.1 for uid in self.building_ids}
+        self.action_h = {uid: 0.1 for uid in self.building_ids}
+        #------------indications of estimation procedure----------
+        self.prev_hour_est_b = {uid: False for uid in self.building_ids}
+        self.prev_hour_est_c = {uid: False for uid in self.building_ids}
+        self.prev_hour_est_h = {uid: False for uid in self.building_ids}
+        self.a_clip = {uid: None for uid in self.building_ids}
+        self.avail_ratio_est_c = {uid: False for uid in self.building_ids}
+        self.avail_ratio_est_h = {uid: False for uid in self.building_ids}
+        self.avail_nominal = {uid: False for uid in self.building_ids}
+        self.prev_hour_nom = {uid: False for uid in self.building_ids}
+        #------------number of est points---------------
+        self.num_elec_points = {uid: 0 for uid in self.building_ids}
+        self.num_h_points = {uid: 0 for uid in self.building_ids}
+        self.num_c_points = {uid: 0 for uid in self.building_ids}
+        self.ratio_c_est = {uid: [] for uid in self.building_ids}
+        self.C_bd_est = {uid: [] for uid in self.building_ids}
+        self.ratio_h_est = {uid: [] for uid in self.building_ids}
+        self.H_bd_est = {uid: [] for uid in self.building_ids}
+        #------------estimated values: for return---------
+        self.cap_c_est = {uid: [] for uid in self.building_ids}
+        self.cap_h_est = {uid: [] for uid in self.building_ids}
+        self.cap_b_est = {uid: [] for uid in self.building_ids}
+        self.effi_b = {uid: 0 for uid in self.building_ids}
+        self.effi_c = {uid: 0 for uid in self.building_ids}
+        self.effi_h = {uid: 0 for uid in self.building_ids}
+        self.nominal_b = {uid: [] for uid in self.building_ids}
+        self.ratio_c = {uid: 0 for uid in self.building_ids}
+        self.ratio_h = {uid: 0 for uid in self.building_ids}
+        # ---------------results of est------------------
+        self.nom_p_est = {uid: 0 for uid in self.building_ids}
+        self.capacity_b = {uid: 0 for uid in self.building_ids}
+        self.H_qr_est = {uid: 0 for uid in self.building_ids}
+        self.C_qr_est = {uid: 0 for uid in self.building_ids}
+
+        self.E_day = True
+        self.C_day = self.H_day = False
+
+
 
     # TODO: @Zhiyao + @Qasim - this function has not tested. Depends on internal predictor to work.
     def estimate_data(
-        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool
+        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
     ):
         """Estimates data to be passed into Optimization model for 24hours into future."""
         if is_adaptive:
             # if hour start of day, `get_recent()` will automatically return an empty dictionary
-            data = self.full_parse_data(
-                self.get_day_data(replay_buffer, timestep), 24 - timestep % 24
+            data = self.parse_data(
+                replay_buffer.get_recent(), self.get_day_data(replay_buffer, timestep)
             )
             replay_buffer.add(data)
+            replay_buffer.total_it += 1
         else:
-            data = self.full_parse_data(self.get_day_data(replay_buffer, timestep))
-            replay_buffer.add(data, full_day=True)
+            data = self.full_parse_data({}, self.get_day_data(replay_buffer, timestep))
+            replay_buffer.add(data)
+            replay_buffer.total_it += 24  # this is incorrect.
         return data
 
-    def full_parse_data(self, current_data: dict, window: int = 24):
+    def full_parse_data(
+        self, data: dict, current_data: dict
+    ):  # override in child class
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
-        TOTAL_PARAMS = 20
+        TOTAL_PARAMS = 23
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
-        ), (
-            f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. "
-            f"Can't run Predictor agent optimization.\n"
-            f"@Zhiyao, these parameters come from `get_day_data`. "
-            f"Count the number of keys returned in that function and make sure its equal to `current_data` parameter. "
-            f"Otherwise, there's a mismatch that the actor wont be able to run. 23 is set on previous version. "
-            f"Change this is you believe you'd need more parameters."
-        )
-        data = {}
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: {TOTAL_PARAMS}. " \
+           f"Can't run Predictor agent optimization.\n" \
+           f"@Zhiyao, these parameters come from `get_day_data`. " \
+           f"Count the number of keys returned in that function and make sure its equal to `current_data` parameter. " \
+           f"Otherwise, there's a mismatch that the actor wont be able to run. 23 is set on previous version. " \
+           f"Change this is you believe you'd need more parameters."
+
         for key, value in current_data.items():
-            value = np.array(value)
+            if key not in data:
+                data[key] = []
             if len(value.shape) == 1:
-                value = np.repeat(value, window).reshape(window, len(self.building_ids))
-            data[key] = np.pad(
-                value, ((24 - window, 0), (0, 0))
-            )  # makes sure horizontal dimensions are 24
+                value = np.repeat(value, 24).reshape(24, len(self.building_ids))
+            data[key].append(value)
 
         return data
 
@@ -222,8 +271,8 @@ class Predictor(DataLoader):
 
         observation_data = {}
 
-        # get previous day's buffer
-        data = replay_buffer.get(-1) if len(replay_buffer) > 0 else None
+        # get current day's buffer
+        data = replay_buffer.get(-2) if len(replay_buffer) > 0 else None
 
         # NOTE: @Zhiyao - dimensions should be of `window, num_buildings`
         # get heating, cooling, electricity, and solar estimate
@@ -232,7 +281,7 @@ class Predictor(DataLoader):
             cooling_estimate,
             solar_estimate,
             electricity_estimate,
-            future_temp,
+            future_temp
         ) = self.infer_load(timestep)
 
         E_ns = np.array([electricity_estimate[key] for key in self.building_ids]).T
@@ -241,17 +290,13 @@ class Predictor(DataLoader):
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
-        H_max = (
-            None if data is None else data["H_max"].max(axis=0)
-        )  # load previous H_max
+        H_max = None if data is None else data["H_max"]  # load previous H_max
         if H_max is None:
             H_max = np.max(H_bd, axis=0)
         else:
             H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
 
-        C_max = (
-            None if data is None else data["C_max"].max(axis=0)
-        )  # load previous C_max
+        C_max = None if data is None else data["C_max"]  # load previous C_max
         if C_max is None:
             C_max = np.max(C_bd, axis=0)
         else:
@@ -263,27 +308,37 @@ class Predictor(DataLoader):
             for bid in self.building_ids:
                 COP_C[hour, bid] = self.cop_cal(temp[hour, bid])
 
+        """
+        self.capacity_b : capacity of battery -> C_p_bat
+        self.nom_p_est : nominal power of battery -> ?
+        self.C_qr_est : capacity of cooling storage -> C_p_Csto
+        self.H_qr_est : capacity of heating storage -> C_p_Hsto
+        """
+
         E_hpC_max = np.max(C_bd / COP_C, axis=0)
         E_ehH_max = H_max / 0.9
-        C_p_bat = np.full((len(self.building_ids)), fill_value=60)
+        C_p_bat = [np.round(self.capacity_b[uid], 2) for uid in self.building_ids]
 
         c_bat_init = np.array(
             self.state_buffer.get(-1)["soc_b"][-1]
         )  # -2 to -1 (confirm)--done
         c_bat_init[c_bat_init == np.inf] = 0
 
-        C_p_Hsto = 3 * H_max
+        C_p_Hsto = [np.round(self.H_qr_est[uid], 2) for uid in self.building_ids]
 
         c_Hsto_init = np.array(
             self.state_buffer.get(-1)["soc_h"][-1]
         )  # -2 to -1 (confirm)--done
         c_Hsto_init[c_Hsto_init == np.inf] = 0
-        C_p_Csto = 2 * C_max
+
+        C_p_Csto = [np.round(self.C_qr_est[uid], 2) for uid in self.building_ids]
 
         c_Csto_init = np.array(
             self.state_buffer.get(-1)["soc_c"][-1]
         )  # -2 to -1 (confirm)--done
         c_Csto_init[c_Csto_init == np.inf] = 0
+
+        print("C_p_bat", C_p_bat, "\nC_p_Hsto", C_p_Hsto, "\nC_p_Csto", C_p_Csto)
 
         # add E-grid - default day-ahead
         observation_data["E_grid"] = np.zeros((window, len(self.building_ids)))
@@ -521,8 +576,8 @@ class Predictor(DataLoader):
             input_elec_full[uid][6:12, 0] = x_elec_12h
             input_elec_full[uid][12:, 0] = x_elec_24h
 
-            input_solar[uid][:, :] = input_solar_full[uid][timestep % 24 :, :]
-            input_elec[uid][:, :] = input_elec_full[uid][timestep % 24 :, :]
+            input_solar[uid][:, :] = input_solar_full[uid][timestep % 24: , :]
+            input_elec[uid][:, :] = input_elec_full[uid][timestep % 24: , :]
 
         return input_solar, input_elec
 
@@ -532,7 +587,7 @@ class Predictor(DataLoader):
         # ), "only make day-ahead prediction at the first hour of the day"
         """changed for adaptive dispatch--make inference every hour"""
         if timestep % 24 == 0:
-            self.calculate_avg()  # make sure get_recent() returns in 24*9 shape
+            self.calculate_avg()    # make sure get_recent() returns in 24*9 shape
 
         T = 24
         window = T - timestep % 24
@@ -545,8 +600,8 @@ class Predictor(DataLoader):
             self.regr_elec[uid].fit(x_elec[uid], y_elec[uid])
         # ------------------start prediction-------------------
         input_solar, input_elec = self.gather_input(timestep)
-        solar_gen = {uid: np.zeros([window + 2]) for uid in self.building_ids}
-        elec_dem = {uid: np.zeros([window + 2]) for uid in self.building_ids}
+        solar_gen = {uid: np.zeros([window+2]) for uid in self.building_ids}
+        elec_dem = {uid: np.zeros([window+2]) for uid in self.building_ids}
 
         daytype = {uid: 0 for uid in self.building_ids}
         day_pred_solar = {uid: np.zeros([window]) for uid in self.building_ids}
@@ -558,17 +613,14 @@ class Predictor(DataLoader):
                     pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
                 )
                 solar_gen[uid][1] = (
-                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
-                    - self.solar_avg[uid][0]
+                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid] - self.solar_avg[uid][0]
                 )
             else:
                 solar_gen[uid][0] = (
-                    pred_buffer.get(-1)["solar_gen"][(timestep - 1) % 24][uid]
-                    - self.solar_avg[uid][(timestep - 1) % 24]
+                        pred_buffer.get(-1)["solar_gen"][(timestep-1) % 24][uid] - self.solar_avg[uid][(timestep-1) % 24]
                 )
                 solar_gen[uid][1] = (
-                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
-                    - self.solar_avg[uid][timestep % 24]
+                        pred_buffer.get(-1)["solar_gen"][timestep % 24][uid] - self.solar_avg[uid][timestep % 24]
                 )
             daytype[uid] = pred_buffer.get(-1)["daytype"][0][uid]
 
@@ -603,8 +655,8 @@ class Predictor(DataLoader):
             else:
                 if daytype[uid] in [7]:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-                        - self.elec_weekend1_avg[uid][(timestep - 1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
+                        - self.elec_weekend1_avg[uid][(timestep-1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -612,8 +664,8 @@ class Predictor(DataLoader):
                     )
                 elif daytype[uid] in [1, 8]:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-                        - self.elec_weekend2_avg[uid][(timestep - 1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
+                        - self.elec_weekend2_avg[uid][(timestep-1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -621,8 +673,8 @@ class Predictor(DataLoader):
                     )
                 else:
                     elec_dem[uid][0] = (
-                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-                        - self.elec_weekday_avg[uid][(timestep - 1) % 24]
+                        pred_buffer.get(-1)["elec_dem"][(timestep-1) % 24][uid]
+                        - self.elec_weekday_avg[uid][(timestep-1) % 24]
                     )
                     elec_dem[uid][1] = (
                         pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
@@ -659,10 +711,8 @@ class Predictor(DataLoader):
                 avg = self.solar_avg[uid][(i + 1 + timestep) % 24]
                 day_pred_solar[uid][i] = max(0, y_pred.item() + avg)
                 solar_gen[uid][i + 2] = y_pred.item()
-            day_pred_solar[uid] = np.append(
-                np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
-                day_pred_solar[uid][0 : window - 1],
-            )
+            day_pred_solar[uid] = np.append(np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
+                                           day_pred_solar[uid][0: window-1])
 
             for i in range(len(input_elec[uid])):
                 x_pred = [
@@ -677,10 +727,8 @@ class Predictor(DataLoader):
                     avg = self.elec_weekday_avg[uid][(i + 1 + timestep) % 24]
                 day_pred_elec[uid][i] = max(0, y_pred.item() + avg)
                 elec_dem[uid][i + 2] = y_pred.item()
-            day_pred_elec[uid] = np.append(
-                np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
-                day_pred_elec[uid][: window - 1],
-            )
+            day_pred_elec[uid] = np.append(np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
+                                       day_pred_elec[uid][ : window-1])
 
         return day_pred_solar, day_pred_elec, input_elec
 
@@ -701,11 +749,11 @@ class Predictor(DataLoader):
         for i in range(-14, 0):
             solar_gen = pred_buffer.get(i)["solar_gen"]
             # expect solar_gen to be [24*7, 9] vertically sequential
-            elec_dem = pred_buffer.get(i)["elec_dem"]
-            x_diffuse = pred_buffer.get(i)["diffuse_solar_rad"]
-            x_direct = pred_buffer.get(i)["direct_solar_rad"]
-            x_tout = pred_buffer.get(i)["t_out"]
-            daytype = pred_buffer.get(i)["daytype"]
+            elec_dem = (pred_buffer.get(i)["elec_dem"])
+            x_diffuse = (pred_buffer.get(i)["diffuse_solar_rad"])
+            x_direct = (pred_buffer.get(i)["direct_solar_rad"])
+            x_tout = (pred_buffer.get(i)["t_out"])
+            daytype = (pred_buffer.get(i)["daytype"])
 
             for uid in self.building_ids:
                 for i in range(2, np.shape(solar_gen)[0] - 1):
@@ -721,37 +769,32 @@ class Predictor(DataLoader):
                 for i in range(2, np.shape(elec_dem)[0] - 1):
                     if daytype[i - 2][uid] in [7]:
                         x_temp1 = (
-                            elec_dem[i - 2][uid]
-                            - self.elec_weekend1_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid] - self.elec_weekend1_avg[uid][(i - 2) % 24]
                         )
                     elif daytype[i - 2][uid] in [1, 8]:
                         x_temp1 = (
-                            elec_dem[i - 2][uid]
-                            - self.elec_weekend2_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid] - self.elec_weekend2_avg[uid][(i - 2) % 24]
                         )
                     else:
                         x_temp1 = (
-                            elec_dem[i - 2][uid]
-                            - self.elec_weekday_avg[uid][(i - 2) % 24]
+                            elec_dem[i - 2][uid] - self.elec_weekday_avg[uid][(i - 2) % 24]
                         )
                     if daytype[i - 1][uid] in [7]:
                         x_temp2 = (
-                            elec_dem[i - 1][uid]
-                            - self.elec_weekend1_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid] - self.elec_weekend1_avg[uid][(i - 1) % 24]
                         )
                     elif daytype[i - 1][uid] in [1, 8]:
                         x_temp2 = (
-                            elec_dem[i - 1][uid]
-                            - self.elec_weekend2_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid] - self.elec_weekend2_avg[uid][(i - 1) % 24]
                         )
                     else:
                         x_temp2 = (
-                            elec_dem[i - 1][uid]
-                            - self.elec_weekday_avg[uid][(i - 1) % 24]
+                            elec_dem[i - 1][uid] - self.elec_weekday_avg[uid][(i - 1) % 24]
                         )
 
                     x_append1 = [x_temp1, x_temp2]
                     x_append2 = [x_tout[i][uid]]
+
 
                     if daytype[i][uid] in [7]:
                         y = elec_dem[i][uid] - self.elec_weekend1_avg[uid][i % 24]
@@ -826,9 +869,7 @@ class Predictor(DataLoader):
 
                 if time != 0:
                     prev_state = now_state
-                    prev_t_out = prev_state["t_out"][time - 1][
-                        uid
-                    ]  # when time=0, time-1=-1
+                    prev_t_out = prev_state["t_out"][time - 1][uid]   # when time=0, time-1=-1
                 else:
                     prev_state = self.state_buffer.get(-3)
                     prev_t_out = prev_state["t_out"][-1][uid]
@@ -925,7 +966,7 @@ class Predictor(DataLoader):
                     #     or prev_t_cop != next_t_cop
                     #     or now_t_cop != next_t_cop
                     # ):
-                    ## get results of slope in regr model
+                        ## get results of slope in regr model
                     c_load = h_load = max(1, y - (1 / now_t_cop + 1 / 0.9))
                     c_hasest[uid][time], h_hasest[uid][time] = 1, 1
                     # else:  # COP remaining the same (zero)
@@ -963,9 +1004,629 @@ class Predictor(DataLoader):
         for uid in self.building_ids:
             est_h_load[uid] *= 1.5
             est_c_load[uid] *= 1.5
-            adaptive_h_load[uid] = est_h_load[uid][T - window :]
-            adaptive_c_load[uid] = est_c_load[uid][T - window :]
+            adaptive_h_load[uid] = est_h_load[uid][T-window:]
+            adaptive_c_load[uid] = est_c_load[uid][T-window:]
         return adaptive_h_load, adaptive_c_load
+
+
+    def select_action(self,  timestep: int):
+        """integrate the main loop in online_est in this function"""
+        RBC_THRESHOLD = 336
+        self.timestep = timestep
+        sign = False
+        # if self.E_day is False and self.timestep % 22 == 0:
+        #     self.C_day = not self.C_day
+        #     self.H_day = not self.H_day
+
+        if self.timestep == RBC_THRESHOLD-1:
+            self.quantile_reg()
+
+        if self.E_day is True:
+            action, cap_bat, effi, nominal_p, add_points = self.estimate_bat()
+            for uid in self.building_ids:
+                if add_points[uid] is True:
+                    self.num_elec_points[uid] += 1
+                    self.effi_b[uid] = effi[uid] if effi[uid] != 0 else self.effi_b[uid]
+                    self.cap_b_est[uid].append(cap_bat[uid] * self.effi_b[uid])
+                if nominal_p[uid] > 0:
+                    self.nominal_b[uid].append(nominal_p[uid])
+                self.avail_nominal[uid] = True if self.num_elec_points[uid] >= 1 else False
+                sign = True if len(self.nominal_b[uid]) >= 3 else False
+            if sign is True:
+                self.E_day = False
+                self.H_day, self.C_day = False, True
+                for uid in self.building_ids:
+                    """below two are parameters to be configured in predictor"""
+                    self.nom_p_est[uid] = max(self.nominal_b[uid])
+                    self.capacity_b[uid] = self.cap_b_est[uid][0]
+                    # print(uid, "Bat: ", self.capacity_b[uid], ", Nominal P: ", self.nom_p_est[uid])
+                # print("real nominal power: 75 40 20 30 25 10 15 10 20")
+
+        elif self.C_day is True:
+            action, cap_c, add_points, ratio_c, C_bd = self.estimate_c()
+            for uid in self.building_ids:
+                if add_points[uid] == 1:
+                    if cap_c[uid] > 0:
+                        self.num_c_points[uid] += add_points[uid]
+                        self.cap_c_est[uid].append(cap_c[uid])
+                        # ratio_c_est[uid].append(ratio_c[uid])
+                        self.ratio_c_est[uid].append(ratio_c[uid])  # Two point avg
+                        self.C_bd_est[uid].append(C_bd[uid])
+                sign = True if self.num_c_points[uid] >= 7 else False
+            if sign is True:
+                self.H_day, self.C_day = True, False
+                # for uid in self.building_ids:
+                #     print(uid, "C:", self.cap_c_est[uid])
+
+        elif self.H_day is True:
+            action, cap_h, add_points, ratio_h, H_bd = self.estimate_h()
+            sign = False
+            for uid in self.building_ids:
+                if add_points[uid] == 1:
+                    if cap_h[uid] > 0:
+                        self.num_h_points[uid] += add_points[uid]
+                        self.cap_h_est[uid].append(cap_h[uid])
+                        # ratio_h_est[uid].append(ratio_h[uid])
+                        self.ratio_h_est[uid].append(ratio_h[uid])  # Two point avg
+                        self.H_bd_est[uid].append(H_bd[uid])
+                        self.H_day, self.C_day = False, True
+                sign = True if self.num_h_points[uid] >= 9 else False
+            if sign is True:
+                pass
+                # self.H_day, self.C_day = False, False
+                # for uid in self.building_ids:
+                #     print(uid, "H:", self.cap_h_est[uid])
+        else:
+            raise TypeError("No energy type is configured")
+
+        return action
+
+    def quantile_reg(self):
+        df_cap_h = pd.DataFrame({key: pd.Series(value) for key, value in
+                                 self.cap_h_est.items()})  # conversion of dictionary to dataframe with different length
+        df_cap_h.columns = ["Building_"+str(uid)+"_cap_h" for uid in self.building_ids]
+        # print("cap_h dataframe:\n",df_cap_h)
+
+        df_H_bd = pd.DataFrame({key: pd.Series(value) for key, value in
+                                self.H_bd_est.items()})  # conversion of dictionary to dataframe with different length
+        df_H_bd.columns = ["Building_"+str(uid)+"_H_bd" for uid in self.building_ids]
+        # print("H_bd dataframe:\n",df_H_bd)
+        df_ratio_h = pd.DataFrame({key: pd.Series(value) for key, value in
+                                   self.ratio_h_est.items()})  # conversion of dictionary to dataframe with different length
+        df_ratio_h.columns = ["Building_"+str(uid)+"_ratio_h" for uid in self.building_ids]
+        # print("ratio H dataframe:\n",df_ratio_h)
+
+        H_dataframe = pd.concat([df_cap_h, df_H_bd, df_ratio_h], axis=1)  # Concatenation of H relevant data
+        # print(H_dataframe)
+
+        ################################  Conversion of dicionary to dataframe //// Cooling
+        # my_array = np.array([cap_h_est])
+        df_cap_c = pd.DataFrame({key: pd.Series(value) for key, value in
+                                 self.cap_c_est.items()})  # conversion of dictionary to dataframe with different length
+        df_cap_c.columns = ["Building_"+str(uid)+"_cap_c" for uid in self.building_ids]
+        # print("cap_c dataframe:\n",df_cap_c)
+
+        df_C_bd = pd.DataFrame({key: pd.Series(value) for key, value in
+                                self.C_bd_est.items()})  # conversion of dictionary to dataframe with different length
+        df_C_bd.columns = ["Building_"+str(uid)+"_C_bd" for uid in self.building_ids]
+        # print("C_bd dataframe:\n",df_H_bd)
+        df_ratio_c = pd.DataFrame({key: pd.Series(value) for key, value in
+                                   self.ratio_c_est.items()})  # conversion of dictionary to dataframe with different length
+        df_ratio_c.columns = ["Building_"+str(uid)+"_ratio_c" for uid in self.building_ids]
+        # print("ratio C dataframe:\n",df_ratio_h)
+
+        C_dataframe = pd.concat([df_cap_c, df_C_bd, df_ratio_c], axis=1)  # Concatenation of H relevant data
+        # print(C_dataframe)
+
+        ################################ dataframe to array (both Heat and Cooling) to use the index
+
+        ## Quantile regession %
+        quantiles = [0.35, 0.45, 0.5, 0.55, 0.65, 0.75, 0.85, 0.95]
+
+        for uid in self.building_ids:  # j is building id
+            self.quantile_reg_H(uid, quantiles, H_dataframe, 5)
+            self.quantile_reg_C(uid, quantiles, C_dataframe, 5)
+
+    #
+    # @staticmethod
+    # def fit_model_h(mod, qr, uid):
+    #     res = mod.fit(q=qr)
+    #     return [qr, res.params['Building_' + str(uid) + '_ratio_h']] + res.conf_int().loc[
+    #         'Building_' + str(uid) + '_ratio_h'].tolist()
+    #
+    # @staticmethod
+    # def fit_model_c(mod, qr, uid):
+    #     res = mod.fit(q=qr)
+    #     return [qr, res.params['Building_' + str(uid) + '_ratio_c']] + res.conf_int().loc[
+    #         'Building_' + str(uid) + '_ratio_c'].tolist()
+
+    def quantile_reg_H(self, uid, quantiles, H_dataframe, climate_zone):
+        ############### Qunatile Regression
+        if uid in [2, 3]:
+            self.H_qr_est[uid] = (1e-5)
+        else:
+            mod = smf.quantreg(' Building_' + str(uid) + '_H_bd ~ Building_' + str(uid) + '_ratio_h -1',
+                               H_dataframe)  # -1 means no intercept
+            models = []
+            for qr in quantiles:
+                res = mod.fit(q=qr)
+                models.append([qr, res.params['Building_' + str(uid) + '_ratio_h']] + res.conf_int().loc[
+                'Building_' + str(uid) + '_ratio_h'].tolist())
+
+            models = pd.DataFrame(models,
+                                  columns=['quantile reg %', 'coefficient', 'lower bound(coeff)', 'upper bound(coeff)'])
+
+            ord_least_sq = smf.ols(' Building_' + str(uid) + '_H_bd~ Building_' + str(uid) + '_ratio_h -1',
+                                   H_dataframe).fit()  # ordinary least square
+            ord_least_sq_ci = ord_least_sq.conf_int().loc['Building_' + str(uid) + '_ratio_h'].tolist()
+            ord_least_sq = dict(y_interc=0,  # y-intercept
+                                coeff=ord_least_sq.params['Building_' + str(uid) + '_ratio_h'],  # slope
+                                lower_bound=ord_least_sq_ci[0],
+                                upper_bound=ord_least_sq_ci[1])
+
+            # for uid in building_ids
+            ##### Quantile regression % assignment to each building for better capacity estimation based on observation
+            self.H_qr_est[uid] = (models["coefficient"][3] + models["coefficient"][4]) / 2
+
+    def quantile_reg_C(self, uid, quantiles, C_dataframe, climate_zone):
+        mod = smf.quantreg(' Building_' + str(uid) + '_C_bd ~ Building_' + str(uid) + '_ratio_c -1',
+                           C_dataframe)  # -1 means no intercept = intercept at 0
+        # quantiles = [0.35, 0.45, 0.5, 0.55, 0.65, 0.75, 0.85, 0.95]
+        models = []
+        for qr in quantiles:
+            res = mod.fit(q=qr)
+            models.append([qr, res.params['Building_' + str(uid) + '_ratio_c']] + res.conf_int().loc[
+                'Building_' + str(uid) + '_ratio_c'].tolist())
+        # models = [self.fit_model_c(mod, qr, uid) for qr in quantiles]
+        models = pd.DataFrame(models, columns=['quantile reg %', 'coefficient', 'lower bound (coeff)',
+                                               'upper bound(coeff)'])
+
+        ord_least_sq = smf.ols(' Building_' + str(uid) + '_C_bd~ Building_' + str(uid) + '_ratio_c -1',
+                               C_dataframe).fit()  # ordinary least square
+        ord_least_sq_ci = ord_least_sq.conf_int().loc['Building_' + str(uid) + '_ratio_c'].tolist()
+        ord_least_sq = dict(y_interc=0,  # y-intercept
+                            coeff=ord_least_sq.params['Building_' + str(uid) + '_ratio_c'],  # slope
+                            lower_bound=ord_least_sq_ci[0],
+                            upper_bound=ord_least_sq_ci[1])
+
+        ##### Quantile regression % assignment to each building for better capacity estimation based on observation
+        # if uid in self.building_ids:
+        self.C_qr_est[uid] = models["coefficient"][3]  # 75% Quantile reg for building 1 ~ 5 and 8, 9
+
+
+    def estimate_h(self):
+        action_gen = []
+        # e_wh = {uid: 0 for uid in building_ids}
+        # a_b = {uid: 0 for uid in building_ids} if a_b is None else a_b
+        # a_h = {uid: 0 for uid in building_ids} if a_h is None else a_h
+        a_clip = {uid: 0 for uid in self.building_ids}
+        add_points = {uid: 0 for uid in self.building_ids}
+        cap_h = {uid: 0 for uid in self.building_ids}
+        effi = {uid: 0 for uid in self.building_ids}
+        a_b = {uid: 0 for uid in self.building_ids}
+        a_h = {uid: 0 for uid in self.building_ids}
+        a_c = {uid: 0 for uid in self.building_ids}
+        ratio_h = {uid: 0 for uid in self.building_ids}
+        H_bd = {uid: 0 for uid in self.building_ids}
+
+        effi_h = 0.9
+
+        CF_C = 0.006
+        CF_H = 0.008
+        CF_B = 0
+
+        state = self.state_buffer
+        action = self.action_buffer
+
+        if self.timestep % 24 in [0]:
+            prev_soc_c = state.get(-2)["soc_c"][-1]  # shape(9)
+            prev_soc_h = state.get(-2)["soc_h"][-1]
+            prev_soc_b = state.get(-2)["soc_b"][-1]
+            prev_solar_gen = state.get(-2)["solar_gen"][-1]
+            prev_elec_dem = state.get(-2)["elec_dem"][-1]
+            prev_temp = state.get(-2)["t_out"][-1]
+            # prev_action = action.get(-1)["action_bat"][-1]
+            # now_soc_c = state.get(-1)["soc_c"][-1]
+            # now_soc_h = state.get(-1)["soc_h"][-1]
+            # now_soc_b = state.get(-1)["soc_b"][-1]
+            # now_elec_con = state.get(-1)["elec_cons"][-1]
+        else:  # -2 index means timestep % 24 - 1
+            prev_soc_c = state.get(-1)["soc_c"][-2]
+            prev_soc_h = state.get(-1)["soc_h"][-2]
+            prev_soc_b = state.get(-1)["soc_b"][-2]
+            prev_solar_gen = state.get(-1)["solar_gen"][-2]
+            prev_elec_dem = state.get(-1)["elec_dem"][-2]
+            prev_temp = state.get(-1)["t_out"][-2]
+
+        if self.timestep % 24 in [0]:
+            prev_2_soc_h = state.get(-2)["soc_h"][-2]
+        elif self.timestep % 24 in [1]:
+            prev_2_soc_h = state.get(-2)["soc_h"][-1]
+        else:
+            prev_2_soc_h = state.get(-1)["soc_h"][-3]
+
+        prev_action = action.get(-1)["action_H"][-1]
+        now_soc_c = state.get(-1)["soc_c"][-1]
+        now_soc_h = state.get(-1)["soc_h"][-1]
+        now_soc_b = state.get(-1)["soc_b"][-1]
+        now_elec_con = state.get(-1)["elec_cons"][-1]
+
+        prev_cop = self.cop_cal(prev_temp[0])
+
+        ''' params over one step: e_wh, a_h '''
+        for uid in self.building_ids:
+            if uid in [2, 3]:
+                action_now = [self.action_c[uid], 0, 0.05]
+                action_gen.append(action_now)
+                cap_h[uid] = 0
+                continue
+            if self.prev_hour_est_h[uid] is True or self.avail_ratio_est_h[uid] is True:
+                # --------------update tau_plus if not satisfied-----------
+                # ##########
+                # if avail_ratio_est_h[uid] is True and soc_h[uid][-1] == 0:
+                #     tau_h[uid] = min(tau_h[uid] + 0.1, 0.8)
+                #     action_h[uid] = min(action_h[uid] + 0.05, 0.5)
+                #     tau_hplus[uid] = max(0, min(0.8 - tau_h[uid],
+                #                                 max(tau_hplus[uid], -(soc_h[uid][-1] - (1 - CF_H) * soc_h[uid][-2]) / 1.1)))
+                # #########
+                if self.avail_ratio_est_h[uid] is True and now_soc_c[uid] < 0.01:
+                    self.tau_c[uid] = min(self.tau_c[uid] + 0.1, 0.8)
+                    self.action_c[uid] = min(self.action_c[uid] + 0.05, 0.5)
+                    self.tau_cplus[uid] = max(0, min(0.8 - self.tau_c[uid],
+                                                max(self.tau_cplus[uid],
+                                                    -(now_soc_c[uid] - (1 - CF_C) * prev_soc_c[uid]))))
+                    self.avail_ratio_est_h[uid], self.prev_hour_est_h[uid] = False, False
+                    # two_points_avg[uid] = False
+
+                if self.avail_ratio_est_h[uid] is True and uid not in [2, 3] and now_soc_h[uid] < 0.01:
+                    self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.8)
+                    self.action_h[uid] = min(self.action_h[uid] + 0.05, 0.5)
+                    # tau_hplus = max(0, min(0.8-tau_h, max(tau_hplus, -(soc_h[uid][-1] - (1-CF_H)*soc_h[uid][-2])/1.1)))
+                    self.avail_ratio_est_h[uid], self.prev_hour_est_h[uid] = False, False
+                    # two_points_avg[uid] = False
+                if self.timestep % 24 == 22:
+                    self.avail_ratio_est_h[uid], self.prev_hour_est_h[uid] = False, False
+                # --------------estimate e_wh if avail---------------------
+            if self.prev_hour_est_h[uid] is True and self.avail_ratio_est_h[uid] is True:  # calculate capacity here
+                e_wh = (prev_solar_gen[uid] + now_elec_con[uid] - prev_elec_dem[uid]) \
+                       - ((now_soc_b[uid] - (1 - CF_B) * prev_soc_b[uid]) *
+                          self.capacity_b[uid] / self.effi_b[uid])
+
+                # if two_points_est[uid] is True:
+                self.avail_ratio_est_h[uid], self.prev_hour_est_h[uid] = False, False
+                ratio_h[uid] = - (prev_soc_h[uid] - (1 - CF_H) * prev_2_soc_h[uid])
+                # ratio_h2[uid] = -(soc_h[uid][-4] - (1 - CF_H) * soc_h[uid][-5])
+                # two_point_est_h[uid] = a_h_temp[uid][-1] + (ratio_h[uid] + ratio_h2[uid]) / 2
+                cap_h[uid] = e_wh * effi_h / (prev_action[uid] + ratio_h[uid])
+                ratio_h[uid] = prev_action[uid] + ratio_h[uid]
+                # H_bd[uid] = e_wh * effi_h
+                # H_bd[uid] = e_wh * effi_h - (soc_h[uid][-1] - (1 - CF_H) * soc_h[uid][-2])
+                H_bd[uid] = e_wh * effi_h
+                #######
+
+                add_points[uid] += 1
+
+                """true_val_h = [10.68, 49.35, 1e-05, 1e-05, 60.12, 105.12, 85.44, 111.96, 102.24]"""
+
+            """
+            1) execute action to est ratio if soc > threshold  
+            2) observe soc and calculate ratio if satisfying requirements, and execute action for e_wh calculation
+            3) observe params and calculate e_wh, and execute action to est ratio if soc > threshold
+            4) observe soc and est capacity. restart the procedure
+            5) if # of est points is enough, end up est.
+            """
+            a_b[uid] = 0.03
+            if now_soc_h[uid] < self.tau_h[uid]:
+                a_h[uid] = self.action_h[uid]
+            elif now_soc_h[uid] > 0.9:
+                # elif soc_c[uid][-1] > 0.9:
+                a_h[uid] = -0.2
+            else:
+                a_h[uid] = 0.04
+
+            a_c[uid] = self.action_c[uid] if now_soc_c[uid] < self.tau_c[uid] + self.tau_cplus[uid] else 0.1
+
+            if now_soc_h[uid] >= self.tau_h[uid] and self.avail_ratio_est_h[uid] is False:
+                if now_soc_c[uid] >= self.tau_c[uid] + self.tau_cplus[uid]:
+                    a_c[uid], a_h[uid] = -1, -1
+                    a_b[uid] = 0.03  ## added
+                    # action_now = [a_h, a_h, a_b[uid]]
+                    self.avail_ratio_est_h[uid] = True
+
+                # action.append(action_now)   # exit
+            elif self.avail_ratio_est_h[uid] is True:
+                if now_soc_c[uid] < self.tau_c[uid]:
+                    self.tau_cplus[uid] = max(0, min(0.8 - self.tau_c[uid],
+                                                max(self.tau_cplus[uid] + 0.1,
+                                                    -(now_soc_c[uid] - (1 - CF_C) * prev_soc_c[uid]))))
+                # if soc_h[uid][-1] < tau_h[uid]:
+                #     tau_hplus[uid] = max(0, min(0.8 - tau_h[uid],
+                #                                 max(tau_hplus[uid] + 0.1,
+                #                                     -(soc_h[uid][-1] - (1 - CF_H) * soc_h[uid][-2]) / 1.1)))
+                a_b[uid], a_c[uid] = 0.03, -1
+                a_clip[uid] = -(now_soc_h[uid] - (1 - CF_H) * prev_soc_h[uid])  # calculate a_t here
+                if now_soc_h[uid] >= 0.97:
+                    a_h[uid] = -1
+                    action_now = [a_c[uid], a_h[uid], a_b[uid]]
+                    action_gen.append(action_now)
+                    continue
+                elif a_clip[uid] > 0.01:
+                    a_h[uid] = min(a_clip[uid], 1 - now_soc_h[uid])
+                else:
+                    a_h[uid] = min(0.03, 1 - now_soc_h[uid])
+                    # a_h[uid] = min(0.03, 1 - soc_c[uid][-1])
+                a_c[uid] = -1
+                self.prev_hour_est_h[uid] = True
+            action_now = [a_c[uid], a_h[uid], a_b[uid]]
+            action_gen.append(action_now)  # exit
+        # print(action)
+        # sys.exit()
+
+        return action_gen, cap_h, add_points, ratio_h, H_bd
+
+    def estimate_c(self):
+        action_gen = []
+        # e_hpc = {uid: 0 for uid in building_ids}
+        # a_b = {uid: 0 for uid in building_ids} if a_b is None else a_b
+        # a_c = {uid: 0 for uid in building_ids} if a_c is None else a_c
+        a_clip = {uid: 0 for uid in self.building_ids}
+        add_points = {uid: 0 for uid in self.building_ids}
+        cap_c = {uid: 0 for uid in self.building_ids}
+        # effi = {uid: 0 for uid in self.building_ids}
+        a_b = {uid: 0 for uid in self.building_ids}
+        a_c = {uid: 0 for uid in self.building_ids}
+        ratio_c = {uid: 0 for uid in self.building_ids}
+        C_bd = {uid: 0 for uid in self.building_ids}
+        CF_C = 0.006
+        CF_H = 0.008
+        CF_B = 0
+
+        state = self.state_buffer
+        action = self.action_buffer
+
+        if self.timestep % 24 in [0]:
+            prev_soc_c = state.get(-2)["soc_c"][-1]  # shape(9)
+            prev_soc_h = state.get(-2)["soc_h"][-1]
+            prev_soc_b = state.get(-2)["soc_b"][-1]
+            prev_solar_gen = state.get(-2)["solar_gen"][-1]
+            prev_elec_dem = state.get(-2)["elec_dem"][-1]
+            prev_temp = state.get(-2)["t_out"][-1]
+            # prev_action = action.get(-1)["action_bat"][-1]
+            # now_soc_c = state.get(-1)["soc_c"][-1]
+            # now_soc_h = state.get(-1)["soc_h"][-1]
+            # now_soc_b = state.get(-1)["soc_b"][-1]
+            # now_elec_con = state.get(-1)["elec_cons"][-1]
+        else:   # -2 index means timestep % 24 - 1
+            prev_soc_c = state.get(-1)["soc_c"][-2]
+            prev_soc_h = state.get(-1)["soc_h"][-2]
+            prev_soc_b = state.get(-1)["soc_b"][-2]
+            prev_solar_gen = state.get(-1)["solar_gen"][-2]
+            prev_elec_dem = state.get(-1)["elec_dem"][-2]
+            prev_temp = state.get(-1)["t_out"][-2]
+
+        if self.timestep % 24 in [0]:
+            prev_2_soc_c = state.get(-2)["soc_c"][-2]
+        elif self.timestep % 24 in [1]:
+            prev_2_soc_c = state.get(-2)["soc_c"][-1]
+        else:
+            prev_2_soc_c = state.get(-1)["soc_c"][-3]
+
+        prev_action = action.get(-1)["action_C"][-1]
+        now_soc_c = state.get(-1)["soc_c"][-1]
+        now_soc_h = state.get(-1)["soc_h"][-1]
+        now_soc_b = state.get(-1)["soc_b"][-1]
+        now_elec_con = state.get(-1)["elec_cons"][-1]
+
+        prev_cop = self.cop_cal(prev_temp[0])
+        ''' params over one step: e_hpc, a_c '''
+        for uid in self.building_ids:
+            if self.prev_hour_est_c[uid] is True or self.avail_ratio_est_c[uid] is True:
+                # --------------update tau_plus if not satisfied-----------
+                if self.avail_ratio_est_c[uid] is True and now_soc_c[uid] < 0.01:
+                    self.tau_c[uid] = min(self.tau_c[uid] + 0.1, 0.8)
+                    self.action_c[uid] = min(self.action_c[uid] + 0.05, 0.5)
+                    # tau_cplus = max(0, min(0.8-tau_c, max(tau_cplus, -(soc_c[uid][-1] - (1-CF_C)*soc_c[uid][-2])/1.1)))
+                    self.avail_ratio_est_c[uid], self.prev_hour_est_c[uid] = False, False
+                    # two_points_avg[uid] = False
+
+                if self.avail_ratio_est_c[uid] is True and uid not in [2, 3] and now_soc_h[uid] < 0.01:
+                    self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.8)
+                    self.action_h[uid] = min(self.action_h[uid] + 0.05, 0.5)
+                    self.tau_hplus[uid] = max(0, min(0.8 - self.tau_h[uid],
+                                                max(self.tau_hplus[uid],
+                                                    -(now_soc_h[uid] - (1 - CF_H) * prev_soc_h[uid]))))
+                    self.avail_ratio_est_c[uid], self.prev_hour_est_c[uid] = False, False
+                    # two_points_avg[uid] = False
+                if self.timestep % 24 == 22:
+                    self.avail_ratio_est_c[uid], self.prev_hour_est_c[uid] = False, False
+
+                # --------------estimate e_hpc if avail---------------------
+            if self.prev_hour_est_c[uid] is True and self.avail_ratio_est_c[uid] is True:  # calculate capacity here
+                e_hpc = (prev_solar_gen[uid] + now_elec_con[uid] - prev_elec_dem[uid] -
+                         (now_soc_b[uid] - (1 - CF_B) * prev_soc_b[uid]) *
+                         self.capacity_b[uid] / self.effi_b[uid])
+                # if two_points_est[uid] is True:
+                self.avail_ratio_est_c[uid], self.prev_hour_est_c[uid] = False, False
+                ratio_c[uid] = (-(prev_soc_c[uid] - (1 - CF_C) * prev_2_soc_c[uid]))
+                # self.ratio_c2[uid] = -(soc_c[uid][-4] - (1 - CF_C) * soc_c[uid][-5])
+                # two_point_est_c[uid] =  a_c_temp[uid][-1] + (ratio_c[uid]+ratio_c2[uid]/2)
+                cap_c[uid] = e_hpc * prev_cop / (prev_action[uid] + ratio_c[uid])
+
+                ratio_c[uid] = (prev_action[uid] + ratio_c[uid])
+                C_bd[uid] = e_hpc * prev_cop
+
+                add_points[uid] += 1
+
+            """
+            1) execute action to est ratio if soc > threshold  
+            2) observe soc and calculate ratio if satisfying requirements, and execute action for e_hpc calculation
+            3) observe params and calculate e_hpc, and execute action to est ratio if soc > threshold
+            4) observe soc and est capacity. restart the procedure
+            5) if # of est points is enough, end up est.
+            """
+            a_b[uid] = 0.03
+            if now_soc_c[uid] < self.tau_c[uid]:
+                a_c[uid] = self.action_c[uid]
+            elif now_soc_c[uid] > 0.9:
+                a_c[uid] = -0.2
+            else:
+                a_c[uid] = 0.04
+
+            if uid not in [2, 3]:
+                a_h = self.action_h[uid] if now_soc_h[uid] < self.tau_h[uid] + self.tau_hplus[uid] else 0.1
+            else:
+                a_h = 0
+
+            if now_soc_c[uid] >= self.tau_c[uid] and self.avail_ratio_est_c[uid] is False:
+                if uid not in [2, 3] and now_soc_h[uid] >= (self.tau_h[uid] + self.tau_hplus[uid]):
+                    a_c[uid], a_h = -1, -1
+                    # action_now = [a_c, a_h, a_b[uid]]
+                    self.avail_ratio_est_c[uid] = True
+
+                if uid in [2, 3]:
+                    a_c[uid] = -1
+                    # action_now = [a_c, a_b[uid]]
+                    self.avail_ratio_est_c[uid] = True
+                # action.append(action_now)   # exit
+            elif self.avail_ratio_est_c[uid] is True:
+                if uid not in [2, 3] and now_soc_h[uid] < self.tau_h[uid]:
+                    self.tau_hplus[uid] = max(0, min(0.8 - self.tau_h[uid],
+                                                max(self.tau_hplus[uid] + 0.1,
+                                                    -(now_soc_h[uid] - (1 - CF_H) * prev_soc_h[uid]) / 1.1)))
+                a_b[uid], a_h = 0.03, -1
+
+                a_clip[uid] = -(now_soc_c[uid] - (1 - CF_C) * prev_soc_c[uid]) / 1.1  # calculate a_t here
+                if now_soc_c[uid] >= 0.97:
+                    a_c[uid] = -1
+                    action_now = [a_c[uid], a_h, a_b[uid]]
+                    action_gen.append(action_now)
+                    continue
+                elif a_clip[uid] > 0.01:
+                    a_c[uid] = min(a_clip[uid], 1 - now_soc_c[uid])
+                else:
+                    a_c[uid] = min(0.03, 1 - now_soc_c[uid])
+                self.prev_hour_est_c[uid] = True
+            action_now = [a_c[uid], a_h, a_b[uid]]
+            action_gen.append(action_now)  # exit
+
+        return action_gen, cap_c, add_points, ratio_c, C_bd
+
+    def estimate_bat(self):
+        add_points = {uid: False for uid in self.building_ids}
+        cap_bat = {uid: 0 for uid in self.building_ids}
+        action_gen = []
+        a_clip = {uid: 0 for uid in self.building_ids}
+        e_bat = {uid: 0 for uid in self.building_ids}
+        effi = {uid: 0 for uid in self.building_ids}
+        nominal_p = {uid: 0 for uid in self.building_ids}
+        CF_B = 0
+
+        state = self.state_buffer
+        action = self.action_buffer
+
+        if self.timestep % 24 in [0] and self.timestep not in [0]:
+            prev_soc_c = state.get(-2)["soc_c"][-1]  # shape(9)
+            prev_soc_h = state.get(-2)["soc_h"][-1]
+            prev_soc_b = state.get(-2)["soc_b"][-1]
+            prev_solar_gen = state.get(-2)["solar_gen"][-1]
+            prev_elec_dem = state.get(-2)["elec_dem"][-1]
+            # prev_action = action.get(-1)["action_bat"][-1]
+            # now_soc_c = state.get(-1)["soc_c"][-1]
+            # now_soc_h = state.get(-1)["soc_h"][-1]
+            # now_soc_b = state.get(-1)["soc_b"][-1]
+            # now_elec_con = state.get(-1)["elec_cons"][-1]
+        elif self.timestep not in [0]:   # -2 index means timestep % 24 - 1
+            prev_soc_c = state.get(-1)["soc_c"][-2]
+            prev_soc_h = state.get(-1)["soc_h"][-2]
+            prev_soc_b = state.get(-1)["soc_b"][-2]
+            prev_solar_gen = state.get(-1)["solar_gen"][-2]
+            prev_elec_dem = state.get(-1)["elec_dem"][-2]
+        prev_action = action.get(-1)["action_bat"][-1]
+        now_soc_c = state.get(-1)["soc_c"][-1]
+        now_soc_h = state.get(-1)["soc_h"][-1]
+        now_soc_b = state.get(-1)["soc_b"][-1]
+        now_elec_con = state.get(-1)["elec_cons"][-1]
+
+
+        for uid in self.building_ids:
+            if self.prev_hour_est_b[uid] is True or self.prev_hour_nom[uid] is True:
+                if now_soc_c[uid] < 0.01:
+                    self.tau_c[uid] = min(self.tau_c[uid] + 0.1, 0.7)
+                    self.action_c[uid] = min(self.action_c[uid] + 0.05, 0.5)
+                    self.prev_hour_est_b[uid] = False
+                    self.prev_hour_nom[uid] = False
+
+                if uid not in [2, 3] and now_soc_h[uid] < 0.01:
+                    self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.7)
+                    self.action_h[uid] = min(self.action_h[uid] + 0.05, 0.5)
+                    self.prev_hour_est_b[uid] = False
+                    self.prev_hour_nom[uid] = False
+
+                if self.prev_hour_nom[uid] is True and now_soc_b[uid] < 0.01:
+                    self.tau_b[uid] = min(self.tau_b[uid] + 0.1, 0.7)
+                    self.prev_hour_nom[uid] = False
+
+                if self.timestep % 24 == 22:
+                    self.prev_hour_est_b[uid] = False
+                    self.prev_hour_nom[uid] = False
+
+            if self.prev_hour_est_b[uid] is True:
+                # soc_1 = soc_b[uid][-2], now replaced by prev_soc_b
+                # soc_2 = soc_b[uid][-1], now replaced by now_soc_b
+
+                a_clip[uid] = (now_soc_b[uid] - (1 - CF_B) * prev_soc_b[uid])
+                e_bat[uid] = prev_solar_gen[uid] + now_elec_con[uid] - prev_elec_dem[uid]
+                cap_bat[uid] = (e_bat[uid] / a_clip[uid])
+                effi[uid] = a_clip[uid] / prev_action[uid]
+                add_points[uid] = True
+                # prev_hour_est[uid] = False
+
+            elif self.prev_hour_nom[uid] is True:
+                # soc_1 = soc_b[uid][-2], now replaced by prev_soc_b
+                # soc_2 = soc_b[uid][-1], now replaced by now_soc_b
+
+                a_clip[uid] = (now_soc_b[uid] - (1 - CF_B) * prev_soc_b[uid])
+                nominal_p[uid] = max(self.cap_b_est[uid]) * (-a_clip[uid])
+
+
+                """reality:     75   40   20   30   25   10   15   10   20"""
+                """estimated:   89.3 40.5 21.6 34.1 26.9 11.9 15.8 11.9 23.8"""
+            # else:
+            #     print("t elec %s: " % uid, soc_b[uid][-2])
+
+            a_c = self.action_c[uid] if now_soc_c[uid] < self.tau_c[uid] else 0.02
+            a_b = -0.2 if now_soc_b[uid] > 0.8 else 0.02
+            if uid not in [2, 3]:
+                a_h = self.action_h[uid] if now_soc_h[uid] < self.tau_h[uid] else 0.04
+            else:
+                a_h = 0
+
+            if self.avail_nominal[uid] is True:
+                if now_soc_b[uid] >= self.tau_b[uid]:
+                    action_now = [-1, -1, -1]
+                    self.prev_hour_nom[uid] = True
+                    self.prev_hour_est_b[uid] = False
+                else:
+                    action_now = [a_c, a_h, 0.4]
+                    self.prev_hour_nom[uid] = False
+                    self.prev_hour_est_b[uid] = False
+                action_gen.append(action_now)
+                continue
+
+            if now_soc_c[uid] > self.tau_c[uid] and now_soc_b[uid] < 0.8\
+                    and uid in [2, 3] \
+                    or now_soc_c[uid] > self.tau_c[uid] and now_soc_b[uid] < 0.8 and \
+                    now_soc_h[uid] > self.tau_h[uid] and uid not in [2, 3]:
+                action_now = [-1, -1, 0.05] if uid not in [2, 3] else [-1, 0, 0.05]
+                self.prev_hour_est_b[uid] = True
+            else:
+                action_now = [a_c, a_h, a_b]
+                self.prev_hour_est_b[uid] = False
+            # print("action %s:" % uid, action_now, prev_hour_est[uid])
+            action_gen.append(action_now)
+
+        return action_gen, cap_bat, effi, nominal_p, add_points
+
 
 
 # class DataLoader:
@@ -1039,6 +1700,7 @@ class Predictor(DataLoader):
 #                 params[key] = np.array(params[key])
 
 
+
 class Oracle:
     """Agent with access to true environment data."""
 
@@ -1089,8 +1751,8 @@ class Oracle:
     def parse_data(self, data: dict, current_data: dict) -> list:
         """Parses `current_data` for optimization and loads into `data`"""
         assert (
-            len(current_data) == 20  # actions E_grid_collect. Section 1.3.1
-        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 20. Can't run Oracle agent optimization."
+            len(current_data) == 23  # actions + rewards + E_grid_collect. Section 1.3.1
+        ), f"Invalid number of parameters, found: {len(current_data)}, expected: 23. Can't run Oracle agent optimization."
 
         for key, value in current_data.items():
             if key not in data:

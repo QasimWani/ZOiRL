@@ -4,6 +4,7 @@ import numpy as np
 
 from citylearn import CityLearn
 import time
+import sys
 
 from utils import ReplayBuffer, RBC
 
@@ -17,13 +18,13 @@ from critic import Critic, Optim
 
 
 class TD3(object):
-    """Base Agent class"""
-
     def __init__(
         self,
         num_actions: list,
         num_buildings: int,
         rbc_threshold: int = 336,  # 2 weeks by default
+        env: CityLearn = None,
+        is_oracle: bool = True,
         meta_episode: int = 2,
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
@@ -75,7 +76,7 @@ class TD3(object):
         # 3 policies:
         # 1. RBC (utils.py)
         # 2. Online Exploration. (utils.py)
-        # 3. Optimization (actor.py)
+        # 3. Optimizatio (actor.py)
         actions = np.zeros((24, self.buildings))
         # upload state to memory
         self._add_to_buffer(state, None)
@@ -86,7 +87,13 @@ class TD3(object):
             else:
                 actions = self.adaptive_dispatch_pred()
         else:  # run RBC
-            actions = self.agent_rbc.select_action(state)
+            if self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6] and self.total_it > 0:
+                actions = self.data_loader.select_action(self.total_it)
+            else:
+                actions = self.agent_rbc.select_action(state)
+            """
+            call online estimation algorithm during night time
+            """
 
         # upload action to memory
         self._add_to_buffer(None, actions)
@@ -94,30 +101,68 @@ class TD3(object):
 
     def _add_to_buffer(self, state, action):
         """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
+        # assert bool(state) != bool(action), "Need to have either state or action"
+
         if state is not None:
             self.data_loader.upload_state(state)
+            """every time when buffer.add() is called, total_it + 1"""
 
         if action is not None:
             self.data_loader.upload_action(action)
             self.total_it += 1
 
+    def adaptive_dispatch(self, env: CityLearn, data: dict):
+        """Computes next action"""
+        raise NotImplementedError
+        data_est = self.data_loader.model.estimate_data(
+            env, data, self.total_it, self.init_updates, self.memory
+        )
+        self.data_loader.model.convert_to_numpy(data_est)
+
+        action, cost, _ = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
+                for id in range(self.buildings)
+            ]
+        )
+
+        # _, _, E_grid = zip(
+        #     *[
+        #         self.actor_target.forward(
+        #             self.total_it % 24, data_est, id, dispatch=False
+        #         )
+        #         for id in range(self.buildings)
+        #     ]
+        # )
+        # self.E_grid_planned_day[:, self.total_it % 24] = E_grid  # adaptive update
+
+        ### DEBUG ###
+        # gather data for NORL agent
+        # _, norl_cost, _ = zip(
+        #     *[
+        #         self.actor_norl.forward(
+        #             self.total_it % 24, data_est, id, dispatch=False
+        #         )
+        #         for id in range(self.buildings)
+        #     ]
+        # )
+        # self.logger.append(cost)  # add all variables - RL
+        # self.norl_logger.append(norl_cost)  # add all variables - Pure Optim
+        ### DEBUG ###
+
+        return action
+
     def day_ahead_dispatch_pred(self):
         """Returns day-ahead dispatch"""
         if self.total_it % 24 == 0:  # save actions for 24hours
             data_est = self.data_loader.estimate_data(self.memory, self.total_it)
-            self.data_loader.convert_to_numpy(data_est)
-
-            self.action_planned_day, optim_values, _ = zip(
+            self.action_planned_day, _, _ = zip(
                 *[
                     self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
                     for id in range(self.buildings)
                 ]
             )
-            # Shape: 9, 3, 24
-            self.action_planned_day = np.array(self.action_planned_day)
-            self.logger.append(optim_values)  # add all variables - Optimization
-
-        action_planned_day = self.action_planned_day[:, :, self.total_it % 24]
+        action_planned_day = self.action_planned_day[:, self.total_it % 24]
         return action_planned_day
 
     def adaptive_dispatch_pred(self):
@@ -126,16 +171,86 @@ class TD3(object):
             self.memory, self.total_it, is_adaptive=True
         )
         self.data_loader.convert_to_numpy(data_est)
-
-        action_planned_day, optim_values, _ = zip(
+        action_planned_day, _, _ = zip(
             *[
                 self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
                 for id in range(self.buildings)
             ]
         )
-        self.logger.append(optim_values)  # add all variables - Optimization
-
         return action_planned_day
+
+    def day_ahead_dispatch(self, env: CityLearn, data: dict):
+        """Computes action for the current day (24hrs) in advance"""
+
+        data_init = {}
+        data_init["c_bat_init"] = [[]]
+        data_init["c_Csto_init"] = [[]]
+        data_init["c_Hsto_init"] = [[]]
+
+        for bid in range(self.buildings):
+            building: Building = env.buildings[f"Building_{bid + 1}"]
+
+            data_init["c_Csto_init"][0].append(
+                building.cooling_storage_soc[-1] / building.cooling_storage.capacity
+            )
+
+            data_init["c_Hsto_init"][0].append(
+                building.dhw_storage_soc[-1] / building.dhw_storage.capacity
+            )
+
+            data_init["c_bat_init"][0].append(
+                building.electrical_storage_soc[-1]
+                / building.electrical_storage.capacity
+            )
+
+        # if type(self.data_loader.model) == Oracle:
+        #     _, self.init_updates = self.data_loader.model.init_values(data_init)
+        # else:
+        #     raise NotImplementedError("Only Oracle is supported")
+
+        # data_est = self.data_loader.model.estimate_data(
+        #     env, data, self.total_it, self.init_updates, self.memory
+        # )
+
+        # self.data_loader.model.convert_to_numpy(data_est)
+
+        data_est = self.memory[-1]  # get optimization data from memory
+        self.data_loader.convert_to_numpy(data_est)  # convert data to numpy in-place
+
+        self.action_planned_day, _, _ = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
+
+        # compute E-grid
+        _, cost_dispatch, self.E_grid_planned_day = zip(
+            *[
+                self.actor_target.forward(
+                    self.total_it % 24, data_est, id, dispatch=True
+                )
+                for id in range(self.buildings)
+            ]
+        )
+        self.E_grid_planned_day = np.array(self.E_grid_planned_day)
+
+        ### DEBUG ###
+        # gather data for NORL agent
+        _, norl_cost_dispatch, _ = zip(
+            *[
+                self.actor_norl.forward(self.total_it % 24, data_est, id, dispatch=True)
+                for id in range(self.buildings)
+            ]
+        )
+
+        self.logger.append(cost_dispatch)  # add all variables - RL
+        self.norl_logger.append(norl_cost_dispatch)  # add all variables - Pure Optim
+        ### DEBUG ###
+
+        assert (
+            len(self.action_planned_day[0][0]) == 24
+        ), "Invalid number of observations for Optimization actions"
 
     def critic_update(self, parameters_1: list, parameters_2: list):
         """Master Critic update"""
@@ -206,4 +321,44 @@ class TD3(object):
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
+        # self.data_loader.upload_data(
+        #     state, action, reward, next_state, done
+        # )  # upload data to memory
         pass
+        # self.total_it += 1
+
+    def add_to_buffer_oracle(
+        self, state: np.ndarray, env: CityLearn, action: list, reward: list
+    ):
+        """Add to replay buffer"""
+        # processing SOC's into suitable format
+        # if self.total_it % 24 == 0 and self.total_it > 0:  # reset values every day
+        # if type(self.data_loader.model) == Oracle:
+        #     _, self.init_updates = self.data_loader.model.init_values(
+        #         self.memory.get(-1)
+        #     )
+        # else:
+        #     raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
+
+        # upload E-grid (containarizing E-grid_collect w/ other memory for fast computational efficiency)
+        self.data_loader.upload_data(
+            self.memory,
+            state[:, 28],  # current hour E_grid
+            action,
+            reward,
+            env,
+            self.total_it,
+        )
+
+        # start training after end of first meta-episode
+        if (
+            self.memory.total_it % (self.meta_episode * 24) == 0
+            and self.memory.total_it > self.rbc_threshold
+        ):
+            start = time.time()
+            self.train()  # begin critic and actor update
+            print(f"\nTime taken (min): {round((time.time() - start) / 60, 3)}")
+
+
+
+
