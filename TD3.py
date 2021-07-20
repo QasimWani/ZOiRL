@@ -86,7 +86,7 @@ class TD3(object):
             else:
                 actions = self.adaptive_dispatch_pred()
         else:  # run RBC
-            actions = self.agent_rbc.select_action(state[0][self.agent_rbc.idx_hour])
+            actions = self.agent_rbc.select_action(state)
 
         # upload action to memory
         self._add_to_buffer(None, actions)
