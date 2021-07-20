@@ -40,6 +40,16 @@ class Agent(TD3):
 
         self.zeta = []  # zeta for all buidling for 24 hours (24x9)
 
+        self.zeta_eta_bat = np.ones(((1, 24, 9)))
+        self.zeta_eta_Hsto = np.ones(((1, 24, 9)))
+        self.zeta_eta_Csto = np.ones(((1, 24, 9)))
+        self.zeta_eta_ehH = 0.9
+        self.zeta_c_bat_end = 0.1
+
+        self.mean_p_ele = [[1]] * 9
+        self.std_p_ele = [[0.2]] * 9
+        self.range_p_ele = [0.1, 5]
+
         # Initialising the elite sets
         self.elite_set = (
             []
