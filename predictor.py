@@ -207,8 +207,12 @@ class Predictor(DataLoader):
         for uid in self.building_ids:
             self.solar_avg[uid] = solar_alldays[uid] / 13
             self.elec_weekday_avg[uid] = elec_weekday[uid] / weekday
-            self.elec_weekend1_avg[uid] = elec_weekend1[uid] / weekend1
-            self.elec_weekend2_avg[uid] = elec_weekend1[uid] / weekend2
+            self.elec_weekend1_avg[uid] = elec_weekend1[uid] / weekend1 if\
+                self.elec_weekend1_avg[uid].all() == np.zeros(24).all() else (1 - weekend1*0.2)\
+                * self.elec_weekend1_avg[uid] + elec_weekend1[uid] * 0.2
+            self.elec_weekend2_avg[uid] = elec_weekend2[uid] / weekend2 if\
+                self.elec_weekend2_avg[uid].all() == np.zeros(24).all() else (1 - weekend2*0.2) \
+                * self.elec_weekend2_avg[uid] + elec_weekend2[uid] * 0.2
 
     # TODO: @Zhiyao - make sure in the case of adaptive this returns (and is sent to actor.py --> see TD3.py (select_action)) data of dimensions (window, 9)
     # >>> Now, in the case of adaptive, say we're on hour 10. So, we only need to make predictions from hour 10 - 24 (1-based indexing).
@@ -715,7 +719,7 @@ class Predictor(DataLoader):
         x_tout = []
         daytype = []
 
-        for i in range(-14, 0):
+        for i in range(-14, -1):
             solar_gen = pred_buffer.get(i)["solar_gen"]
             # expect solar_gen to be [24*7, 9] vertically sequential
             elec_dem = pred_buffer.get(i)["elec_dem"]
