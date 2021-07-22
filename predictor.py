@@ -270,9 +270,7 @@ class Predictor(DataLoader):
         C_p_bat = np.full((len(self.building_ids)), fill_value=60)
 
         c_bat_init = np.array(
-            self.state_buffer.get(-1)["soc_b"][-2]
-            if timestep % 24 > 0
-            else self.state_buffer.get(-2)["soc_b"][-1]
+            self.state_buffer.get(-1)["soc_b"][-1]  # current condition
         )  # -2 to -1 (confirm)--done
         c_bat_init[c_bat_init == np.inf] = 0
 
@@ -280,16 +278,12 @@ class Predictor(DataLoader):
 
         c_Hsto_init = np.array(
             self.state_buffer.get(-1)["soc_h"][-1]
-            if timestep % 24 > 0
-            else self.state_buffer.get(-2)["soc_h"][-1]
         )  # -2 to -1 (confirm)--done
         c_Hsto_init[c_Hsto_init == np.inf] = 0
         C_p_Csto = 2 * C_max
 
         c_Csto_init = np.array(
             self.state_buffer.get(-1)["soc_c"][-1]
-            if timestep % 24 > 0
-            else self.state_buffer.get(-2)["soc_c"][-1]
         )  # -2 to -1 (confirm)--done
         c_Csto_init[c_Csto_init == np.inf] = 0
 
@@ -1143,6 +1137,7 @@ class Oracle:
             data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
         return data
 
+    # TODO: INTEGRATE testing for ablation
     def get_current_data_oracle(
         self,
         env: CityLearn,
