@@ -1,7 +1,7 @@
 from copy import Error
 from utils import ReplayBuffer
 
-from citylearn import CityLearn
+from citylearn import CityLearn, building_loader
 
 import numpy as np
 import pandas as pd
