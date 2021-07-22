@@ -76,7 +76,7 @@ class TD3(object):
         # 1. RBC (utils.py)
         # 2. Online Exploration. (utils.py)
         # 3. Optimization (actor.py)
-        actions = np.zeros((24, self.buildings))
+        # actions = np.zeros((24, self.buildings))
         # upload state to memory
         self._add_to_buffer(state, None)
 
@@ -87,7 +87,11 @@ class TD3(object):
             else:
                 actions, building_parameters = self.adaptive_dispatch_pred()
         else:  # run RBC
-            actions = self.agent_rbc.select_action(state[0][self.agent_rbc.idx_hour])
+            if self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6] and self.total_it >= 1:
+                actions = self.data_loader.select_action(self.total_it)
+            else:
+                actions = self.agent_rbc.select_action(state[0][self.agent_rbc.idx_hour])
+
 
         # upload action to memory
         self._add_to_buffer(None, actions)
