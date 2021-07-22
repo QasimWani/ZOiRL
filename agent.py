@@ -1,6 +1,12 @@
 from TD3 import TD3
 import numpy as np
 
+import sys
+import warnings
+
+if not sys.warnoptions:
+    warnings.simplefilter("ignore")
+
 
 class Agent(TD3):
     """CEM Agent - inherits TD3 as agent"""
@@ -139,9 +145,7 @@ class Agent(TD3):
         self.outputs["E_netelectric_hist"] = np.array(
             self.outputs["E_netelectric_hist"]
         )  # size 24*9
-        #         print(np.shape(self.outputs['E_netelectric_hist']))
         self.outputs["E_NS_hist"] = np.array(self.outputs["E_NS_hist"])  # size 2*9
-        #         print(np.shape(self.outputs['E_NS_hist']))
         self.outputs["eta_ehH_hist"] = np.array(
             self.outputs["eta_ehH_hist"]
         )  # size 9*24
@@ -201,8 +205,6 @@ class Agent(TD3):
                 best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
                     -1
                 )  # Arranging costs for the i-th building
-                #                 print("costs = ", self.costs[:,:,i])
-                #                 print("zeta_zrgs = ", best_zeta_args[:,i])
                 # Finding the best K samples from the elite set
                 for Kbest in range(self.K):
                     a = best_zeta_args[:, i][Kbest].astype(np.int32)
@@ -233,18 +235,19 @@ class Agent(TD3):
 
         return eliteSet_eliteSetPrev
 
-    def select_action(self, state, day_ahead: bool):
+    def select_action(self, state, day_ahead: bool = False):
         # update zeta
         self.set_zeta()
         # run forward pass
-        actions = super().select_action(state, day_ahead=day_ahead)
+        actions = super().select_action(state, day_ahead)
         # evaluate agent
         self.evaluate_cost(state)
+        # digital twin
         return actions
 
     def evaluate_cost(self, state):
         """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
-        if self.total_it < self.rbc_threshold:
+        if self.total_it <= self.rbc_threshold:
             return
 
         E_observed = state[:, 28]  # For all buildings
@@ -293,7 +296,7 @@ class Agent(TD3):
 
             self.all_costs.append(cost)
 
-            self.k = self.k + 1
+            self.k += 1
 
             self.C_bd_hist = []
 
