@@ -186,7 +186,7 @@ class Actor:
             name="eta_bat", shape=window, value=self.zeta["eta_bat"][t:, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=parameters["c_bat_init"][building_id]
+            name="c_bat_init", value=parameters["c_bat_init"][t, building_id]
         )
         soc_bat_norm_end = cp.Parameter(
             name="c_bat_end", value=self.zeta["c_bat_end"][building_id]
@@ -202,7 +202,7 @@ class Actor:
             value=self.zeta["eta_Hsto"][t:, building_id],
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][t, building_id]
         )
 
         # Cooling (Energy->cooling) Storage
@@ -215,7 +215,7 @@ class Actor:
             value=self.zeta["eta_Csto"][t:, building_id],
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
+            name="c_Csto_init", value=parameters["c_Csto_init"][t, building_id]
         )
 
         ### --- Variables ---
@@ -501,18 +501,24 @@ class Actor:
         # Battery
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = self.zeta["eta_bat"][t:, building_id]
-        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][
+            t, building_id
+        ]
         problem_parameters["c_bat_end"].value = self.zeta["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = self.zeta["eta_Hsto"][t:, building_id]
-        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][
+            t, building_id
+        ]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = self.zeta["eta_Csto"][t:, building_id]
-        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][
+            t, building_id
+        ]
 
         ## Update Parameters
         for key, prob_val in problem_parameters.items():
