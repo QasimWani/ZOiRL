@@ -80,17 +80,18 @@ class TD3(object):
         # upload state to memory
         self._add_to_buffer(state, None)
 
+        building_parameters = None
         if self.total_it >= self.rbc_threshold:  # run Actor
             if day_ahead:
-                actions = self.day_ahead_dispatch_pred()
+                actions, building_parameters = self.day_ahead_dispatch_pred()
             else:
-                actions = self.adaptive_dispatch_pred()
+                actions, building_parameters = self.adaptive_dispatch_pred()
         else:  # run RBC
             actions = self.agent_rbc.select_action(state[0][self.agent_rbc.idx_hour])
 
         # upload action to memory
         self._add_to_buffer(None, actions)
-        return actions
+        return actions, building_parameters
 
     def _add_to_buffer(self, state, action):
         """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
@@ -103,6 +104,7 @@ class TD3(object):
 
     def day_ahead_dispatch_pred(self):
         """Returns day-ahead dispatch"""
+        data_est = None
         if self.total_it % 24 == 0:  # save actions for 24hours
             data_est = self.data_loader.estimate_data(self.memory, self.total_it)
             self.data_loader.convert_to_numpy(data_est)
@@ -118,7 +120,7 @@ class TD3(object):
             self.logger.append(optim_values)  # add all variables - Optimization
 
         action_planned_day = self.action_planned_day[:, :, self.total_it % 24]
-        return action_planned_day
+        return action_planned_day, data_est
 
     def adaptive_dispatch_pred(self):
         """Returns adaptive dispatch for current hour"""
@@ -135,7 +137,7 @@ class TD3(object):
         )
         self.logger.append(optim_values)  # add all variables - Optimization
 
-        return action_planned_day
+        return action_planned_day, data_est
 
     def critic_update(self, parameters_1: list, parameters_2: list):
         """Master Critic update"""
