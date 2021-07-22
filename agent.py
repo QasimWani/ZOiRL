@@ -1,4 +1,7 @@
+from copy import deepcopy
 from TD3 import TD3
+from digital_twin import DigitalTwin
+
 import numpy as np
 
 import sys
@@ -19,6 +22,9 @@ class Agent(TD3):
             rbc_threshold=336,
         )
 
+        observation_space = kwargs["observation_space"]
+
+        # CEM Specific parameters
         self.N_samples = 10
         self.K = 5  # size of elite set
         self.K_keep = 3
@@ -64,6 +70,20 @@ class Agent(TD3):
 
         # Initialising the list of costs after using certain params zetas
         self.costs = []
+
+        # Digital Twin specific parameters
+
+        self.Digital_Twin = DigitalTwin()
+        # create Digital Twin specific actor
+        self.actor_digital_twin = deepcopy(self.actor)
+
+        # get actions from RBC at start of day
+        self.rbc_actions = self.agent_rbc.select_action(0)
+        # Store state at start of day for digital twin Zeta evaluation
+        self.sod_data = None
+
+        # @Vanshaj, make sure you define this!
+        self.zeta_k_list = np.ones((4, 24, len(observation_space)))  # 4 different Zeta.
 
     def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
         """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
@@ -235,16 +255,6 @@ class Agent(TD3):
 
         return eliteSet_eliteSetPrev
 
-    def select_action(self, state, day_ahead: bool = False):
-        # update zeta
-        self.set_zeta()
-        # run forward pass
-        actions = super().select_action(state, day_ahead)
-        # evaluate agent
-        self.evaluate_cost(state)
-        # digital twin
-        return actions
-
     def evaluate_cost(self, state):
         """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
         if self.total_it <= self.rbc_threshold:
@@ -310,15 +320,16 @@ class Agent(TD3):
 
         self.mean_elite_set.append(self.mean_p_ele)
 
-    def set_zeta(self):
+    def set_zeta(self, zeta=None):
         """Update zeta which will be supplied to `select_action`"""
+        if zeta is None:
+            zeta = self.get_zeta()  # put into actor
 
         if self.total_it >= self.rbc_threshold and self.total_it % 24 == 0:
-            zeta_k = self.get_zeta()  # put into actor
-            self.elite_set.append(zeta_k)
+            self.elite_set.append(zeta)
             for i in range(self.buildings):
                 zeta_tuple = (
-                    zeta_k[0, :, i],
+                    zeta[0, :, i],
                     self.zeta_eta_bat[:, :, i],
                     self.zeta_eta_Hsto[:, :, i],
                     self.zeta_eta_Csto[:, :, i],
@@ -326,3 +337,67 @@ class Agent(TD3):
                     self.zeta_c_bat_end,
                 )
                 self.actor.set_zeta(zeta_tuple, i)
+
+    def select_action(self, state, day_ahead: bool = False):
+        """Overrides from `TD3`. Utilizes CEM and Digital Twin computations"""
+        # update zeta
+        self.set_zeta()
+        # run forward pass
+        actions, parameters = super().select_action(state, day_ahead)
+        # evaluate agent
+        self.evaluate_cost(state)
+        # digital twin
+        self.digital_twin_interface(state, parameters)
+        return actions
+
+    # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
+    def update_start_of_day_data(self, parameters: dict):
+        """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
+        self.sod_data = parameters
+
+    def get_cost(self, state: np.ndarray):
+        """Computes cost from current state"""
+        # @Vanshaj: Implemented this function to return cost
+        raise NotImplementedError
+
+    def evaluate_zeta(self, current_state):
+        """Main function to evaluate different values of Zeta for."""
+        # get RBC cost
+        next_state = self.Digital_Twin.transition(current_state, self.rbc_actions)
+        rbc_cost = self.get_cost(next_state)
+
+        # keep track of Optim/RBC ratios
+        ratios = []
+        for zeta in self.zeta_k_list:
+            self.actor_digital_twin.set_zeta(zeta)
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        self.total_it % 24,
+                        self.sod_data,
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
+            next_state = self.Digital_Twin.transition(current_state, actions)
+            zeta_cost = self.get_cost(next_state)
+            # @Vanshaj: Make sure this works
+            ratios.append(zeta_cost / rbc_cost)
+
+        return min(ratios), self.zeta_k_list[np.argmin(ratios)]
+
+    def digital_twin_interface(self, current_state, parameters):
+        """Main interface for utilizing Digital Twin"""
+        if self.total_it <= self.rbc_threshold:
+            return
+
+        if self.total_it % 24 == 1:  # start of day
+            self.update_start_of_day_data(parameters)
+        elif self.total_it % 24 == 0:  # end of day
+            zeta, cost = self.evaluate_zeta(current_state)
+            if cost < self.all_costs[-1]:  # update zeta
+                self.set_zeta(zeta)
+
+    # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
