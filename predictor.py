@@ -1023,6 +1023,10 @@ class Predictor(DataLoader):
         if self.timestep == RBC_THRESHOLD - 1:
             self.quantile_reg()
 
+        if self.E_day is False and self.timestep % 24 == 22:
+            self.H_day = not self.H_day
+            self.C_day = not self.C_day
+
         if self.E_day is True:
             action, cap_bat, effi, nominal_p, add_points = self.estimate_bat()
             for uid in self.building_ids:
@@ -1058,7 +1062,8 @@ class Predictor(DataLoader):
                         self.C_bd_est[uid].append(C_bd[uid])
                 sign = True if self.num_c_points[uid] >= 7 else False
             if sign is True:
-                self.H_day, self.C_day = True, False
+                pass
+                # self.H_day, self.C_day = True, False
                 # for uid in self.building_ids:
                 #     print(uid, "C:", self.cap_c_est[uid])
 
@@ -1073,7 +1078,7 @@ class Predictor(DataLoader):
                         # ratio_h_est[uid].append(ratio_h[uid])
                         self.ratio_h_est[uid].append(ratio_h[uid])  # Two point avg
                         self.H_bd_est[uid].append(H_bd[uid])
-                        self.H_day, self.C_day = False, True
+                        # self.H_day, self.C_day = False, True
                 sign = True if self.num_h_points[uid] >= 9 else False
             if sign is True:
                 pass
@@ -1144,6 +1149,8 @@ class Predictor(DataLoader):
         )  # Concatenation of H relevant data
         # print(C_dataframe)
 
+        print("H dataframe\n", C_dataframe)
+
         ################################ dataframe to array (both Heat and Cooling) to use the index
 
         ## Quantile regession %
@@ -1152,6 +1159,11 @@ class Predictor(DataLoader):
         for uid in self.building_ids:  # j is building id
             self.quantile_reg_H(uid, quantiles, H_dataframe, 5)
             self.quantile_reg_C(uid, quantiles, C_dataframe, 5)
+        print("\nonline exploration finished--")
+        print("\ncooling capacity: ", self.C_qr_est)
+        print("\nheating capacity: ", self.H_qr_est)
+        print("\nbattery capacity: ", self.capacity_b)
+        print("\nnominal power: ", self.nom_p_est)
 
     #
     # @staticmethod
@@ -1259,9 +1271,7 @@ class Predictor(DataLoader):
 
         ##### Quantile regression % assignment to each building for better capacity estimation based on observation
         # if uid in self.building_ids:
-        self.C_qr_est[uid] = models["coefficient"][
-            3
-        ]  # 75% Quantile reg for building 1 ~ 5 and 8, 9
+        self.C_qr_est[uid] = (models["coefficient"][1] + models["coefficient"][2]) / 2
 
     def estimate_h(self):
         action_gen = []
@@ -1590,12 +1600,17 @@ class Predictor(DataLoader):
                 ratio_c[uid] = -(prev_soc_c[uid] - (1 - CF_C) * prev_2_soc_c[uid])
                 # self.ratio_c2[uid] = -(soc_c[uid][-4] - (1 - CF_C) * soc_c[uid][-5])
                 # two_point_est_c[uid] =  a_c_temp[uid][-1] + (ratio_c[uid]+ratio_c2[uid]/2)
-                cap_c[uid] = e_hpc * prev_cop / (prev_action[uid] + ratio_c[uid])
 
-                ratio_c[uid] = prev_action[uid] + ratio_c[uid]
+                ratio_c[uid] = ratio_c[uid] + prev_action[uid]
+                cap_c[uid] = e_hpc * prev_cop / (ratio_c[uid])
+
                 C_bd[uid] = e_hpc * prev_cop
 
                 add_points[uid] += 1
+                if C_bd[uid] < 0:
+                    print(C_bd)
+                    pass
+
 
             """
             1) execute action to est ratio if soc > threshold  
@@ -1659,7 +1674,7 @@ class Predictor(DataLoader):
                     action_now = [a_c[uid], a_h, a_b[uid]]
                     action_gen.append(action_now)
                     continue
-                elif a_clip[uid] > 0.01:
+                elif a_clip[uid] > 0.03:
                     a_c[uid] = min(a_clip[uid], 1 - now_soc_c[uid])
                 else:
                     a_c[uid] = min(0.03, 1 - now_soc_c[uid])
