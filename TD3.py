@@ -76,7 +76,6 @@ class TD3(object):
         # 1. RBC (utils.py)
         # 2. Online Exploration. (utils.py)
         # 3. Optimization (actor.py)
-        actions = np.zeros((24, self.buildings))
         # upload state to memory
         self._add_to_buffer(state, None)
 

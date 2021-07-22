@@ -1,8 +1,7 @@
-from collections import defaultdict
-from copy import Error
+from copy import deepcopy
 from utils import ReplayBuffer
 
-from citylearn import CityLearn, building_loader
+from citylearn import CityLearn
 
 import numpy as np
 import pandas as pd
@@ -39,10 +38,10 @@ class DataLoader:
     def convert_to_numpy(self, params: dict):
         """Converts dic[key] to nd.array"""
         for key in params:
-            if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
-                params[key] = np.array(params[key][0])
-            else:
-                params[key] = np.array(params[key])
+            # if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
+            #     params[key] = np.array(params[key][0])
+            # else:
+            params[key] = np.array(params[key])
 
     def get_dimensions(self, data: dict):
         """Prints shape of each param"""
@@ -133,15 +132,22 @@ class Predictor(DataLoader):
         if is_adaptive:
             # if hour start of day, `get_recent()` will automatically return an empty dictionary
             data = self.full_parse_data(
-                self.get_day_data(replay_buffer, timestep), 24 - timestep % 24
+                deepcopy(replay_buffer.get_recent()),
+                self.get_day_data(replay_buffer, timestep),
+                24 - timestep % 24,
             )
             replay_buffer.add(data)
         else:
-            data = self.full_parse_data(self.get_day_data(replay_buffer, timestep))
+            data = self.full_parse_data(
+                deepcopy(replay_buffer.get_recent()),
+                self.get_day_data(replay_buffer, timestep),
+            )
             replay_buffer.add(data, full_day=True)
         return data
 
-    def full_parse_data(self, current_data: dict, window: int = 24):
+    def full_parse_data(
+        self, previous_data: dict, current_data: dict, window: int = 24
+    ):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
         TOTAL_PARAMS = 20
         assert (
@@ -164,8 +170,12 @@ class Predictor(DataLoader):
                 data[key] = value
             else:
                 # makes sure horizontal dimensions are 24
-                data[key] = np.pad(value, ((24 - window, 0), (0, 0)))
-
+                if previous_data and "action" not in key:
+                    data[key] = np.concatenate(
+                        (previous_data[key][: 24 - window], value), axis=0
+                    )
+                else:
+                    data[key] = np.pad(value, ((24 - window, 0), (0, 0)))
         return data
 
     # TODO: @Zhiyao - needs fixing -- done
@@ -279,22 +289,16 @@ class Predictor(DataLoader):
         E_ehH_max = H_max / 0.9
         C_p_bat = np.full((len(self.building_ids)), fill_value=60)
 
-        c_bat_init = np.array(
-            self.state_buffer.get(-1)["soc_b"][-1]  # current condition
-        )  # -2 to -1 (confirm)--done
+        c_bat_init = np.array(self.state_buffer.get(-1)["soc_b"])[-1]
         c_bat_init[c_bat_init == np.inf] = 0
 
         C_p_Hsto = 3 * H_max
 
-        c_Hsto_init = np.array(
-            self.state_buffer.get(-1)["soc_h"][-1]
-        )  # -2 to -1 (confirm)--done
+        c_Hsto_init = np.array(self.state_buffer.get(-1)["soc_h"])[-1]
         c_Hsto_init[c_Hsto_init == np.inf] = 0
         C_p_Csto = 2 * C_max
 
-        c_Csto_init = np.array(
-            self.state_buffer.get(-1)["soc_c"][-1]
-        )  # -2 to -1 (confirm)--done
+        c_Csto_init = np.array(self.state_buffer.get(-1)["soc_c"])[-1]
         c_Csto_init[c_Csto_init == np.inf] = 0
 
         # add E-grid - default day-ahead
@@ -342,7 +346,9 @@ class Predictor(DataLoader):
 
     def upload_data(self, state, action):
         """Uploads state and action_reward replay buffer"""
-        raise Error("This function is not called, and should not be called anywhere")
+        raise NotImplementedError(
+            "This function is not called, and should not be called anywhere"
+        )
 
     # TODO: @Zhiyao - needs implementation. See comment below -- done
     def upload_state(self, state_list: list):
