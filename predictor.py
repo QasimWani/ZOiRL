@@ -127,7 +127,7 @@ class Predictor(DataLoader):
 
     # TODO: @Zhiyao + @Qasim - this function has not tested. Depends on internal predictor to work.
     def estimate_data(
-        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool
+        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
     ):
         """Estimates data to be passed into Optimization model for 24hours into future."""
         if is_adaptive:
@@ -207,12 +207,18 @@ class Predictor(DataLoader):
         for uid in self.building_ids:
             self.solar_avg[uid] = solar_alldays[uid] / 13
             self.elec_weekday_avg[uid] = elec_weekday[uid] / weekday
-            self.elec_weekend1_avg[uid] = elec_weekend1[uid] / weekend1 if\
-                self.elec_weekend1_avg[uid].all() == np.zeros(24).all() else (1 - weekend1*0.2)\
-                * self.elec_weekend1_avg[uid] + elec_weekend1[uid] * 0.2
-            self.elec_weekend2_avg[uid] = elec_weekend2[uid] / weekend2 if\
-                self.elec_weekend2_avg[uid].all() == np.zeros(24).all() else (1 - weekend2*0.2) \
-                * self.elec_weekend2_avg[uid] + elec_weekend2[uid] * 0.2
+            self.elec_weekend1_avg[uid] = (
+                elec_weekend1[uid] / weekend1
+                if self.elec_weekend1_avg[uid].all() == np.zeros(24).all()
+                else (1 - weekend1 * 0.2) * self.elec_weekend1_avg[uid]
+                + elec_weekend1[uid] * 0.2
+            )
+            self.elec_weekend2_avg[uid] = (
+                elec_weekend2[uid] / weekend2
+                if self.elec_weekend2_avg[uid].all() == np.zeros(24).all()
+                else (1 - weekend2 * 0.2) * self.elec_weekend2_avg[uid]
+                + elec_weekend2[uid] * 0.2
+            )
 
     # TODO: @Zhiyao - make sure in the case of adaptive this returns (and is sent to actor.py --> see TD3.py (select_action)) data of dimensions (window, 9)
     # >>> Now, in the case of adaptive, say we're on hour 10. So, we only need to make predictions from hour 10 - 24 (1-based indexing).
@@ -492,7 +498,7 @@ class Predictor(DataLoader):
 
     def cop_cal(self, temp):
         eta_tech = 0.22
-        target_c = 8
+        target_c = 8  # t_target_cooling
         if temp == target_c:
             cop_c = 20
         else:
