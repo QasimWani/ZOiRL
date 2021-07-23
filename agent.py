@@ -363,7 +363,9 @@ class Agent(TD3):
     def evaluate_zeta(self, current_state):
         """Main function to evaluate different values of Zeta for."""
         # get RBC cost
-        next_state = self.Digital_Twin.transition(current_state, self.rbc_actions)
+        next_state = self.Digital_Twin.transition(
+            current_state, self.rbc_actions, self.total_it, self.memory.get(-1)
+        )
         rbc_cost = self.get_cost(next_state)
 
         # keep track of Optim/RBC ratios
@@ -381,7 +383,9 @@ class Agent(TD3):
                     for id in range(self.buildings)
                 ]
             )
-            next_state = self.Digital_Twin.transition(current_state, actions)
+            next_state = self.Digital_Twin.transition(
+                current_state, self.rbc_actions, self.total_it, self.memory.get(-1)
+            )
             zeta_cost = self.get_cost(next_state)
             # @Vanshaj: Make sure this works
             ratios.append(zeta_cost / rbc_cost)
