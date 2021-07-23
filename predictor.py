@@ -48,7 +48,7 @@ class DataLoader:
     def get_dimensions(self, data: dict):
         """Prints shape of each param"""
         for key in data.keys():
-            print(data[key].shape)
+            print(key, data[key].shape)
 
     def get_building(self, data: dict, building_id: int):
         """Loads data (dict) from a particular building. 1-based indexing for building"""
