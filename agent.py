@@ -73,7 +73,12 @@ class Agent(TD3):
 
         # Digital Twin specific parameters
 
-        self.Digital_Twin = DigitalTwin()
+        self.Digital_Twin = DigitalTwin(["Building_"+str(i) for i in [1,2,3,4,5,6,7,8,9]],
+                save_memory = True,
+                buildings_states_actions = 'buildings_state_action_space.json', cost_function = 
+                ['ramping','1-load_factor','average_daily_peak','peak_demand','net_electricity_consumption'],
+                simulation_period = (0,8759))
+                                        
         # create Digital Twin specific actor
         self.actor_digital_twin = deepcopy(self.actor)
 
@@ -83,7 +88,20 @@ class Agent(TD3):
         self.sod_data = None
 
         # @Vanshaj, make sure you define this!
-        self.zeta_k_list = np.ones((4, 24, len(observation_space)))  # 4 different Zeta.
+        self.zeta_k_list = np.ones(((4, 24, len(observation_space))))  # 4 different Zetas.
+
+        self.zeta_k_list[1,0:13,:] = 0.2
+        self.zeta_k_list[1,13:19,:] = 5
+        self.zeta_k_list[1,19:23,:] = 0.2
+        
+        self.zeta_k_list[2,0:6,:] = 0.2
+        self.zeta_k_list[2,7:19,:] = 5
+        self.zeta_k_list[2,20:23,:] = 0.2
+        
+        self.zeta_k_list[3,0:5,:] = 0.2
+        self.zeta_k_list[3,11:17,:] = 2
+        self.zeta_k_list[3,22:23,:] = 0.2
+        
 
     def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
         """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
@@ -96,7 +114,7 @@ class Agent(TD3):
         if len(self.elite_set_prev) and self.k <= self.K_keep:
 
             # k-th best from elite_set_prev - zeta for all buildings
-            self.zeta = self.elite_set_prev[self.k]
+            self.zeta = self.elite_set_prev[-1]
 
             zeta_k = self.zeta  # zeta for 9 buildings for 24 hours
 
@@ -104,11 +122,11 @@ class Agent(TD3):
 
             # Initialising parameters for the rest of the day for 24 hrs for 9 buildings
             zeta_p_ele = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_ehH = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_bat = np.zeros(((1, 24, self.buildings)))
-            zeta_c_bat_end = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_Hsto = np.zeros(((1, 24, self.buildings)))
-            zeta_eta_Csto = np.zeros(((1, 24, self.buildings)))
+#             zeta_eta_ehH = np.zeros(((1, 24, self.buildings)))
+#             zeta_eta_bat = np.zeros(((1, 24, self.buildings)))
+#             zeta_c_bat_end = np.zeros(((1, 24, self.buildings)))
+#             zeta_eta_Hsto = np.zeros(((1, 24, self.buildings)))
+#             zeta_eta_Csto = np.zeros(((1, 24, self.buildings)))
 
             mean_sigma_range = (
                 self.get_mean_sigma_range()
@@ -124,22 +142,23 @@ class Agent(TD3):
                     mean_sigma_range[2][1],
                 )
 
-                self.zeta = np.vstack(
-                    (
-                        zeta_p_ele,
-                        zeta_eta_bat,
-                        zeta_eta_Hsto,
-                        zeta_eta_Csto,
-                        zeta_eta_ehH,
-                        zeta_c_bat_end,
-                    )
-                )
+#                 self.zeta = np.vstack(
+#                     (
+#                         zeta_p_ele,
+#                         zeta_eta_bat,
+#                         zeta_eta_Hsto,
+#                         zeta_eta_Csto,
+#                         zeta_eta_ehH,
+#                         zeta_c_bat_end,
+#                     )
+#                 )
 
-            # self.zeta = zeta_p_ele
-            # will set this zeta for the rest of the day
-            zeta_k = self.zeta = zeta_p_ele
+            self.zeta = zeta_p_ele
 
+            zeta_k = self.zeta   # will set this zeta for the rest of the day
+        
         self.p_ele_logger.append(zeta_k)
+        self.elite_set.append(zeta_k)
 
         return zeta_k
 
@@ -219,15 +238,15 @@ class Agent(TD3):
             )  # Will store the arguments of the sort
 
             elite_set_dummy = self.elite_set
-            #             print('dummy_elite_set = ',np.array(elite_set_dummy)[:,0:3,0:6,0])
+            
+            
 
             for i in range(self.buildings):
-                best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
-                    -1
-                )  # Arranging costs for the i-th building
+                best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(-1)  # Arranging costs for the i-th building
+                
                 # Finding the best K samples from the elite set
                 for Kbest in range(self.K):
-                    a = best_zeta_args[:, i][Kbest].astype(np.int32)
+                    a = best_zeta_args[:, i][Kbest].astype(np.int32)    
                     self.elite_set[Kbest][:, :, i] = elite_set_dummy[a][:, :, i]
 
             self.elite_set = self.elite_set[0 : self.K]
@@ -239,8 +258,11 @@ class Agent(TD3):
 
             for i in range(self.buildings):
                 self.mean_p_ele[i] = np.mean(A[:, :, i], axis=1)
+#                 print('A = ',A[:,:,i])
+#                 print('A_mean = ', self.mean_p_ele[i])
                 self.std_p_ele[i] = np.std(A[:, :, i], axis=1)
-
+            
+            print('mean = ', self.mean_p_ele)
             self.elite_set_prev = self.elite_set
             self.elite_set = []
 
@@ -259,7 +281,7 @@ class Agent(TD3):
         """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
         if self.total_it <= self.rbc_threshold:
             return
-
+        
         E_observed = state[:, 28]  # For all buildings
 
         E_NS_t = state[:, 23]  # For all buildings
@@ -306,7 +328,9 @@ class Agent(TD3):
 
             self.all_costs.append(cost)
 
-            self.k += 1
+            self.k = self.k + 1
+            
+            print('k = ', self.k)
 
             self.C_bd_hist = []
 
@@ -355,23 +379,59 @@ class Agent(TD3):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
         self.sod_data = parameters
 
-    def get_cost(self, state: np.ndarray):
-        """Computes cost from current state"""
-        # @Vanshaj: Implemented this function to return cost
-        raise NotImplementedError
+    def get_cost(self, E_grid_data: np.ndarray):
+        """Computes cost from E_grid_data for 9 buildings"""
+        
+        ramping_cost = []
+        peak_electricity_cost = []
+        
+        for bid in range(9):
+            ramping_cost_t = []
+            peak_electricity_cost_t = []
+            E_grid_t = E_grid_data[:, bid]   #  24*1
+            
+            ramping_cost.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))    # Size 9
+            peak_electricity_cost.append(np.max(E_grid_t))                       # Size 9
+        
+        total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)   # Size 9
+        
+        cost = np.mean(total_cost)
+        
+        return cost
+        
 
     def evaluate_zeta(self, current_state):
         """Main function to evaluate different values of Zeta for."""
-        # get RBC cost
-        next_state = self.Digital_Twin.transition(
-            current_state, self.rbc_actions, self.total_it, self.memory.get(-1)
-        )
-        rbc_cost = self.get_cost(next_state)
+        time_step_rbc = 1
+    
+        E_grid_rbc_data = []
+        # get RBC cost for doing rbc actions for one day
+        for t in range(24):
+            
+            next_state = self.Digital_Twin.transition( current_state, self.agent_rbc.select_action(self.total_it % 24), self.total_it)
+            
+            print('current_state = ', current_state)
+            E_grid_rbc_data.append(next_state[:,28])      # Apeending Electricity demand to the E_grid_data
+            
+            current_state = next_state
+            
+            time_step_rbc += 1
+         
+        E_grid_rbc_data = np.array(E_grid_rbc_data)
+        
+        rbc_cost = self.get_cost(E_grid_rbc_data)
+        
+        
+        
 
         # keep track of Optim/RBC ratios
         ratios = []
+        E_grid_zeta_data = []
+        
+        
+        
         for zeta in self.zeta_k_list:
-            self.actor_digital_twin.set_zeta(zeta)
+            self.set_zeta(zeta)
             actions, optim_values, _ = zip(
                 *[
                     self.actor_digital_twin.forward(
@@ -383,12 +443,18 @@ class Agent(TD3):
                     for id in range(self.buildings)
                 ]
             )
-            next_state = self.Digital_Twin.transition(
-                current_state, self.rbc_actions, self.total_it, self.memory.get(-1)
-            )
-            zeta_cost = self.get_cost(next_state)
+            next_state = self.Digital_Twin.transition(current_state, actions, self.total_it)
+            
+            E_grid_zeta_data.append(next_state[:,28])      # Appending Electricity demand to the E_grid_data
+            
+            current_state = next_state
+            
+            zeta_cost = self.get_cost(E_grid_zeta_data)
+   
             # @Vanshaj: Make sure this works
             ratios.append(zeta_cost / rbc_cost)
+            
+            E_grid_zeta_data = []            # To store E_grids for the new zeta
 
         return min(ratios), self.zeta_k_list[np.argmin(ratios)]
 
