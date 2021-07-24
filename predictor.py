@@ -1,7 +1,6 @@
-from copy import Error
 from utils import ReplayBuffer
 from collections import defaultdict
-from citylearn import CityLearn, building_loader
+from citylearn import CityLearn
 
 import numpy as np
 import pandas as pd
@@ -365,7 +364,7 @@ class Predictor(DataLoader):
 
     def upload_data(self, state, action):
         """Uploads state and action_reward replay buffer"""
-        raise Error("This function is not called, and should not be called anywhere")
+        raise NotImplementedError("This function is not called, and should not be called anywhere")
 
     # TODO: @Zhiyao - needs implementation. See comment below -- done
     def upload_state(self, state_list: list):
