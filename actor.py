@@ -552,7 +552,19 @@ class Actor:
             )  # Returns the optimal value.
 
         if float("-inf") < status < float("inf"):
-            pass
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = np.array(var.value) + offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = np.array(var.value)[0] + offset
         else:
             for var in self.prob[t].variables():
                 if dispatch:
@@ -567,18 +579,6 @@ class Actor:
                     if "action" in str(var.name()):
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
                     actions[var.name()] = offset
-
-        for var in self.prob[t].variables():
-            if dispatch:
-                offset = np.zeros(len(var.value))
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, 24 - t % 24 :]
-                actions[var.name()] = np.array(var.value) + offset
-            else:
-                offset = 0
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, t % 24]
-                actions[var.name()] = np.array(var.value)[0] + offset
 
         # prune out zeta - set zeta values for later use in backward pass.
         # self.prune_update_zeta(t, prob.param_dict, building_id)
