@@ -543,7 +543,7 @@ class Actor:
 
         try:
             status = self.prob[t].solve(
-                verbose=debug, max_iters=1000
+                verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
         except:  # try another solver
             print(f"\nSolving using SCS at t = {t} for building {building_id}")
@@ -554,7 +554,19 @@ class Actor:
         if float("-inf") < status < float("inf"):
             pass
         else:
-            return [0, 0, 0], 0, 0 if dispatch else None, actions, None
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = offset
 
         for var in self.prob[t].variables():
             if dispatch:
