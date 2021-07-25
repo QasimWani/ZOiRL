@@ -49,27 +49,27 @@ class DigitalTwin:
             self.buildings_states_actions = json.load(json_file)
 
         # States that we can directly get from the observed states
-        self.E_NS = 0
-        self.net_electricity_consumption = 0
-        self.SOC_Csto = 0
-        self.SOC_Hsto = 0
-        self.SOC_bat = 0
-        self.solar_gen = 0
+        self.E_NS = np.zeros(9)
+        self.net_electricity_consumption = np.zeros(9)
+        self.SOC_Csto = np.zeros(9)
+        self.SOC_Hsto = np.zeros(9)
+        self.SOC_bat = np.zeros(9)
+        self.solar_gen = np.zeros(9)
 
         # States that will require a predictor/oracle
-        self.E_hpC_max = 0
-        self.E_ehH_max = 0
-        self.E_bat_max = 0
-        self.C_p_Csto = 0
-        self.C_p_Hsto = 0
-        self.C_p_bat = 0
-        self.eta_bat = 0
-        self.E_pv = 0
-        self.H_bd = 0
-        self.C_bd = 0
-        self.COP_C = 0
-        self.C_max = 0
-        self.H_max = 0
+        self.E_hpC_max = np.zeros(9)
+        self.E_ehH_max = np.zeros(9)
+        self.E_bat_max = np.zeros(9)
+        self.C_p_Csto = np.zeros(9)
+        self.C_p_Hsto = np.zeros(9)
+        self.C_p_bat = np.zeros(9)
+        self.eta_bat = np.zeros(9)
+        self.E_pv = np.zeros(9)
+        self.H_bd = np.zeros(9)
+        self.C_bd = np.zeros(9)
+        self.COP_C = np.zeros(9)
+        self.C_max = np.zeros(9)
+        self.H_max = np.zeros(9)
 
         # Initialising the constant parameters
         self.eta_hp_tech: float = 0.22  # Technical Efficiency
