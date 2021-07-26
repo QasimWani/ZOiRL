@@ -186,7 +186,7 @@ class Actor:
             name="eta_bat", shape=window, value=self.zeta["eta_bat"][t:, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=parameters["c_bat_init"][building_id]
+            name="c_bat_init", value=parameters["c_bat_init"][t, building_id]
         )
         soc_bat_norm_end = cp.Parameter(
             name="c_bat_end", value=self.zeta["c_bat_end"][building_id]
@@ -202,7 +202,7 @@ class Actor:
             value=self.zeta["eta_Hsto"][t:, building_id],
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][t, building_id]
         )
 
         # Cooling (Energy->cooling) Storage
@@ -215,7 +215,7 @@ class Actor:
             value=self.zeta["eta_Csto"][t:, building_id],
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
+            name="c_Csto_init", value=parameters["c_Csto_init"][t, building_id]
         )
 
         ### --- Variables ---
@@ -501,18 +501,24 @@ class Actor:
         # Battery
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = self.zeta["eta_bat"][t:, building_id]
-        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][
+            t, building_id
+        ]
         problem_parameters["c_bat_end"].value = self.zeta["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = self.zeta["eta_Hsto"][t:, building_id]
-        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][
+            t, building_id
+        ]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = self.zeta["eta_Csto"][t:, building_id]
-        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][
+            t, building_id
+        ]
 
         ## Update Parameters
         for key, prob_val in problem_parameters.items():
@@ -537,7 +543,7 @@ class Actor:
 
         try:
             status = self.prob[t].solve(
-                verbose=debug, max_iters=1000
+                verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
         except:  # try another solver
             print(f"\nSolving using SCS at t = {t} for building {building_id}")
@@ -546,21 +552,33 @@ class Actor:
             )  # Returns the optimal value.
 
         if float("-inf") < status < float("inf"):
-            pass
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = np.array(var.value) + offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = np.array(var.value)[0] + offset
         else:
-            return [0, 0, 0], 0, 0 if dispatch else None, actions, None
-
-        for var in self.prob[t].variables():
-            if dispatch:
-                offset = np.zeros(len(var.value))
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, 24 - t % 24 :]
-                actions[var.name()] = np.array(var.value) + offset
-            else:
-                offset = 0
-                if "action" in str(var.name()):
-                    offset = self.rbc_actions[var.name()][building_id, t % 24]
-                actions[var.name()] = np.array(var.value)[0] + offset
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = offset
 
         # prune out zeta - set zeta values for later use in backward pass.
         # self.prune_update_zeta(t, prob.param_dict, building_id)
