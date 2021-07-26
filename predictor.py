@@ -78,6 +78,7 @@ class Predictor(DataLoader):
         self.CF_C = 0.006
         self.CF_H = 0.008
         self.CF_B = 0
+        self.rbc_threshold = 336
 
         # define regression model
         self.regr = LinearRegression(
@@ -1104,6 +1105,17 @@ class Predictor(DataLoader):
             raise TypeError("No energy type is configured")
 
         return action
+
+    def get_params(self, timestep: int) -> dict:
+        assert timestep >= self.rbc_threshold, ValueError("online exploration is still running")
+
+        param_dict = {}
+        param_dict["C_p_Csto"] = self.C_qr_est
+        param_dict["C_p_Hsto"] = self.H_qr_est
+        param_dict["C_p_bat"] = self.capacity_b
+        param_dict["E_bat_max"] = self.nom_p_est
+
+        return param_dict
 
     def quantile_reg(self):
         df_cap_h = pd.DataFrame(

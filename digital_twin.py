@@ -93,6 +93,12 @@ class DigitalTwin:
 
     def building_loader(self):
         """Loads the parameters for all the 9 buildings using the self.buidlng class"""
+        # TODO: @Qasim - if this function is for initializing the digital twin, pls do as follows:
+        # TODO: 1. import predictor
+        # TODO: 2. call predictor.get_params(timestep), make sure timestep>=RBC_THRESHOLD
+        # TODO: 3. the function returns a dictionary with "C_p_Csto", "C_p_Hsto", "C_p_bat", "E_bat_max"(nominal power)
+        # TODO: 4. configure each parameter in data_dict below
+        # TODO: 5. indexing: for example, to index nominal power for bdg 1, use E_bat_max[0]
 
         data_dict = {
             "Building_1": {
