@@ -8,7 +8,7 @@ import time
 from utils import ReplayBuffer, RBC
 
 ## local imports
-from predictor import Predictor as DataLoader, Oracle
+from predictor import Predictor as DataLoader
 from actor import Actor
 from critic import Critic, Optim
 
@@ -70,7 +70,7 @@ class TD3(object):
         self,
         state,
         day_ahead: bool = False,
-        env: CityLearn = None,  # use for Oracle
+        # env: CityLearn = None,  # use for Oracle
     ):
         """Returns action from RBC/Optimization"""
         # 3 policies:

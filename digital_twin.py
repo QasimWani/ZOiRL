@@ -441,9 +441,7 @@ class DigitalTwin:
 
         self.E_hpC_max = memory["E_hpC_max"][total_it % 24, :]
         self.E_ehH_max = memory["E_ehH_max"][total_it % 24, :]
-        # self.E_bat_max = memory["E_bat_max"][
-        #     total_it % 24, :
-        # ]  ### @Qasim: get this right (main @Zhiyao: make sure this is added to observation data in `get_day_data`)
+        self.E_bat_max = memory["E_bat_max"][total_it % 24, :]
         self.C_p_Hsto = memory["C_p_Hsto"][total_it % 24, :]
         self.C_p_bat = memory["C_p_bat"][total_it % 24, :]
         self.eta_bat = zeta["eta_bat"][total_it % 24, :]
@@ -457,7 +455,7 @@ class DigitalTwin:
         # # Getting state for current time step and 9 buildings    # For testing purposes
         # self.E_hpC_max = np.ones(9)
         # self.E_ehH_max = np.ones(9)
-        self.E_bat_max = np.ones(9)
+        # self.E_bat_max = np.ones(9)
         # self.C_p_Csto = np.ones(9)
         # self.C_p_Hsto = np.ones(9)
         # self.C_p_bat = np.ones(9)

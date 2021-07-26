@@ -123,7 +123,7 @@ class Predictor(DataLoader):
         self, previous_data: dict, current_data: dict, window: int = 24
     ):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
-        TOTAL_PARAMS = 20
+        TOTAL_PARAMS = 21
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
@@ -231,6 +231,9 @@ class Predictor(DataLoader):
             future_temp,
         ) = self.infer_load(timestep)
 
+        # get capacity and nominal power parameters
+        additional_parameters = self.get_params(timestep)
+
         E_ns = np.array([electricity_estimate[key] for key in self.building_ids]).T
         E_pv = np.array([solar_estimate[key] for key in self.building_ids]).T
 
@@ -261,16 +264,19 @@ class Predictor(DataLoader):
 
         E_hpC_max = np.max(C_bd / COP_C, axis=0)
         E_ehH_max = H_max / 0.9
-        C_p_bat = np.full((len(self.building_ids)), fill_value=60)
+        C_p_bat = additional_parameters["C_p_bat"]
 
         c_bat_init = np.array(self.state_buffer.get(-1)["soc_b"])[-1]
         c_bat_init[c_bat_init == np.inf] = 0
 
-        C_p_Hsto = 3 * H_max
+        C_p_Hsto = additional_parameters["C_p_Hsto"]
 
         c_Hsto_init = np.array(self.state_buffer.get(-1)["soc_h"])[-1]
         c_Hsto_init[c_Hsto_init == np.inf] = 0
-        C_p_Csto = 2 * C_max
+        C_p_Csto = additional_parameters["C_p_Csto"]
+
+        # nominal power
+        E_bat_max = additional_parameters["E_bat_max"]
 
         c_Csto_init = np.array(self.state_buffer.get(-1)["soc_c"])[-1]
         c_Csto_init[c_Csto_init == np.inf] = 0
@@ -308,6 +314,8 @@ class Predictor(DataLoader):
 
         observation_data["C_p_Csto"] = C_p_Csto
         observation_data["c_Csto_init"] = c_Csto_init
+
+        observation_data["E_bat_max"] = E_bat_max
 
         observation_data["action_H"] = self.action_buffer.get(-1)["action_H"]
         observation_data["action_C"] = self.action_buffer.get(-1)["action_C"]
@@ -1056,13 +1064,15 @@ class Predictor(DataLoader):
         return action
 
     def get_params(self, timestep: int) -> dict:
-        assert timestep >= self.rbc_threshold, ValueError("online exploration is still running")
+        assert timestep >= self.rbc_threshold, ValueError(
+            "online exploration is still running"
+        )
 
         param_dict = {}
-        param_dict["C_p_Csto"] = self.C_qr_est
-        param_dict["C_p_Hsto"] = self.H_qr_est
-        param_dict["C_p_bat"] = self.capacity_b
-        param_dict["E_bat_max"] = self.nom_p_est
+        param_dict["C_p_Csto"] = np.array(list(self.C_qr_est.values()))
+        param_dict["C_p_Hsto"] = np.array(list(self.H_qr_est.values()))
+        param_dict["C_p_bat"] = np.array(list(self.capacity_b.values()))
+        param_dict["E_bat_max"] = np.array(list(self.nom_p_est.values()))
 
         return param_dict
 
