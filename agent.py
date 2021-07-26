@@ -373,7 +373,7 @@ class Agent(TD3):
         # update zeta
         self.set_zeta()
         # run forward pass
-        actions, parameters = super().select_action(state, day_ahead)
+        actions, parameters = super().select_action(state, day_ahead, day_ahead)
         # evaluate agent
         self.evaluate_cost(state)
         # digital twin
