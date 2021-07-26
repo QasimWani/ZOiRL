@@ -268,7 +268,7 @@ class Actor:
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
         electricity_cost = cp.sum(p_ele * E_grid)
-        selling_cost = -1e2 * cp.sum(
+        selling_cost = cp.sum(
             E_grid_sell
         )  # not as severe as violating constraints
 
@@ -543,7 +543,7 @@ class Actor:
 
         try:
             status = self.prob[t].solve(
-                verbose=debug, max_iters=10_000
+                verbose=debug, max_iters=1000
             )  # Returns the optimal value.
         except:  # try another solver
             print(f"\nSolving using SCS at t = {t} for building {building_id}")

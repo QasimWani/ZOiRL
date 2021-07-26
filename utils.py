@@ -230,3 +230,53 @@ class RBC:
                 indx_hour < len(list(actions_.values())[0]["states"].items()) - 1
             ), "Please, select hour as a state for Building_1 to run the RBC"
         return indx_hour
+
+
+class DataLoader:
+    """Base Class"""
+
+    def __init__(self, action_space: list) -> None:
+        self.action_space = action_space
+
+    def upload_data(self) -> None:
+        """Upload to memory"""
+        raise NotImplementedError
+
+    def load_data(self):
+        """Optional: not directly called. Should be called within `upload_data` if used."""
+        raise NotImplementedError
+
+    def parse_data(self, data: dict, current_data: dict):
+        """Parses `current_data` for optimization and loads into `data`"""
+        for key, value in current_data.items():
+            if key not in data:
+                data[key] = []
+            data[key].append(value)
+        return data
+
+    def convert_to_numpy(self, params: dict):
+        """Converts dic[key] to nd.array"""
+        for key in params:
+            # if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
+            #     params[key] = np.array(params[key][0])
+            # else:
+            params[key] = np.array(params[key])
+
+    def get_dimensions(self, data: dict):
+        """Prints shape of each param"""
+        for key in data.keys():
+            print(key, data[key].shape)
+
+    def get_building(self, data: dict, building_id: int):
+        """Loads data (dict) from a particular building. 1-based indexing for building"""
+        assert building_id > 0, "building_id is 1-based indexing."
+        building_data = {}
+        for key in data.keys():
+            building_data[key] = np.array(data[key])[:, building_id - 1]
+        return building_data
+
+    def create_random_data(self, data: dict):
+        """Synthetic data (Gaussian) generation"""
+        for key in data:
+            data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
+        return data
