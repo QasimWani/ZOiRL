@@ -1,6 +1,7 @@
 from utils import ReplayBuffer
 from collections import defaultdict
 from citylearn import CityLearn
+from copy import deepcopy
 
 import numpy as np
 import pandas as pd
@@ -335,7 +336,7 @@ class Predictor(DataLoader):
         for hour in range(1, timestep % 24):
             observation_data["E_grid_prevhour"][hour] = observation_data["E_grid"][
                 hour - 1
-                ]
+            ]
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
@@ -911,17 +912,17 @@ class Predictor(DataLoader):
                     next_t_out = next_state["t_out"][0][uid]
                     next_elec_con = next_state["elec_cons"][0][uid]
                     y = (
-                            now_solar
-                            + next_elec_con
-                            - now_elec_dem
-                            - (self.C_qr_est[uid] / cop_c)
-                            * (next_c_soc - (1 - self.CF_C) * now_c_soc)
-                            * 0.9
-                            - (self.H_qr_est[uid] / effi_h)
-                            * (next_h_soc - (1 - self.CF_H) * now_h_soc)
-                            - (next_b_soc - (1 - self.CF_B) * now_b_soc)
-                            * self.capacity_b[uid]
-                            / 0.9
+                        now_solar
+                        + next_elec_con
+                        - now_elec_dem
+                        - (self.C_qr_est[uid] / cop_c)
+                        * (next_c_soc - (1 - self.CF_C) * now_c_soc)
+                        * 0.9
+                        - (self.H_qr_est[uid] / effi_h)
+                        * (next_h_soc - (1 - self.CF_H) * now_h_soc)
+                        - (next_b_soc - (1 - self.CF_B) * now_b_soc)
+                        * self.capacity_b[uid]
+                        / 0.9
                     )
 
                 a_clip_c = next_c_soc - (1 - self.CF_C) * now_c_soc
@@ -1055,8 +1056,11 @@ class Predictor(DataLoader):
                 self.H_day, self.C_day = False, True
                 for uid in self.building_ids:
                     """below two are parameters to be configured in predictor"""
-                    self.nom_p_est[uid] = max(self.nominal_b[uid]) if self.nominal_b[uid]\
+                    self.nom_p_est[uid] = (
+                        max(self.nominal_b[uid])
+                        if self.nominal_b[uid]
                         else self.cap_b_est[uid][0] * 0.75
+                    )
                     self.capacity_b[uid] = self.cap_b_est[uid][0]
                     # print(uid, "Bat: ", self.capacity_b[uid], ", Nominal P: ", self.nom_p_est[uid])
                 # print("real nominal power: 75 40 20 30 25 10 15 10 20")
@@ -1071,7 +1075,7 @@ class Predictor(DataLoader):
                         # ratio_c_est[uid].append(ratio_c[uid])
                         self.ratio_c_est[uid].append(ratio_c[uid])  # Two point avg
                         self.C_bd_est[uid].append(C_bd[uid])
-                sign = True if self.num_c_points[uid] >= 7 else False
+                sign = self.num_c_points[uid] >= 7
             if sign is True:
                 pass
                 # self.H_day, self.C_day = True, False
@@ -1160,8 +1164,6 @@ class Predictor(DataLoader):
         )  # Concatenation of H relevant data
         # print(C_dataframe)
 
-        print("H dataframe\n", C_dataframe)
-
         ################################ dataframe to array (both Heat and Cooling) to use the index
 
         ## Quantile regession %
@@ -1170,11 +1172,6 @@ class Predictor(DataLoader):
         for uid in self.building_ids:  # j is building id
             self.quantile_reg_H(uid, quantiles, H_dataframe, 5)
             self.quantile_reg_C(uid, quantiles, C_dataframe, 5)
-        print("\nonline exploration finished--")
-        print("\ncooling capacity: ", self.C_qr_est)
-        print("\nheating capacity: ", self.H_qr_est)
-        print("\nbattery capacity: ", self.capacity_b)
-        print("\nnominal power: ", self.nom_p_est)
 
     #
     # @staticmethod
@@ -1619,9 +1616,7 @@ class Predictor(DataLoader):
 
                 add_points[uid] += 1
                 if C_bd[uid] < 0:
-                    print(C_bd)
                     pass
-
 
             """
             1) execute action to est ratio if soc > threshold  
