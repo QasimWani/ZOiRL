@@ -106,7 +106,7 @@ class Predictor(DataLoader):
         # -----------thresholds-------------
         self.tau_c = {uid: 0.2 for uid in self.building_ids}
         self.tau_h = {uid: 0.2 for uid in self.building_ids}
-        self.tau_b = {uid: 0.5 for uid in self.building_ids}
+        self.tau_b = {uid: 0.6 for uid in self.building_ids}
         self.tau_cplus = {uid: 0.1 for uid in self.building_ids}
         self.tau_hplus = {uid: 0.1 for uid in self.building_ids}
         self.action_c = {uid: 0.1 for uid in self.building_ids}
@@ -1038,13 +1038,18 @@ class Predictor(DataLoader):
                 self.avail_nominal[uid] = (
                     True if self.num_elec_points[uid] >= 1 else False
                 )
-                sign = True if len(self.nominal_b[uid]) >= 3 else False
+                if len(self.nominal_b[uid]) < 3 and sign is True:
+                    sign = False
+                elif len(self.nominal_b[uid]) >= 3:
+                    sign = True
+                sign = True if timestep >= 48 else sign
             if sign is True:
                 self.E_day = False
                 self.H_day, self.C_day = False, True
                 for uid in self.building_ids:
                     """below two are parameters to be configured in predictor"""
-                    self.nom_p_est[uid] = max(self.nominal_b[uid])
+                    self.nom_p_est[uid] = max(self.nominal_b[uid]) if self.nominal_b[uid]\
+                        else self.cap_b_est[uid][0] * 0.75
                     self.capacity_b[uid] = self.cap_b_est[uid][0]
                     # print(uid, "Bat: ", self.capacity_b[uid], ", Nominal P: ", self.nom_p_est[uid])
                 # print("real nominal power: 75 40 20 30 25 10 15 10 20")
@@ -1734,7 +1739,7 @@ class Predictor(DataLoader):
                     self.prev_hour_nom[uid] = False
 
                 if self.prev_hour_nom[uid] is True and now_soc_b[uid] < 0.01:
-                    self.tau_b[uid] = min(self.tau_b[uid] + 0.1, 0.7)
+                    self.tau_b[uid] = min(self.tau_b[uid] + 0.1, 0.8)
                     self.prev_hour_nom[uid] = False
 
                 if self.timestep % 24 == 22:
