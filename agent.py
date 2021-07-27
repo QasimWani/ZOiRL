@@ -92,8 +92,8 @@ class Agent(TD3):
 
         # get actions from RBC at start of day
         self.rbc_actions = self.agent_rbc.select_action(0)
-        # Store state at start of day for digital twin Zeta evaluation
-        self.sod_data = None
+        # Store state for duration of day for digital twin Zeta evaluation
+        self.day_data = [None] * 24
 
         # @Vanshaj, make sure you define this!
         self.zeta_k_list = np.ones(
@@ -381,9 +381,9 @@ class Agent(TD3):
         return actions
 
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
-    def update_start_of_day_data(self, parameters: dict):
+    def update_hour_of_day_data(self, parameters: dict, t: int):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
-        self.sod_data = parameters
+        self.day_data[t] = parameters
 
     def get_cost(self, E_grid_data: np.ndarray):
         """Computes cost from E_grid_data for 9 buildings"""
@@ -409,17 +409,17 @@ class Agent(TD3):
 
     def evaluate_zeta(self, current_state):
         """Main function to evaluate different values of Zeta for."""
-        time_step_rbc = 1
 
         E_grid_rbc_data = []
+
         # get RBC cost for doing rbc actions for one day
         for t in range(24):
 
             next_state = self.Digital_Twin.transition(
                 current_state,
-                self.agent_rbc.select_action(self.total_it % 24),
-                self.total_it,
-                self.memory.get(-1),
+                self.agent_rbc.select_action(t),
+                self.total_it - 24 + t,
+                self.day_data[t],
                 self.actor_digital_twin.zeta,
             )
 
@@ -429,8 +429,6 @@ class Agent(TD3):
 
             current_state = next_state
 
-            time_step_rbc += 1
-
         rbc_cost = self.get_cost(E_grid_rbc_data)
 
         # keep track of Optim/RBC ratios
@@ -438,27 +436,26 @@ class Agent(TD3):
         E_grid_zeta_data = []
 
         for zeta in self.zeta_k_list:
-            self.set_zeta(zeta)
-            actions, optim_values, _ = zip(
-                *[
-                    self.actor_digital_twin.forward(
-                        self.total_it % 24,
-                        self.sod_data,
-                        id,
-                        dispatch=False,
-                    )
-                    for id in range(self.buildings)
-                ]
-            )
-
             # aggregate data for 24 hour and store in E_grid_zeta_data
-            for _ in range(24):
+            for t in range(24):
+                self.set_zeta(zeta)
+                actions, optim_values, _ = zip(
+                    *[
+                        self.actor_digital_twin.forward(
+                            t,
+                            self.day_data[t],
+                            id,
+                            dispatch=False,
+                        )
+                        for id in range(self.buildings)
+                    ]
+                )
 
                 next_state = self.Digital_Twin.transition(
                     current_state,
                     actions,
-                    self.total_it,
-                    self.memory.get(-1),
+                    self.total_it - 24 + t,
+                    self.day_data[t],
                     self.actor_digital_twin.zeta,
                 )
 
@@ -470,7 +467,6 @@ class Agent(TD3):
 
             zeta_cost = self.get_cost(E_grid_zeta_data)
 
-            # @Vanshaj: Make sure this works
             ratios.append(zeta_cost / rbc_cost)
 
             E_grid_zeta_data = []  # To store E_grids for the new zeta
@@ -482,9 +478,9 @@ class Agent(TD3):
         if self.total_it <= self.rbc_threshold:
             return
 
-        if self.total_it % 24 == 1:  # start of day
-            self.update_start_of_day_data(parameters)
-        elif self.total_it % 24 == 0:  # end of day
+        # if self.total_it % 24 == 1:  # start of day
+        self.update_hour_of_day_data(parameters, (self.total_it - 1) % 24)
+        if self.total_it % 24 == 0:  # end of day
             zeta, cost = self.evaluate_zeta(current_state)
             if cost < self.all_costs[-1].mean():  # update zeta
                 # all_costs, costs

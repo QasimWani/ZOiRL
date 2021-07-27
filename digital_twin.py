@@ -439,18 +439,18 @@ class DigitalTwin:
 
         # Getting state for current time step and 9 buildings
 
-        self.E_hpC_max = memory["E_hpC_max"][total_it % 24, :]
-        self.E_ehH_max = memory["E_ehH_max"][total_it % 24, :]
-        self.E_bat_max = memory["E_bat_max"][total_it % 24, :]
-        self.C_p_Hsto = memory["C_p_Hsto"][total_it % 24, :]
-        self.C_p_bat = memory["C_p_bat"][total_it % 24, :]
-        self.eta_bat = zeta["eta_bat"][total_it % 24, :]
-        self.E_pv = memory["E_pv"][total_it % 24, :]
-        self.H_bd = memory["H_bd"][total_it % 24, :]
-        self.C_bd = memory["C_bd"][total_it % 24, :]
-        self.COP_C = memory["COP_C"][total_it % 24, :]
-        self.C_max = memory["C_max"][total_it % 24, :]
-        self.H_max = memory["H_max"][total_it % 24, :]
+        self.E_hpC_max = memory["E_hpC_max"][time_step, :]
+        self.E_ehH_max = memory["E_ehH_max"][time_step, :]
+        self.E_bat_max = memory["E_bat_max"][time_step, :]
+        self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
+        self.C_p_bat = memory["C_p_bat"][time_step, :]
+        self.eta_bat = zeta["eta_bat"][time_step, :]
+        self.E_pv = memory["E_pv"][time_step, :]
+        self.H_bd = memory["H_bd"][time_step, :]
+        self.C_bd = memory["C_bd"][time_step, :]
+        self.COP_C = memory["COP_C"][time_step, :]
+        self.C_max = memory["C_max"][time_step, :]
+        self.H_max = memory["H_max"][time_step, :]
 
         # # Getting state for current time step and 9 buildings    # For testing purposes
         # self.E_hpC_max = np.ones(9)
