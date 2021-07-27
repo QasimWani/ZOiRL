@@ -50,6 +50,12 @@ class Predictor(DataLoader):
         self.elec_weekday_avg = {i: np.zeros(24) for i in self.building_ids}
         self.elec_weekend1_avg = {i: np.zeros(24) for i in self.building_ids}
         self.elec_weekend2_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.c_weekday_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.c_weekend1_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.c_weekend2_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.h_weekday_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.h_weekend1_avg = {i: np.zeros(24) for i in self.building_ids}
+        self.h_weekend2_avg = {i: np.zeros(24) for i in self.building_ids}
         self.regr_solar = {uid: LinearRegression() for uid in self.building_ids}
         self.regr_elec = {uid: LinearRegression() for uid in self.building_ids}
         # ----------below vars are for capacity estimation-------------
@@ -811,15 +817,14 @@ class Predictor(DataLoader):
         # hasest indicates whether every hour of the day has estimation.
         # only when all 0 become 1 in has_est, the function runs over.
         effi_h = 0.9
+        daytype = self.state_buffer.get(-1)["daytype"][0][0]
+        prev_daytype = self.state_buffer.get(-2)["daytype"][0][0]
 
         for uid in self.building_ids:
             # starting from t=0, need a loop to cycle time
             # say at hour=t, check if the action of c/h is clipped
             # if so, directly calculate h/c load and continue this loop
-            repeat_times = 0
-            time = 0
-            jump_out = False
-            while not jump_out:
+            for time in range(24):
                 now_state = self.state_buffer.get(-2)
                 now_c_soc = now_state["soc_c"][time][uid]
                 now_h_soc = now_state["soc_h"][time][uid]
@@ -863,7 +868,7 @@ class Predictor(DataLoader):
                         / 0.9
                     )
                 else:
-                    next_state = self.state_buffer.get(-2)
+                    next_state = self.state_buffer.get(-1)
                     next_c_soc = next_state["soc_c"][0][uid]
                     next_h_soc = next_state["soc_h"][0][uid]
                     next_b_soc = next_state["soc_b"][0][uid]
@@ -920,7 +925,7 @@ class Predictor(DataLoader):
                 #             est_h_load[uid][time] = h_load
                 #             est_c_load[uid][time] = c_load
                 if uid in [2, 3]:
-                    c_load = max(0, y * cop_c)
+                    c_load = max(0.1, y)
                     h_load = 0
                     est_h_load[uid][time] = h_load
                     est_c_load[uid][time] = c_load
@@ -948,32 +953,54 @@ class Predictor(DataLoader):
                 #     0,
                 #     2,
                 # ]:  # meaning that avg can be updated
-                if self.daystep >= 1:
-                    self.avg_h_load[uid][time] = (
-                        self.avg_h_load[uid][time] * 0.8 + h_load * 0.2
-                    )
-                    self.avg_c_load[uid][time] = (
-                        self.avg_c_load[uid][time] * 0.8 + c_load * 0.2
-                    )
 
-                else:
-                    self.avg_h_load[uid][time] = h_load
-                    self.avg_c_load[uid][time] = c_load
-
-                repeat_times += 1 if time == 23 else 0
-                time = (time + 1) % 24
-                jump_out = True
-                for i in range(24):
-                    if c_hasest[uid][i] == 0 or h_hasest[uid][i] == 0:
-                        jump_out = False
-                if jump_out is True:
-                    self.daystep += 1
-                    break
         for uid in self.building_ids:
-            est_h_load[uid] *= 1.5
-            est_c_load[uid] *= 1.5
-            adaptive_h_load[uid] = est_h_load[uid][T - window :]
-            adaptive_c_load[uid] = est_c_load[uid][T - window :]
+            # if uid in [2, 3]:
+            #     print(uid)
+            # ----------record average-------------
+            if prev_daytype in [7]:
+                self.c_weekend1_avg[uid] = self.c_weekend1_avg[uid] * 0.5 + est_c_load[uid] * 0.5 \
+                    if self.c_weekend1_avg[uid].all() != 0 else est_c_load[uid]
+                self.h_weekend1_avg[uid] = self.h_weekend1_avg[uid] * 0.5 + est_h_load[uid] * 0.5 \
+                    if self.h_weekend1_avg[uid].all() != 0 else est_h_load[uid]
+            elif prev_daytype in [1, 8]:
+                self.c_weekend2_avg[uid] = self.c_weekend2_avg[uid] * 0.5 + est_c_load[uid] * 0.5 \
+                    if self.c_weekend2_avg[uid].all() != 0 else est_c_load[uid]
+                self.h_weekend2_avg[uid] = self.h_weekend2_avg[uid] * 0.5 + est_h_load[uid] * 0.5 \
+                    if self.h_weekend2_avg[uid].all() != 0 else est_h_load[uid]
+            else:
+                self.c_weekday_avg[uid] = self.c_weekday_avg[uid] * 0.8 + est_c_load[uid] * 0.2 \
+                    if self.c_weekday_avg[uid].all() != 0 else est_c_load[uid]
+                self.h_weekday_avg[uid] = self.h_weekday_avg[uid] * 0.8 + est_h_load[uid] * 0.2 \
+                    if self.h_weekday_avg[uid].all() != 0 else est_h_load[uid]
+            #------------use average-------------
+            if daytype in [7]:
+                est_h_load[uid] = self.h_weekend1_avg[uid]
+                est_c_load[uid] = self.c_weekend1_avg[uid]
+            elif daytype in [1, 8]:
+                est_h_load[uid] = self.h_weekend2_avg[uid]
+                est_c_load[uid] = self.c_weekend2_avg[uid]
+            else:
+                est_h_load[uid] = self.h_weekday_avg[uid]
+                est_c_load[uid] = self.c_weekday_avg[uid]
+            # ------------scaling maximal three hours--------------
+            index_sort_h = np.argsort(est_h_load[uid])
+            index_sort_c = np.argsort(est_c_load[uid])
+
+            for ind in range(-3, 0):
+                index_h = index_sort_h[ind]
+                index_c = index_sort_c[ind]
+                est_h_load[uid][index_h] = est_h_load[uid][index_h] * 1
+                est_c_load[uid][index_c] = est_c_load[uid][index_c] * 1
+
+            adaptive_h_load[uid] = est_h_load[uid][T - window:]
+            adaptive_c_load[uid] = est_c_load[uid][T - window:]
+
+            # if timestep % 24 == 0:
+            #     print(prev_daytype, daytype, uid)
+            #     print(est_c_load[uid])
+            #     print(est_c_load[uid], "\n")
+
         return adaptive_h_load, adaptive_c_load
 
     def select_action(self, timestep: int):
