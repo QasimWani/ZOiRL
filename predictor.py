@@ -263,7 +263,7 @@ class Predictor(DataLoader):
                 COP_C[hour, bid] = self.cop_cal(temp[hour, bid])
 
         E_hpC_max = np.max(C_bd / COP_C, axis=0)
-        E_ehH_max = H_max / 0.9
+        E_ehH_max = H_max / 0.95
         C_p_bat = additional_parameters["C_p_bat"]
 
         c_bat_init = np.array(self.state_buffer.get(-1)["soc_b"])[-1]
