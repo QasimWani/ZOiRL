@@ -411,10 +411,10 @@ class Agent(TD3):
         E_grid_rbc_data = []
 
         # get RBC cost for doing rbc actions for one day
+        cs = deepcopy(current_state)
         for t in range(24):
-
             next_state = self.Digital_Twin.transition(
-                current_state,
+                cs,
                 self.agent_rbc.select_action(t),
                 self.total_it - 24 + t,
                 self.day_data[t],
@@ -425,7 +425,7 @@ class Agent(TD3):
                 next_state[:, 28]
             )  # Apeending Electricity demand to the E_grid_data
 
-            current_state = next_state
+            cs = next_state
 
         rbc_cost = self.get_cost(E_grid_rbc_data)
 
@@ -435,13 +435,15 @@ class Agent(TD3):
 
         for zeta in self.zeta_k_list:
             # aggregate data for 24 hour and store in E_grid_zeta_data
+            cs = deepcopy(current_state)
+
             for t in range(24):
                 self.set_zeta(zeta)
                 actions, optim_values, _ = zip(
                     *[
                         self.actor_digital_twin.forward(
                             t,
-                            self.day_data[t],
+                            self.day_data[t],  # next_state
                             id,
                             dispatch=False,
                         )
@@ -450,7 +452,7 @@ class Agent(TD3):
                 )
 
                 next_state = self.Digital_Twin.transition(
-                    current_state,
+                    cs,
                     actions,
                     self.total_it - 24 + t,
                     self.day_data[t],
@@ -461,7 +463,7 @@ class Agent(TD3):
                     next_state[:, 28]
                 )  # Appending Electricity demand to the E_grid_data
 
-                current_state = next_state
+                cs = next_state
 
             zeta_cost = self.get_cost(E_grid_zeta_data)
 

@@ -578,8 +578,8 @@ class Actor:
                     offset = 0
                     if "action" in str(var.name()):
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
-                    elif "E_grid" in str(var.name()):
-                        offset = parameters["E_grid"][t, building_id]
+                    # elif "E_grid" in str(var.name()):
+                    # offset = parameters["E_grid"][t, building_id]
                     actions[var.name()] = offset
 
         # prune out zeta - set zeta values for later use in backward pass.
