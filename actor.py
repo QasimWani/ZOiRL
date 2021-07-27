@@ -268,7 +268,7 @@ class Actor:
             cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
         )  # max(E_grid, E_gridpkhist)
         electricity_cost = cp.sum(p_ele * E_grid)
-        selling_cost = cp.sum(
+        selling_cost = -1e2 * cp.sum(
             E_grid_sell
         )  # not as severe as violating constraints
 
@@ -385,7 +385,7 @@ class Actor:
         self.constraints.append(
             SOC_C[0]
             == (1 - C_f_Csto) * soc_Csto_init
-            + (action_C[0] + self.rbc_actions["action_bat"][building_id, T - window])
+            + (action_C[0] + self.rbc_actions["action_C"][building_id, T - window])
             * eta_Csto[0]
             + SOC_Crelax[0]
         )  # initial SOC
@@ -396,7 +396,7 @@ class Actor:
                 == (1 - C_f_Csto) * SOC_C[i - 1]
                 + (
                     action_C[i]
-                    + self.rbc_actions["action_bat"][building_id, T - window + i]
+                    + self.rbc_actions["action_C"][building_id, T - window + i]
                 )
                 * eta_Csto[i]
                 + SOC_Crelax[i]
@@ -578,6 +578,8 @@ class Actor:
                     offset = 0
                     if "action" in str(var.name()):
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    elif "E_grid" in str(var.name()):
+                        offset = parameters["E_grid"][t, building_id]
                     actions[var.name()] = offset
 
         # prune out zeta - set zeta values for later use in backward pass.
@@ -608,7 +610,7 @@ class Actor:
                     actions["action_bat"],
                 ],
                 actions,  # debug
-                actions["E_grid"],  # + actions["E_grid_sell"]
+                actions["E_grid"] + actions["E_grid_sell"],
             )
         return (
             [
@@ -617,7 +619,7 @@ class Actor:
                 actions["action_bat"],
             ],
             actions,  # debug
-            actions["E_grid"],  # + actions["E_grid_sell"]
+            actions["E_grid"] + actions["E_grid_sell"],
         )
 
     def get_zeta(self):
