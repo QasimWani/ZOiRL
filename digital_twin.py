@@ -626,7 +626,7 @@ class DigitalTwin:
                         a[0], self.C_p_Csto[dict_build[uid]], self.C_bd[dict_build[uid]]
                     )
                     elec_consumption_cooling_storage += (
-                        sbuilding._electric_consumption_cooling_storage
+                        building._electric_consumption_cooling_storage
                     )
 
                     if self.buildings_states_actions[uid]["actions"]["dhw_storage"]:

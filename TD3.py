@@ -218,3 +218,9 @@ class TD3(object):
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
         pass
+
+
+# TODO:
+# 1. Digital Twin using Oracle
+# 2. CEM debugging
+# 3. p_ele = 1. Test different load strategies, seasons, etc.
