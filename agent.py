@@ -90,8 +90,6 @@ class Agent(TD3):
         # create Digital Twin specific actor
         self.actor_digital_twin = deepcopy(self.actor)
 
-        # get actions from RBC at start of day
-        self.rbc_actions = self.agent_rbc.select_action(0)
         # Store state for duration of day for digital twin Zeta evaluation
         self.day_data = [None] * 24
 
