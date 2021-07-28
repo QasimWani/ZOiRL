@@ -16,10 +16,69 @@ import statsmodels.formula.api as smf
 
 # TODO: @Zhiyao - add in parameter/initialization for capacity as discussed.
 class Predictor(DataLoader):
+    """
+    we have following functions:
+
+    def __init__(self, action_space: list) -> None: see lines for explanations of vars
+
+    def estimate_data(
+        self, replay_buffer: ReplayBuffer, timestep: int, is_adaptive: bool = False
+    ): return prediction data to TD3 agent (both day ahead and adaptive)
+
+    def full_parse_data(
+        self, previous_data: dict, current_data: dict, window: int = 24
+    ): merge current hour data in current day data in the buffer
+
+    def calculate_avg(self): calculate last 14-day solar gen/elec loads for updating predictor
+    def get_day_data(self, replay_buffer: ReplayBuffer, timestep: int): helper method for uploading data to memory for estimation
+    def upload_data(self, state, action): NOT IMPLEMENTED
+    def upload_state(self, state_list: list): upload state to state buffer
+    def upload_action(self, action_list: list): upload action to action buffer
+    def state_to_dic(self, state_list: list): convert type from list to dict with state names
+    def cop_cal(self, temp): calculate COP
+    def gather_input(self, timestep): gather predictions of today's params for elec/solar prediction
+    def infer_solar_electricity_load(self, timestep: int): make predictions for solar/elec
+    def reshape_array(self, pred_buffer: ReplayBuffer): update regression model for prediction w/ latest 14-day data to fit
+    def infer_load(self, timestep: int): Returns heating, cooling, solar and electricity loads
+    def infer_heating_cooling_estimate(self, timestep): infer previous day h/c loads and calculate moving average
+        --use average with peak scaling as day-ahead predictions
+    def select_action(self, timestep: int): interface w/ TD3.py to select actions in online exploration period
+    def get_params(self, timestep: int) -> dict: return estimated params from online exploration
+    def quantile_reg(self): quantile regression for h/c capacity estimation--convert to DataFrame
+    def quantile_reg_H(self, uid, quantiles, H_dataframe, climate_zone): quantile regression for H capacity
+    def quantile_reg_C(self, uid, quantiles, C_dataframe, climate_zone): quantile regression for C capacity
+    def estimate_h(self): choose actions for estimating h capacity
+    def estimate_c(self): choose actions for estimating c capacity
+    def estimate_bat(self): choose actions for estimating bat capacity
+
+    THIS IS HOW THE WHOLE CLASS RUNS:
+
+    when select_action in TD3.py is called
+        store state in state buffer
+        run select_action function (around line 1100) in predictor.py
+        store action from select_action
+
+    select_action runs as follows:
+        all the first, run estimate_bat (i manually set three whole windows (from 22h to 6h+1) as time limit to run this,
+                                        otherwise this loop will be forced over and continue to h/c capacity estimation)
+        if we have reliable values of bat capacity (1 datapoint) and nominal power (3 datapoints, finally choose the maximal one),
+            then we jump out from E estimation and enter H/C estimation
+        during H/C estimation, i set each whole window for H/C est alternately everyday,
+            i.e. if current window (22 to 6(+1)) is for H est, then the next (22 to 6(+1)) will be C est.
+        run estimate_h or estimate_c alternately in each window
+        if current timestep is RBC_THRESHOLD-1 (last step for online exploration), run quantile_reg()
+
+    in quantile_reg, we have following process:
+        convert ndarrays to pd.DataFrame since it is required by statsmodel.QuantileRegressor
+        run quantile_reg_H and quantile_reg_C for each building and choose a certain quantile (currently we use two-point quantile avg)
+
+    when we initialize the digital twin, we may call get_params for capacity and nominal power data
+
+    """
     def __init__(self, action_space: list) -> None:
         super().__init__(action_space)
         self.building_ids = range(len(self.action_space))  # number of buildings
-
+        # initialize two buffers
         self.state_buffer = ReplayBuffer(buffer_size=365, batch_size=32)
         self.action_buffer = ReplayBuffer(buffer_size=365, batch_size=32)
 
@@ -32,7 +91,8 @@ class Predictor(DataLoader):
         # define regression model
         self.regr = LinearRegression(
             fit_intercept=False
-        )  # , positive=True) # version error
+        )  # , positive=True)
+        # average and peak values for load prediction
         self.avg_h_load = {uid: np.zeros(24) for uid in self.building_ids}
         self.avg_c_load = {uid: np.ones(24) for uid in self.building_ids}
         self.daystep = 0  # this is for h/c loads estimation--not real daystep!
@@ -72,6 +132,7 @@ class Predictor(DataLoader):
         self.prev_hour_est_b = {uid: False for uid in self.building_ids}
         self.prev_hour_est_c = {uid: False for uid in self.building_ids}
         self.prev_hour_est_h = {uid: False for uid in self.building_ids}
+        self.has_heating = {uid: True for uid in self.building_ids}
         self.a_clip = {uid: None for uid in self.building_ids}
         self.avail_ratio_est_c = {uid: False for uid in self.building_ids}
         self.avail_ratio_est_h = {uid: False for uid in self.building_ids}
@@ -340,6 +401,7 @@ class Predictor(DataLoader):
 
     # TODO: @Zhiyao - needs implementation. See comment below -- done
     def upload_state(self, state_list: list):
+        """upload state to state buffer"""
         # print(
         #     "@Zhiyao, you'd need to implement `record_dic` functionality in here where you're only adding to `state_buffer`.\n"
         #     "From `record_dic`, extract state information."
@@ -353,6 +415,7 @@ class Predictor(DataLoader):
 
     # TODO: @Zhiyao - needs implementation. See comment below -- done
     def upload_action(self, action_list: list):
+        """upload action to action buffer"""
         # print(
         #     "@Zhiyao, you'd need to implement `record_dic` functionality in here where you're only adding to `action_buffer`\n"
         #     "From `record_dic`, extract action information."
@@ -367,6 +430,7 @@ class Predictor(DataLoader):
     # >>> this should include state information required for both heating, cooling, solar, electricity, and if necessary capcity estimation.
     # >>> make sure to use only 2 buffers, one for state and one for action. You can make use of state buffer for various purposes - heating, cooling, etc. estimation.
     def state_to_dic(self, state_list: list):
+        """convert type from list to dict with state names"""
         state_bdg = {}
         for uid in self.building_ids:
             state = state_list[uid]
@@ -479,6 +543,7 @@ class Predictor(DataLoader):
 
     # TODO: @Zhiyao - no need to store reward. No RL happening. Plz remove functionality. -- done
     def action_reward_to_dic(self, action):
+        """convert type from list to dict with action names"""
         a_dic = {}
         a_c = [action[i][0] for i in self.building_ids]
         a_h = [action[i][1] for i in self.building_ids]
@@ -491,6 +556,7 @@ class Predictor(DataLoader):
         return a_dic
 
     def cop_cal(self, temp):
+        """calculate COP"""
         eta_tech = 0.22
         target_c = 8
         if temp == target_c:
@@ -503,7 +569,7 @@ class Predictor(DataLoader):
 
     def gather_input(self, timestep):
         # assert daystep % 24 == 0, "only gather input at the beginning of the day"
-        """buffer(-1) is the current day record, so buffer(-2) is for yesterday"""
+        """gather predictions of today's params for elec/solar prediction"""
         T = 24
         window = T - timestep % 24
         buffer = self.state_buffer.get(-2)
@@ -542,10 +608,8 @@ class Predictor(DataLoader):
         return input_solar, input_elec
 
     def infer_solar_electricity_load(self, timestep: int):
-        # assert (
-        #     daystep % 24 == 0
-        # ), "only make day-ahead prediction at the first hour of the day"
         """changed for adaptive dispatch--make inference every hour"""
+        """make predictions for solar/elec"""
         if timestep % 24 == 0:
             self.calculate_avg()  # make sure get_recent() returns in 24*9 shape
 
@@ -702,6 +766,7 @@ class Predictor(DataLoader):
     # reshape input for fitting the model
     def reshape_array(self, pred_buffer: ReplayBuffer):
         """only reshape array at the beginning of the day"""
+        """update regression model for prediction w/ latest 14-day data to fit"""
         x_solar = {i: [] for i in self.building_ids}
         y_solar = {i: [] for i in self.building_ids}
         x_elec = {i: [] for i in self.building_ids}
@@ -802,6 +867,8 @@ class Predictor(DataLoader):
         **so that when we obtain from ReplayBuffer.get_recent(), we get day-long data.
         :return: daily h&c load inference
         """
+        """infer previous day h/c loads and calculate moving average--use average with peak scaling as day-ahead predictions"""
+
         T = 24
         window = T - timestep % 24
 
@@ -924,7 +991,7 @@ class Predictor(DataLoader):
                 #             c_hasest[uid][time], h_hasest[uid][time] = -1, -1
                 #             est_h_load[uid][time] = h_load
                 #             est_c_load[uid][time] = c_load
-                if uid in [2, 3]:
+                if self.has_heating[uid] is False:
                     c_load = max(0.1, y)
                     h_load = 0
                     est_h_load[uid][time] = h_load
@@ -1004,7 +1071,7 @@ class Predictor(DataLoader):
         return adaptive_h_load, adaptive_c_load
 
     def select_action(self, timestep: int):
-        """integrate the main loop in online_est in this function"""
+        """interface w/ TD3.py to select actions in online exploration period"""
         RBC_THRESHOLD = 336
         self.timestep = timestep
         sign = False
@@ -1013,7 +1080,14 @@ class Predictor(DataLoader):
         #     self.H_day = not self.H_day
 
         if self.timestep == RBC_THRESHOLD - 1:
+            for uid in self.building_ids:
+                if self.ratio_h_est[uid] and self.H_bd_est[uid]:
+                    pass
+                else:
+                    self.ratio_h_est[uid].append([0])
+                    self.H_bd_est[uid].append([0])
             self.quantile_reg()
+
 
         if self.E_day is False and self.timestep % 24 == 22:
             self.H_day = not self.H_day
@@ -1091,6 +1165,7 @@ class Predictor(DataLoader):
         return action
 
     def get_params(self, timestep: int) -> dict:
+        """return estimated params from online exploration"""
         assert timestep >= self.rbc_threshold, ValueError(
             "online exploration is still running"
         )
@@ -1104,6 +1179,7 @@ class Predictor(DataLoader):
         return param_dict
 
     def quantile_reg(self):
+        """quantile regression for h/c capacity estimation--convert to DataFrame"""
         df_cap_h = pd.DataFrame(
             {key: pd.Series(value) for key, value in self.cap_h_est.items()}
         )  # conversion of dictionary to dataframe with different length
@@ -1185,8 +1261,9 @@ class Predictor(DataLoader):
     #         'Building_' + str(uid) + '_ratio_c'].tolist()
 
     def quantile_reg_H(self, uid, quantiles, H_dataframe, climate_zone):
+        """quantile regression for H capacity"""
         ############### Qunatile Regression
-        if uid in [2, 3]:
+        if self.has_heating[uid] is False:
             self.H_qr_est[uid] = 1e-5
         else:
             mod = smf.quantreg(
@@ -1238,6 +1315,7 @@ class Predictor(DataLoader):
             ) / 2
 
     def quantile_reg_C(self, uid, quantiles, C_dataframe, climate_zone):
+        """quantile regression for C capacity"""
         mod = smf.quantreg(
             " Building_" + str(uid) + "_C_bd ~ Building_" + str(uid) + "_ratio_c -1",
             C_dataframe,
@@ -1280,6 +1358,7 @@ class Predictor(DataLoader):
         self.C_qr_est[uid] = (models["coefficient"][1] + models["coefficient"][2]) / 2
 
     def estimate_h(self):
+        """choose actions for estimating h capacity"""
         action_gen = []
         # e_wh = {uid: 0 for uid in building_ids}
         # a_b = {uid: 0 for uid in building_ids} if a_b is None else a_b
@@ -1340,11 +1419,8 @@ class Predictor(DataLoader):
 
         """ params over one step: e_wh, a_h """
         for uid in self.building_ids:
-            if uid in [2, 3]:
-                action_now = [self.action_c[uid], 0, 0.05]
-                action_gen.append(action_now)
-                cap_h[uid] = 0
-                continue
+            if prev_action[uid] > 0 and now_soc_h[uid] == 0:
+                self.has_heating[uid] = False
             if self.prev_hour_est_h[uid] is True or self.avail_ratio_est_h[uid] is True:
                 # --------------update tau_plus if not satisfied-----------
                 # ##########
@@ -1375,7 +1451,7 @@ class Predictor(DataLoader):
 
                 if (
                     self.avail_ratio_est_h[uid] is True
-                    and uid not in [2, 3]
+                    and self.has_heating[uid] is True
                     and now_soc_h[uid] < 0.01
                 ):
                     self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.8)
@@ -1493,6 +1569,7 @@ class Predictor(DataLoader):
         return action_gen, cap_h, add_points, ratio_h, H_bd
 
     def estimate_c(self):
+        """choose actions for estimating c capacity"""
         action_gen = []
         # e_hpc = {uid: 0 for uid in building_ids}
         # a_b = {uid: 0 for uid in building_ids} if a_b is None else a_b
@@ -1540,6 +1617,7 @@ class Predictor(DataLoader):
             prev_2_soc_c = state.get(-1)["soc_c"][-3]
 
         prev_action = action.get(-1)["action_C"][-1]
+        prev_action_h = action.get(-1)["action_H"][-1]
         now_soc_c = state.get(-1)["soc_c"][-1]
         now_soc_h = state.get(-1)["soc_h"][-1]
         now_soc_b = state.get(-1)["soc_b"][-1]
@@ -1548,6 +1626,8 @@ class Predictor(DataLoader):
         prev_cop = self.cop_cal(prev_temp[0])
         """ params over one step: e_hpc, a_c """
         for uid in self.building_ids:
+            if prev_action_h[uid] > 0 and now_soc_h[uid] == 0:
+                self.has_heating[uid] = False
             if self.prev_hour_est_c[uid] is True or self.avail_ratio_est_c[uid] is True:
                 # --------------update tau_plus if not satisfied-----------
                 if self.avail_ratio_est_c[uid] is True and now_soc_c[uid] < 0.01:
@@ -1562,7 +1642,7 @@ class Predictor(DataLoader):
 
                 if (
                     self.avail_ratio_est_c[uid] is True
-                    and uid not in [2, 3]
+                    and self.has_heating[uid] is True
                     and now_soc_h[uid] < 0.01
                 ):
                     self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.8)
@@ -1631,7 +1711,7 @@ class Predictor(DataLoader):
             else:
                 a_c[uid] = 0.04
 
-            if uid not in [2, 3]:
+            if self.has_heating[uid] is True:
                 a_h = (
                     self.action_h[uid]
                     if now_soc_h[uid] < self.tau_h[uid] + self.tau_hplus[uid]
@@ -1644,20 +1724,20 @@ class Predictor(DataLoader):
                 now_soc_c[uid] >= self.tau_c[uid]
                 and self.avail_ratio_est_c[uid] is False
             ):
-                if uid not in [2, 3] and now_soc_h[uid] >= (
+                if self.has_heating[uid] is True and now_soc_h[uid] >= (
                     self.tau_h[uid] + self.tau_hplus[uid]
                 ):
                     a_c[uid], a_h = -1, -1
                     # action_now = [a_c, a_h, a_b[uid]]
                     self.avail_ratio_est_c[uid] = True
 
-                if uid in [2, 3]:
+                if self.has_heating[uid] is False:
                     a_c[uid] = -1
                     # action_now = [a_c, a_b[uid]]
                     self.avail_ratio_est_c[uid] = True
                 # action.append(action_now)   # exit
             elif self.avail_ratio_est_c[uid] is True:
-                if uid not in [2, 3] and now_soc_h[uid] < self.tau_h[uid]:
+                if self.has_heating[uid] is True and now_soc_h[uid] < self.tau_h[uid]:
                     self.tau_hplus[uid] = max(
                         0,
                         min(
@@ -1689,6 +1769,7 @@ class Predictor(DataLoader):
         return action_gen, cap_c, add_points, ratio_c, C_bd
 
     def estimate_bat(self):
+        """choose actions for estimating bat capacity"""
         add_points = {uid: False for uid in self.building_ids}
         cap_bat = {uid: 0 for uid in self.building_ids}
         action_gen = []
@@ -1719,12 +1800,15 @@ class Predictor(DataLoader):
             prev_solar_gen = state.get(-1)["solar_gen"][-2]
             prev_elec_dem = state.get(-1)["elec_dem"][-2]
         prev_action = action.get(-1)["action_bat"][-1]
+        prev_action_h = action.get(-1)["action_H"][-1]
         now_soc_c = state.get(-1)["soc_c"][-1]
         now_soc_h = state.get(-1)["soc_h"][-1]
         now_soc_b = state.get(-1)["soc_b"][-1]
         now_elec_con = state.get(-1)["elec_cons"][-1]
 
         for uid in self.building_ids:
+            if prev_action_h[uid] > 0 and now_soc_h[uid] == 0:
+                self.has_heating[uid] = False
             if self.prev_hour_est_b[uid] is True or self.prev_hour_nom[uid] is True:
                 if now_soc_c[uid] < 0.01:
                     self.tau_c[uid] = min(self.tau_c[uid] + 0.1, 0.7)
@@ -1732,7 +1816,7 @@ class Predictor(DataLoader):
                     self.prev_hour_est_b[uid] = False
                     self.prev_hour_nom[uid] = False
 
-                if uid not in [2, 3] and now_soc_h[uid] < 0.01:
+                if self.has_heating[uid] is True and now_soc_h[uid] < 0.01:
                     self.tau_h[uid] = min(self.tau_h[uid] + 0.1, 0.7)
                     self.action_h[uid] = min(self.action_h[uid] + 0.05, 0.5)
                     self.prev_hour_est_b[uid] = False
@@ -1773,7 +1857,7 @@ class Predictor(DataLoader):
 
             a_c = self.action_c[uid] if now_soc_c[uid] < self.tau_c[uid] else 0.02
             a_b = -0.2 if now_soc_b[uid] > 0.8 else 0.02
-            if uid not in [2, 3]:
+            if self.has_heating[uid] is True:
                 a_h = self.action_h[uid] if now_soc_h[uid] < self.tau_h[uid] else 0.04
             else:
                 a_h = 0
@@ -1793,13 +1877,13 @@ class Predictor(DataLoader):
             if (
                 now_soc_c[uid] > self.tau_c[uid]
                 and now_soc_b[uid] < 0.8
-                and uid in [2, 3]
+                and self.has_heating[uid] is False
                 or now_soc_c[uid] > self.tau_c[uid]
                 and now_soc_b[uid] < 0.8
                 and now_soc_h[uid] > self.tau_h[uid]
-                and uid not in [2, 3]
+                and self.has_heating[uid] is True
             ):
-                action_now = [-1, -1, 0.05] if uid not in [2, 3] else [-1, 0, 0.05]
+                action_now = [-1, -1, 0.05]
                 self.prev_hour_est_b[uid] = True
             else:
                 action_now = [a_c, a_h, a_b]
