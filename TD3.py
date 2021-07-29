@@ -121,6 +121,7 @@ class TD3(object):
                         for idx in range(len(self.num_actions))
                     ]
         else:  # run RBC
+<<<<<<< Updated upstream
 
             actions = self.agent_rbc.select_action(state)
 
@@ -221,6 +222,49 @@ class TD3(object):
                 )
             else:
                 raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
+=======
+            # if (
+            #     self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6]
+            #     and self.total_it >= 1
+            # ):
+            #     actions = self.data_loader.select_action(self.total_it)
+            # else:
+            #     actions = self.agent_rbc.select_action(
+            #         state[0][self.agent_rbc.idx_hour]
+            #     )
+            actions = self.agent_rbc.select_action(
+                state[0][self.agent_rbc.idx_hour])
+        # upload action to memory
+        self._add_to_buffer(None, actions)
+        return actions, building_parameters
+
+
+    def _add_to_buffer(self, state, action):
+        """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
+        if state is not None:
+            self.data_loader.upload_state(state)
+
+        if action is not None:
+            self.data_loader.upload_action(action)
+            self.total_it += 1
+
+    def day_ahead_dispatch_pred(self):
+        """Returns day-ahead dispatch"""
+        data_est = None
+        if self.total_it % 24 == 0:  # save actions for 24hours
+            data_est = self.data_loader.estimate_data(self.memory, self.total_it)
+            self.data_loader.convert_to_numpy(data_est)
+
+            self.action_planned_day, optim_values, _ = zip(
+                *[
+                    self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                    for id in range(self.buildings)
+                ]
+            )
+            # Shape: 9, 3, 24
+            self.action_planned_day = np.array(self.action_planned_day)
+            self.logger.append(optim_values)  # add all variables - Optimization
+>>>>>>> Stashed changes
 
 
         data_est = self.data_loader.model.estimate_data(
@@ -252,6 +296,7 @@ class TD3(object):
             ]
         )
 
+<<<<<<< Updated upstream
         # compute E-grid
         # _, _, self.E_grid_planned_day = zip(
         #     *[
@@ -266,6 +311,10 @@ class TD3(object):
         ### DEBUG ###
         # gather data for NORL agent
         _, norl_cost_dispatch, _ = zip(
+=======
+
+        action_planned_day, optim_values, _ = zip(
+>>>>>>> Stashed changes
             *[
                 self.actor_norl.forward(self.total_it % 24, data_est, id, dispatch=True)
                 for id in range(self.buildings)
