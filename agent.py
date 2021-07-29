@@ -1,33 +1,33 @@
-<<<<<<< Updated upstream
-### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
+# <<<<<<< Updated upstream
+# ### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
 
-'''Import any packages here'''
-import json
-import torch
+# '''Import any packages here'''
+# import json
+# import torch
 
-class Agent:
-    def __init__(self, building_ids, buildings_states_actions, building_info):     
-        with open(buildings_states_actions) as json_file:
-            self.buildings_states_actions = json.load(json_file)
+# class Agent:
+#     def __init__(self, building_ids, buildings_states_actions, building_info):     
+#         with open(buildings_states_actions) as json_file:
+#             self.buildings_states_actions = json.load(json_file)
             
-        '''Initialize the class and define any hyperparameters of the controller'''
+#         '''Initialize the class and define any hyperparameters of the controller'''
         
             
-    def select_action(self, states):
+#     def select_action(self, states):
         
-        '''Action selection algorithm. You can set coordination_vars = None if you do not want to use this variable '''
+#         '''Action selection algorithm. You can set coordination_vars = None if you do not want to use this variable '''
             
-        return actions, coordination_vars
+#         return actions, coordination_vars
                 
         
-    def add_to_buffer(self, states, actions, rewards, next_states, done, coordination_vars=None, coordination_vars_next=None):
+#     def add_to_buffer(self, states, actions, rewards, next_states, done, coordination_vars=None, coordination_vars_next=None):
         
-        '''Make any updates to your policy, you don't have to use all the variables above (you can leave the coordination
-        variables empty if you wish, or use them to share information among your different agents). You can add a counter
-        within this function to compute the time-step of the simulation, since it will be called once per time-step'''
+#         '''Make any updates to your policy, you don't have to use all the variables above (you can leave the coordination
+#         variables empty if you wish, or use them to share information among your different agents). You can add a counter
+#         within this function to compute the time-step of the simulation, since it will be called once per time-step'''
         
         
-=======
+# =======
 from copy import deepcopy
 from TD3 import TD3
 from digital_twin import DigitalTwin
@@ -101,8 +101,8 @@ class Agent(TD3):
         self.zeta_eta_ehH = 0.9
         self.zeta_c_bat_end = 0.1
 
-        mean_p_ele = [np.ones(24)] * 9           # Having mean and range for each of the hour
-        std_p_ele = [0.2*np.ones(24)] * 9
+        mean_p_ele = [np.ones(24)] * self.buildings          # Having mean and range for each of the hour
+        std_p_ele = [0.2*np.ones(24)] * self.buildings
         range_p_ele = [0.1, 5]
 
         # Initialising the elite sets
@@ -497,7 +497,7 @@ class Agent(TD3):
 
         total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
 
-        cost = np.mean(total_cost)
+        cost = total_cost          # Array of size 9
 
         return cost
 
@@ -529,6 +529,9 @@ class Agent(TD3):
         ratios = []
         E_grid_zeta_data = []
 
+        # Adding functionality for the evaluation of the current zeta as well
+#         self.zeta_k_list[4,:,:,:] = self.zeta
+        
         for zeta in self.zeta_k_list:
             # aggregate data for 24 hour and store in E_grid_zeta_data
             cs = deepcopy(current_state)
@@ -563,12 +566,29 @@ class Agent(TD3):
 
             zeta_cost = self.get_cost(E_grid_zeta_data)
 
-            ratios.append(zeta_cost / rbc_cost)
-
+            ratios.append(np.divide(zeta_cost / rbc_cost))     # Appending the ratio of costs for 9 buildings
+            
             E_grid_zeta_data = []  # To store E_grids for the new zeta
+            
+        ratios = np.array(ratios)
+        
+        zeta_args_best = np.zeros(self.buildings)  
+        
+        zeta = np.zeros(((1,24,9)))
+        
+        cost_ratios = np.zeros(9)
 
-        return self.zeta_k_list[np.argmin(ratios)], min(ratios)
-
+        for i in range(self.buildings):
+            
+            zeta_args_best[i] = np.argmin(ratios[:,i])
+            
+            a = int(zeta_args_best[i])
+            zeta[:,:,i] = self.zeta_k_list[a,:,:,i] 
+            
+            cost_ratios[i] = np.min(ratios[:,i])
+        
+        return zeta, cost_ratios
+    
     def digital_twin_interface(self, current_state, parameters):
         """Main interface for utilizing Digital Twin"""
         if self.total_it <= self.rbc_threshold:
@@ -577,10 +597,14 @@ class Agent(TD3):
         # if self.total_it % 24 == 1:  # start of day
         self.update_hour_of_day_data(parameters, (self.total_it - 1) % 24)
         if self.total_it % 24 == 0:  # end of day
-            zeta, cost = self.evaluate_zeta(current_state)
-            if cost < self.all_costs[-1].mean():  # update zeta
-                # all_costs, costs
-                self.set_zeta(zeta)
+            zeta, cost = self.evaluate_zeta(current_state)  
+            for i in range(self.buildings):
+                
+                if cost[i] < self.all_costs[-1][i]:  # update zeta
+                    self.zeta[:,:,i] = zeta[:,:,i] 
+                    
+                    # all_costs, costs
+            self.set_zeta(self.zeta)
 
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
->>>>>>> Stashed changes
+# >>>>>>> Stashed changes
