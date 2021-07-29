@@ -57,13 +57,13 @@ class DigitalTwin:
         self.solar_gen = np.zeros(9)
 
         # States that will require a predictor/oracle
-        self.E_hpC_max = np.zeros(9)
-        self.E_ehH_max = np.zeros(9)
-        self.E_bat_max = np.zeros(9)
-        self.C_p_Csto = np.zeros(9)
-        self.C_p_Hsto = np.zeros(9)
-        self.C_p_bat = np.zeros(9)
-        self.eta_bat = np.zeros(9)
+        self.E_hpC_max = np.ones(9)*100
+        self.E_ehH_max = np.ones(9)*100
+        self.E_bat_max = np.ones(9)*100
+        self.C_p_Csto = np.ones(9)*100
+        self.C_p_Hsto = np.ones(9)*100
+        self.C_p_bat = np.ones(9)*100
+        self.eta_bat = np.ones(9)
         self.E_pv = np.zeros(9)
         self.H_bd = np.zeros(9)
         self.C_bd = np.zeros(9)
@@ -100,269 +100,37 @@ class DigitalTwin:
         # TODO: 4. configure each parameter in data_dict below
         # TODO: 5. indexing: for example, to index nominal power for bdg 1, use E_bat_max[0]
 
-        data_dict = {
-            "Building_1": {
+        data_dict = {}
+        for bid in range(9):
+            data_dict[f'Building_{bid+1}'] = {
                 "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[0],
+                    "nominal_power": self.E_hpC_max[bid],
                     "technical_efficiency": self.eta_hp_tech,
                     "t_target_heating": 45,
                     "t_target_cooling": self.t_hp_C,
                 },
                 "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[0],
+                    "nominal_power": self.E_ehH_max[bid],
                     "efficiency": self.eta_ehH,
                 },
                 "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[0],
+                    "capacity": self.C_p_Csto[bid],
                     "loss_coefficient": self.C_f_Csto,
                 },
                 "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[0],
+                    "capacity": self.C_p_Hsto[bid],
                     "loss_coefficient": self.C_f_Csto,
                 },
                 "Battery": {
-                    "capacity": self.C_p_bat[0],
-                    "efficiency": self.eta_bat[0],
+                    "capacity": self.C_p_bat[bid],
+                    "efficiency": self.eta_bat[bid],
                     "capacity_loss_coefficient": self.C_f_bat,
                     "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[0],
+                    "nominal_power": self.E_bat_max[bid],
                     "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
+                    "capacity_power_curve": [[0, 1], [1, 0]],
                 },
-            },
-            "Building_2": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[1],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[1],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[1],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[1],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[1],
-                    "efficiency": self.eta_bat[1],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[1],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_3": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[3],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[2],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[2],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[2],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[2],
-                    "efficiency": self.eta_bat[2],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[2],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_4": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[3],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[3],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[3],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[3],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[3],
-                    "efficiency": self.eta_bat[3],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[3],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_5": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[4],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[4],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[4],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[4],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[4],
-                    "efficiency": self.eta_bat[4],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[4],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_6": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[5],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[5],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[5],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[5],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[5],
-                    "efficiency": self.eta_bat[5],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[5],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_7": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[6],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[6],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[6],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[6],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[6],
-                    "efficiency": self.eta_bat[6],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[6],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_8": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[7],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[7],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[7],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[7],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[7],
-                    "efficiency": self.eta_bat[7],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[7],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-            "Building_9": {
-                "Heat_Pump": {
-                    "nominal_power": self.E_hpC_max[8],
-                    "technical_efficiency": self.eta_hp_tech,
-                    "t_target_heating": 45,
-                    "t_target_cooling": self.t_hp_C,
-                },
-                "Electric_Water_Heater": {
-                    "nominal_power": self.E_ehH_max[8],
-                    "efficiency": self.eta_ehH,
-                },
-                "Chilled_Water_Tank": {
-                    "capacity": self.C_p_Csto[8],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "DHW_Tank": {
-                    "capacity": self.C_p_Hsto[8],
-                    "loss_coefficient": self.C_f_Csto,
-                },
-                "Battery": {
-                    "capacity": self.C_p_bat[8],
-                    "efficiency": self.eta_bat[8],
-                    "capacity_loss_coefficient": self.C_f_bat,
-                    "loss_coefficient": 0,
-                    "nominal_power": self.E_bat_max[8],
-                    "power_efficiency_curve": [[0, 1], [1, 1]],
-                    "capacity_power_curve": [[0, 1], [1, 1]],
-                },
-            },
-        }
+            }
 
         buildings = {}
 
@@ -415,7 +183,7 @@ class DigitalTwin:
                 save_memory=self.save_memory,
             )
 
-        buildings[uid] = building
+            buildings[uid] = building
 
         self.buildings = buildings
 
@@ -426,23 +194,23 @@ class DigitalTwin:
 
         # States that we can directly get from the observed states
         # Getting state for current time step and 9 buildings
-        self.E_NS = states[:, 23]
+        # self.E_NS = states[:, 23]
         self.net_electricity_consumption = states[:, 28]  # 9*1
-        self.SOC_Csto = states[:, 25]
-        self.SOC_Hsto = states[:, 26]
-        self.SOC_bat = states[:, 27]
-        self.solar_gen = states[:, 24]
+
+        # self.solar_gen = states[:, 24]
 
         #         data_est = self.memory.get(-1)   # data from the predictor
 
         time_step = total_it % 24
 
         # Getting state for current time step and 9 buildings
-
+        self.E_NS = memory["E_ns"][time_step, :]
+        self.solar_gen = memory["E_pv"][time_step, :]
         self.E_hpC_max = memory["E_hpC_max"][time_step, :]
         self.E_ehH_max = memory["E_ehH_max"][time_step, :]
         self.E_bat_max = memory["E_bat_max"][time_step, :]
         self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
+        self.C_p_Csto = memory["C_p_Csto"][time_step, :]
         self.C_p_bat = memory["C_p_bat"][time_step, :]
         self.eta_bat = zeta["eta_bat"][time_step, :]
         self.E_pv = memory["E_pv"][time_step, :]
@@ -452,6 +220,9 @@ class DigitalTwin:
         self.C_max = memory["C_max"][time_step, :]
         self.H_max = memory["H_max"][time_step, :]
 
+        self.SOC_Csto = states[:, 25] *self.C_p_Csto
+        self.SOC_Hsto = states[:, 26]*self.C_p_Hsto
+        self.SOC_bat = states[:, 27]*self.C_p_bat
         # # Getting state for current time step and 9 buildings    # For testing purposes
         # self.E_hpC_max = np.ones(9)
         # self.E_ehH_max = np.ones(9)
@@ -474,301 +245,160 @@ class DigitalTwin:
 
         # Initialising the next states that we will get from the digital twin
         self.buildings_net_electricity_demand = []
-        electric_demand = 0
-        elec_consumption_electrical_storage = 0
-        elec_consumption_dhw_storage = 0
-        elec_consumption_cooling_storage = 0
-        elec_consumption_dhw_total = 0
-        elec_consumption_cooling_total = 0
-        elec_consumption_appliances = 0
-        elec_generation = 0
+        # electric_demand = 0
+        # elec_consumption_electrical_storage = 0
+        # elec_consumption_dhw_storage = 0
+        # elec_consumption_cooling_storage = 0
+        # elec_consumption_dhw_total = 0
+        # elec_consumption_cooling_total = 0
+        # elec_consumption_appliances = 0
+        # elec_generation = 0
 
         # Setting the current states using set_state() and also setting self.buildings
         self.set_state(states, total_it, memory, zeta)
 
-        assert (
-            len(actions) == self.num_buildings
-        )  # The length of the list of actions should match the length of the list of buildings."
+        assert (len(actions) == self.num_buildings)  # The length of the list of actions should match the length of the list of buildings."
 
         # Defininig dict to get access to the states from the building keys
 
-        dict_build = {
-            "Building_1": 0,
-            "Building_2": 1,
-            "Building_3": 2,
-            "Building_4": 3,
-            "Building_5": 4,
-            "Building_6": 5,
-            "Building_7": 6,
-            "Building_8": 7,
-            "Building_9": 8,
-        }
+        # dict_build = {
+        #     "Building_1": 0,
+        #     "Building_2": 1,
+        #     "Building_3": 2,
+        #     "Building_4": 3,
+        #     "Building_5": 4,
+        #     "Building_6": 5,
+        #     "Building_7": 6,
+        #     "Building_8": 7,
+        #     "Building_9": 8,
+        # }
+        building_electric_demand = np.zeros(self.num_buildings)
+        for bid in range(self.num_buildings):
+            #a, (uid, building) in zip(actions, self.buildings.items()):
+            a = actions[bid,:]
+            uid = f'Building_{bid+1}'
 
-        for a, (uid, building) in zip(actions, self.buildings.items()):
-
-            if self.buildings_states_actions[uid]["actions"]["electrical_storage"]:
-
-                if self.buildings_states_actions[uid]["actions"]["cooling_storage"]:
-
-                    # Cooling
-                    _electric_demand_cooling = building.set_storage_cooling(
+            _electric_demand_cooling = self.buildings[uid].set_storage_cooling(
                         a[0],
-                        self.C_p_Csto[dict_build[uid]],
-                        self.SOC_Csto[dict_build[uid]],
-                        self.C_bd[dict_build[uid]],
-                        self.COP_C[dict_build[uid]],
-                        self.E_bat_max[dict_build[uid]],
-                        self.SOC_Csto[dict_build[uid]],
-                    )
-                    elec_consumption_cooling_storage += (
-                        building._electric_consumption_cooling_storage
-                    )
+                        self.C_p_Csto[bid],
+                        self.SOC_Csto[bid],
+                        self.C_bd[bid],
+                        self.COP_C[bid],
+                        self.E_hpC_max[bid])
+            # elec_consumption_cooling_storage += self.buildings[uid]._electric_consumption_cooling_storage
 
-                    # 'Electrical Storage' & 'Cooling Storage' & 'DHW Storage'
-                    if self.buildings_states_actions[uid]["actions"]["dhw_storage"]:
 
-                        # DHW
-                        _electric_demand_dhw = building.set_storage_heating(
+            # DHW
+            _electric_demand_dhw = self.buildings[uid].set_storage_heating(
                             a[1],
-                            self.E_ehH_max[dict_build[uid]],
-                            self.C_p_Hsto[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                        )
-                        elec_consumption_dhw_storage += (
-                            building._electric_consumption_dhw_storage
-                        )
+                            self.E_ehH_max[bid],
+                            self.C_p_Hsto[bid],
+                            self.SOC_Hsto[bid],
+                            self.H_bd[bid])
+            # elec_consumption_dhw_storage += building._electric_consumption_dhw_storage
 
-                        # Electrical
-                        _electric_demand_electrical_storage = (
-                            building.set_storage_electrical(
+
+            # Electrical
+            _electric_demand_electrical_storage = self.buildings[uid].set_storage_electrical(
                                 a[2],
-                                self.C_p_bat[dict_build[uid]],
-                                self.SOC_bat[dict_build[uid]],
-                            )
-                        )
-                        elec_consumption_electrical_storage += (
-                            _electric_demand_electrical_storage
-                        )
+                                self.C_p_bat[bid],
+                                self.SOC_bat[bid],)
+            # elec_consumption_electrical_storage += _electric_demand_electrical_storage
 
-                        # 'Electrical Storage' & 'Cooling Storage'
-                    else:
-                        _electric_demand_dhw = building.set_storage_heating(
-                            0.0,
-                            self.E_ehH_max[dict_build[uid]],
-                            self.C_p_Hsto[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]],
-                        )
-                        # Electrical
-                        _electric_demand_electrical_storage = (
-                            building.set_storage_electrical(
-                                a[1],
-                                self.C_p_bat[dict_build[uid]],
-                                self.SOC_bat[dict_build[uid]],
-                            )
-                        )
-                        elec_consumption_electrical_storage += (
-                            _electric_demand_electrical_storage
-                        )
-                else:
 
-                    _electric_demand_cooling = building.set_storage_cooling(0.0)
-                    # 'Electrical Storage' & 'DHW Storage'
-                    if self.buildings_states_actions[uid]["actions"]["dhw_storage"]:
-                        # DHW
-                        _electric_demand_dhw = building.set_storage_heating(
-                            a[0],
-                            self.E_ehH_max[dict_build[uid]],
-                            self.C_p_Hsto[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]],
-                        )
-                        elec_consumption_dhw_storage += (
-                            building._electric_consumption_dhw_storage
-                        )
+            # Total heating and cooling electrical loads
+            # elec_consumption_cooling_total += _electric_demand_cooling
+            # elec_consumption_dhw_total += _electric_demand_dhw
 
-                        # Electrical
-                        _electric_demand_electrical_storage = (
-                            building.set_storage_electrical(
-                                a[1],
-                                self.C_p_bat[dict_build[uid]],
-                                self.SOC_bat[dict_build[uid]],
-                            )
-                        )
-                        elec_consumption_electrical_storage += (
-                            _electric_demand_electrical_storage
-                        )
+            # Solar generation
+            _solar_generation = self.buildings[uid].get_solar_power(self.solar_gen[bid])
+            # elec_generation += _solar_generation
 
-                    # 'Electrical Storage'
-                    else:
-                        _electric_demand_dhw = building.set_storage_heating(0.0)
-                        # Electrical
-                        _electric_demand_electrical_storage = (
-                            building.set_storage_electrical(
-                                a[0],
-                                self.C_p_bat[dict_build[uid]],
-                                self.SOC_bat[dict_build[uid]],
-                            )
-                        )
-                        elec_consumption_electrical_storage += (
-                            _electric_demand_electrical_storage
-                        )
+            # Electrical appliances
+            _non_shiftable_load = self.E_NS[bid]
 
-            else:
+            building_electric_demand[bid] = _electric_demand_electrical_storage+ _electric_demand_cooling+ \
+                                            _electric_demand_dhw+ _non_shiftable_load- _solar_generation
 
-                _electric_demand_electrical_storage = 0.0
 
-                if self.buildings_states_actions[uid]["actions"]["cooling_storage"]:
-                    # Cooling
-                    _electric_demand_cooling = building.set_storage_cooling(
-                        a[0], self.C_p_Csto[dict_build[uid]], self.C_bd[dict_build[uid]]
-                    )
-                    elec_consumption_cooling_storage += (
-                        building._electric_consumption_cooling_storage
-                    )
 
-                    if self.buildings_states_actions[uid]["actions"]["dhw_storage"]:
-                        # DHW
-                        _electric_demand_dhw = building.set_storage_heating(
-                            a[1],
-                            self.E_ehH_max[dict_build[uid]],
-                            self.C_p_Hsto[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]],
-                        )
-                        elec_consumption_dhw_storage += (
-                            building._electric_consumption_dhw_storage
-                        )
 
-                    else:
-                        _electric_demand_dhw = building.set_storage_heating(
-                            0.0,
-                            self.E_ehH_max[dict_build[uid]],
-                            self.C_p_Hsto[dict_build[uid]],
-                            self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]],
-                        )
-
-                else:
-                    _electric_demand_cooling = building.set_storage_cooling(
-                        0.0, self.C_p_Csto[dict_build[uid]], self.C_bd[dict_build[uid]]
-                    )
-                    # DHW
-                    _electric_demand_dhw = building.set_storage_heating(
-                        a[0],
-                        self.E_ehH_max[dict_build[uid]],
-                        self.C_p_Hsto[dict_build[uid]],
-                        self.SOC_Hsto[dict_build[uid]],
-                        self.H_bd[dict_build[uid]],
-                    )
-                    elec_consumption_dhw_storage += (
-                        building._electric_consumption_dhw_storage
-                    )
-
-        # Total heating and cooling electrical loads
-        elec_consumption_cooling_total += _electric_demand_cooling
-        elec_consumption_dhw_total += _electric_demand_dhw
-
-        # Electrical appliances
-        _non_shiftable_load = self.E_NS
-        elec_consumption_appliances += _non_shiftable_load
-
-        # Solar generation
-        _solar_generation = building.get_solar_power(self.solar_gen)
-        elec_generation += _solar_generation
 
         # Adding loads from appliances and subtracting solar generation to the net electrical load of each building
-        building_electric_demand = np.round(
-            (
-                _electric_demand_electrical_storage
-                + _electric_demand_cooling
-                + _electric_demand_dhw
-                + _non_shiftable_load
-                - _solar_generation
-            ).astype(np.float32),
-            4,
-        )
+        # building_electric_demand = np.round(
+        #     (
+        #         _electric_demand_electrical_storage
+        #         + _electric_demand_cooling
+        #         + _electric_demand_dhw
+        #         + _non_shiftable_load
+        #         - _solar_generation
+        #     ).astype(np.float32),
+        #     4,
+        # )
         # Electricity consumed by every building
-        building.current_net_electricity_demand = building_electric_demand
-        self.buildings_net_electricity_demand.append(-building_electric_demand)
+        # building.current_net_electricity_demand = building_electric_demand
+        # self.buildings_net_electricity_demand.append(-building_electric_demand)
 
         # Total electricity consumption
-        electric_demand += building_electric_demand
+        # electric_demand += building_electric_demand
 
-        self.state = []
+        # self.state = []
 
-        for uid, building in self.buildings.items():
-            s = []
-            for state_name, value in self.buildings_states_actions[uid][
-                "states"
-            ].items():
-                if value == True:
-                    if state_name == "net_electricity_consumption":
-                        s.append(building.current_net_electricity_demand)
-            #                             print(np.shape(np.array(s[3])))
-            #                         elif state_name == 'cooling_storage_soc':
-            #                             s.append(self.buildings[uid].cooling_storage._soc/self.buildings[uid].cooling_storage.capacity)
-            #                         elif state_name == 'dhw_storage_soc':
-            #                             s.append(self.buildings[uid].dhw_storage._soc/self.buildings[uid].dhw_storage.capacity)
-            #                         elif state_name == 'electrical_storage_soc':
-            #                             s.append(self.buildings[uid].electrical_storage._soc/self.buildings[uid].electrical_storage.capacity)
+        # self.net_electric_consumption.append(np.float32(electric_demand))
+        # self.electric_consumption_electric_storage.append(
+        #     np.float32(elec_consumption_electrical_storage)
+        # )
+        # self.electric_consumption_dhw_storage.append(
+        #     np.float32(elec_consumption_dhw_storage)
+        # )
+        # self.electric_consumption_cooling_storage.append(
+        #     np.float32(elec_consumption_cooling_storage)
+        # )
+        # self.electric_consumption_dhw.append(np.float32(elec_consumption_dhw_total))
+        # self.electric_consumption_cooling.append(
+        #     np.float32(elec_consumption_cooling_total)
+        # )
+        # self.electric_consumption_appliances.append(
+        #     np.float32(elec_consumption_appliances)
+        # )
+        # self.electric_generation.append(np.float32(elec_generation))
+        # self.net_electric_consumption_no_storage.append(
+        #     np.float32(
+        #         electric_demand
+        #         - elec_consumption_cooling_storage
+        #         - elec_consumption_dhw_storage
+        #         - elec_consumption_electrical_storage
+        #     )
+        # )
+        # self.net_electric_consumption_no_pv_no_storage.append(
+        #     np.float32(
+        #         electric_demand
+        #         + elec_generation
+        #         - elec_consumption_cooling_storage
+        #         - elec_consumption_dhw_storage
+        #         - elec_consumption_electrical_storage
+        #     )
+        # )
 
-            self.state.append(np.array(s))
-
-        self.state = np.array(self.state, dtype="object")
-
-        # Control variables which are used to display the results and the behavior of the buildings at the district level.
-        #         self.carbon_emissions.append(np.float32(max(0, electric_demand)*self.current_carbon_intensity))
-        self.net_electric_consumption.append(np.float32(electric_demand))
-        self.electric_consumption_electric_storage.append(
-            np.float32(elec_consumption_electrical_storage)
-        )
-        self.electric_consumption_dhw_storage.append(
-            np.float32(elec_consumption_dhw_storage)
-        )
-        self.electric_consumption_cooling_storage.append(
-            np.float32(elec_consumption_cooling_storage)
-        )
-        self.electric_consumption_dhw.append(np.float32(elec_consumption_dhw_total))
-        self.electric_consumption_cooling.append(
-            np.float32(elec_consumption_cooling_total)
-        )
-        self.electric_consumption_appliances.append(
-            np.float32(elec_consumption_appliances)
-        )
-        self.electric_generation.append(np.float32(elec_generation))
-        self.net_electric_consumption_no_storage.append(
-            np.float32(
-                electric_demand
-                - elec_consumption_cooling_storage
-                - elec_consumption_dhw_storage
-                - elec_consumption_electrical_storage
-            )
-        )
-        self.net_electric_consumption_no_pv_no_storage.append(
-            np.float32(
-                electric_demand
-                + elec_generation
-                - elec_consumption_cooling_storage
-                - elec_consumption_dhw_storage
-                - elec_consumption_electrical_storage
-            )
-        )
-
-        transition_digital_twin = (
-            self._get_ob()
-        )  # self._get_ob() returns the next states
-        next_state_net_electricity_consumption = transition_digital_twin.reshape((9, 1))
+        # transition_digital_twin = (
+        #     building_electric_demand
+        # )  # self._get_ob() returns the next states
+        # next_state_net_electricity_consumption = building_electric_demand.reshape((9, 1))
 
         next_state = np.ones((9, 30))
-        next_state[:, 28] = next_state_net_electricity_consumption.reshape(-1)
+        next_state[:, 28] = building_electric_demand
+
+        for bid in range(9):
+            uid = f'Building_{bid+1}'
+            next_state[bid, 25] = self.buildings[uid].cooling_storage._soc / self.buildings[uid].cooling_storage.capacity if self.buildings[uid].cooling_storage.capacity>0 else 0
+            next_state[bid, 26] = self.buildings[uid].dhw_storage._soc / self.buildings[uid].dhw_storage.capacity if self.buildings[uid].dhw_storage.capacity>0 else 0
+            next_state[bid, 27] = self.buildings[uid].electrical_storage._soc/self.buildings[uid].electrical_storage.capacity if self.buildings[uid].electrical_storage.capacity>0 else 0
+
 
         return next_state
 
-    def _get_ob(self):
-        return self.state
+    # def _get_ob(self):
+    #     return self.state
 
     def reset(self):
 
@@ -816,7 +446,7 @@ class DigitalTwin:
 
         self.state = np.array(self.state, dtype="object")
 
-        return self._get_ob()
-
-    def _get_ob(self):
         return self.state
+
+    # def _get_ob(self):
+    #     return self.state
