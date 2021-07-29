@@ -120,7 +120,7 @@ class Building:
 
         return electrical_energy_balance
 
-    def set_storage_heating(self, action, E_ehH_max, C_p_Hsto, SOC_Hsto, H_bd, SOC_bat):
+    def set_storage_heating(self, action, E_ehH_max, C_p_Hsto, SOC_Hsto, H_bd):
         """
         Args:
             action (float): Amount of heating energy stored (added) in that time-step as a ratio of the maximum capacity of the energy storage device.
@@ -175,9 +175,7 @@ class Building:
 
         return elec_demand_heating
 
-    def set_storage_cooling(
-        self, action, C_p_Csto, SOC_Csto, C_bd, COP_C, E_bat_max, SOC_bat
-    ):
+    def set_storage_cooling(self, action, C_p_Csto, SOC_Csto, C_bd, COP_C, E_hpC_max):
         """
         Args:
             action (float): Amount of cooling energy stored (added) in that time-step as a ratio of the maximum capacity of the energy storage device.
@@ -190,9 +188,7 @@ class Building:
         """
 
         # Cooling power that could be possible to supply to the storage device to increase its State of Charge once the heating demand of the building has been satisfied
-        cooling_power_avail = (
-            self.cooling_device.get_max_cooling_power(COP_C, E_bat_max) - C_bd
-        )
+        cooling_power_avail = (self.cooling_device.get_max_cooling_power(COP_C, E_hpC_max) - C_bd)
 
         # The storage device is charged (action > 0) or discharged (action < 0) taking into account the max power available and that the storage device cannot be discharged by an amount of energy greater than the energy demand of the building.
         cooling_energy_balance = self.cooling_storage.charge(
@@ -725,7 +721,8 @@ class EnergyStorage:
         # Discharging
         else:
             if self.max_power_output is not None:
-                energy = max(-max_power_output, energy)
+                energy = max(-self.max_power_output, energy)
+
             SOC_Hsto = max(0, SOC_Hsto + energy / self.efficiency)
 
         if self.capacity is not None:
