@@ -1,4 +1,4 @@
-# <<<<<<< Updated upstream
+
 # ### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
 
 # '''Import any packages here'''
@@ -27,7 +27,7 @@
 #         within this function to compute the time-step of the simulation, since it will be called once per time-step'''
         
         
-# =======
+
 from copy import deepcopy
 from TD3 import TD3
 from digital_twin import DigitalTwin
@@ -607,4 +607,3 @@ class Agent(TD3):
             self.set_zeta(self.zeta)
 
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
-# >>>>>>> Stashed changes
