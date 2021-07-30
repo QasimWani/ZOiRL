@@ -50,7 +50,7 @@ class Agent(TD3):
         super().__init__(
             num_actions=kwargs["action_spaces"],
             num_buildings=len(kwargs["building_ids"]),
-            rbc_threshold=48
+            rbc_threshold=336
         )
 
         observation_space = kwargs["observation_space"]
@@ -101,9 +101,9 @@ class Agent(TD3):
         self.zeta_eta_ehH = 0.9
         self.zeta_c_bat_end = 0.1
 
-        mean_p_ele = [np.ones(24)] * self.buildings          # Having mean and range for each of the hour
-        std_p_ele = [0.2*np.ones(24)] * self.buildings
-        range_p_ele = [0.1, 5]
+        self.mean_p_ele = [np.ones(24)] * self.buildings          # Having mean and range for each of the hour
+        self.std_p_ele = [0.2*np.ones(24)] * self.buildings
+        self.range_p_ele = [0.1, 5]
 
         # Initialising the elite sets
         self.elite_set = []  # Storing best 5 zetas i.e. a list of 5 lists which are further a list of 24 lists of size 9
@@ -150,6 +150,11 @@ class Agent(TD3):
         self.zeta_k_list[3,:,0:5, :] = 0.2
         self.zeta_k_list[3,:,11:17, :] = 2
         self.zeta_k_list[3,:,22:23, :] = 0.2
+
+        self.dt_building_logger = []
+        self.e_soc_logger = []
+        self.h_soc_logger = []
+        self.c_soc_logger = []
 
     def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
         """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
@@ -418,12 +423,12 @@ class Agent(TD3):
         # run forward pass
         # actions, parameters = super().select_action(state, day_ahead)
 
-
         parameters = {}
-        items = ["E_hpC_max","E_ehH_max","E_bat_max","C_p_Hsto","C_p_bat","C_p_Csto","E_pv","H_bd","C_bd","COP_C","C_max","H_max","E_ns","E_pv"]
+        items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
+                 "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
         data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)
         for item in items:
-            parameters[item] = np.zeros((24,9))
+            parameters[item] = np.zeros((24, 9))
             if item == "E_bat_max":
                 parameters[item][self.total_it % 24, :] = np.array(data_orc["C_p_bat"])
             else:
@@ -433,14 +438,17 @@ class Agent(TD3):
         indx_hour = 2
         hour_state = np.array([[state[0][indx_hour]]])
         actions = self.agent_rbc.select_action(hour_state)
-        actions[2, :] = 0
-        actions[3, :] = 0
-        #actions *= 0.1
+        # actions[2, :] = 0
+        # actions[3, :] = 0
+        # actions *= 0.1
         # evaluate agent
         # self.evaluate_cost(state)
+
+
+
         # digital twin
-        if self.total_it>= self.rbc_threshold+48 and self.total_it % 24 == 0:  # end of day, rerun with the digital twin for the past day
-            initial_state = self.state_hist[self.total_it-24]
+        if self.total_it >= self.rbc_threshold + 48 and self.total_it % 24 == 0:  # end of day, rerun with the digital twin for the past day
+            initial_state = self.state_hist[self.total_it - 24]
 
             # get RBC cost for doing rbc actions for one day
             cs = deepcopy(initial_state)
@@ -449,9 +457,9 @@ class Agent(TD3):
                 self.E_grid_dt.append(
                     cs[:, 28]
                 )
-                actions_dt = self.agent_rbc.select_action(t+1)
-                actions_dt[2, :] = 0
-                actions_dt[3, :] = 0
+                actions_dt = self.agent_rbc.select_action(t + 1)
+                # actions_dt[2, :] = 0
+                # actions_dt[3, :] = 0
                 next_state = self.Digital_Twin.transition(
                     cs,
                     actions_dt,
@@ -463,15 +471,27 @@ class Agent(TD3):
                 # self.E_grid_dt.append(
                 #     next_state[:, 28]
                 # )  # Apeending Electricity demand to the E_grid_data
+                self.dt_building_logger.append(self.Digital_Twin.buildings)
+                self.c_soc_logger.append(cs[:, 25])
+                self.h_soc_logger.append(cs[:, 26])
+                self.e_soc_logger.append(cs[:, 27])
 
                 cs = next_state
-        elif self.total_it < self.rbc_threshold+24:
+
+        elif self.total_it < self.rbc_threshold + 24:
             self.E_grid_dt.append(
                 np.zeros(9)
             )
+            self.dt_building_logger.append([])
+            self.e_soc_logger.append([])
+            self.h_soc_logger.append([])
+            self.c_soc_logger.append([])
+
+
         self.update_hour_of_day_data(parameters, (self.total_it) % 24)
 
         self.total_it += 1
+
 
         return actions
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
