@@ -1,33 +1,3 @@
-<<<<<<< Updated upstream
-### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
-
-'''Import any packages here'''
-import json
-import torch
-
-class Agent:
-    def __init__(self, building_ids, buildings_states_actions, building_info):     
-        with open(buildings_states_actions) as json_file:
-            self.buildings_states_actions = json.load(json_file)
-            
-        '''Initialize the class and define any hyperparameters of the controller'''
-        
-            
-    def select_action(self, states):
-        
-        '''Action selection algorithm. You can set coordination_vars = None if you do not want to use this variable '''
-            
-        return actions, coordination_vars
-                
-        
-    def add_to_buffer(self, states, actions, rewards, next_states, done, coordination_vars=None, coordination_vars_next=None):
-        
-        '''Make any updates to your policy, you don't have to use all the variables above (you can leave the coordination
-        variables empty if you wish, or use them to share information among your different agents). You can add a counter
-        within this function to compute the time-step of the simulation, since it will be called once per time-step'''
-        
-        
-=======
 from copy import deepcopy
 from TD3 import TD3
 from digital_twin import DigitalTwin
@@ -50,14 +20,13 @@ class Agent(TD3):
         super().__init__(
             num_actions=kwargs["action_spaces"],
             num_buildings=len(kwargs["building_ids"]),
-            rbc_threshold=48
+            rbc_threshold=48,
         )
 
         observation_space = kwargs["observation_space"]
         self.env = kwargs["env"]
 
-        self.oracle = Oracle(self.env,kwargs["action_spaces"])
-
+        self.oracle = Oracle(self.env, kwargs["action_spaces"])
 
         self.state_hist = []
         self.E_grid_dt = []
@@ -71,13 +40,14 @@ class Agent(TD3):
 
         self.p_ele_logger = []
         self.mean_elite_set = []
-        self.loads = {'E_ns':[],
-                      'C_bd': [],
-                      'H_bd':[],
-                      'E_ns_dt': [],
-                      'C_bd_dt': [],
-                      'H_bd_dt': []
-                      }
+        self.loads = {
+            "E_ns": [],
+            "C_bd": [],
+            "H_bd": [],
+            "E_ns_dt": [],
+            "C_bd_dt": [],
+            "H_bd_dt": [],
+        }
         # Observed states initialisation
         self.E_netelectric_hist = []
         self.E_NS_hist = []
@@ -430,12 +400,28 @@ class Agent(TD3):
         # run forward pass
         # actions, parameters = super().select_action(state, day_ahead)
 
-
         parameters = {}
-        items = ["E_hpC_max","E_ehH_max","E_bat_max","C_p_Hsto","C_p_bat","C_p_Csto","E_pv","H_bd","C_bd","COP_C","C_max","H_max","E_ns","E_pv"]
-        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)
+        items = [
+            "E_hpC_max",
+            "E_ehH_max",
+            "E_bat_max",
+            "C_p_Hsto",
+            "C_p_bat",
+            "C_p_Csto",
+            "E_pv",
+            "H_bd",
+            "C_bd",
+            "COP_C",
+            "C_max",
+            "H_max",
+            "E_ns",
+            "E_pv",
+        ]
+        data_orc = self.oracle.get_current_data_oracle(
+            self.env, self.total_it, None, None
+        )
         for item in items:
-            parameters[item] = np.zeros((24,9))
+            parameters[item] = np.zeros((24, 9))
             if item == "E_bat_max":
                 parameters[item][self.total_it % 24, :] = np.array(data_orc["C_p_bat"])
             else:
@@ -447,21 +433,21 @@ class Agent(TD3):
         actions = self.agent_rbc.select_action(hour_state)
         actions[2, :] = 0
         actions[3, :] = 0
-        #actions *= 0.1
+        # actions *= 0.1
         # evaluate agent
         # self.evaluate_cost(state)
         # digital twin
-        if self.total_it>= self.rbc_threshold+48 and self.total_it % 24 == 0:  # end of day, rerun with the digital twin for the past day
-            initial_state = self.state_hist[self.total_it-24]
+        if (
+            self.total_it >= self.rbc_threshold + 48 and self.total_it % 24 == 0
+        ):  # end of day, rerun with the digital twin for the past day
+            initial_state = self.state_hist[self.total_it - 24]
 
             # get RBC cost for doing rbc actions for one day
             cs = deepcopy(initial_state)
 
             for t in range(24):
-                self.E_grid_dt.append(
-                    cs[:, 28]
-                )
-                actions_dt = self.agent_rbc.select_action(t+1)
+                self.E_grid_dt.append(cs[:, 28])
+                actions_dt = self.agent_rbc.select_action(t + 1)
                 actions_dt[2, :] = 0
                 actions_dt[3, :] = 0
                 next_state = self.Digital_Twin.transition(
@@ -477,15 +463,14 @@ class Agent(TD3):
                 # )  # Apeending Electricity demand to the E_grid_data
 
                 cs = next_state
-        elif self.total_it < self.rbc_threshold+24:
-            self.E_grid_dt.append(
-                np.zeros(9)
-            )
+        elif self.total_it < self.rbc_threshold + 24:
+            self.E_grid_dt.append(np.zeros(9))
         self.update_hour_of_day_data(parameters, (self.total_it) % 24)
 
         self.total_it += 1
 
         return actions
+
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
     def update_hour_of_day_data(self, parameters: dict, t: int):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
@@ -595,4 +580,3 @@ class Agent(TD3):
                 self.set_zeta(zeta)
 
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
->>>>>>> Stashed changes

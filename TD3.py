@@ -79,14 +79,31 @@ class TD3(object):
                 data = {}
             elif self.total_it % 24 == 1:
                 data = self.data_loader.model.parse_data(  # this is just to add the immediate prev hour data
-                    {}, self.data_loader.model.get_current_data_oracle(
-                        env, self.total_it - 1, [x[28] for x in state], [x[28] for x in state],
-                        [np.zeros(3) for _ in range(9)], [0 for _ in range(9)]))
+                    {},
+                    self.data_loader.model.get_current_data_oracle(
+                        env,
+                        self.total_it - 1,
+                        [x[28] for x in state],
+                        [x[28] for x in state],
+                        [np.zeros(3) for _ in range(9)],
+                        [0 for _ in range(9)],
+                    ),
+                )
             else:
-                data = deepcopy(self.memory.get_recent()) #note that the memory is lagging behind
-                data = self.data_loader.model.parse_data( #this is just to add the immediate prev hour data
-                data,self.data_loader.model.get_current_data_oracle(
-                    env, self.total_it-1, [x[28] for x in state], [x[28] for x in state], [np.zeros(3) for _ in range(9)],[0 for _ in range(9)]))
+                data = deepcopy(
+                    self.memory.get_recent()
+                )  # note that the memory is lagging behind
+                data = self.data_loader.model.parse_data(  # this is just to add the immediate prev hour data
+                    data,
+                    self.data_loader.model.get_current_data_oracle(
+                        env,
+                        self.total_it - 1,
+                        [x[28] for x in state],
+                        [x[28] for x in state],
+                        [np.zeros(3) for _ in range(9)],
+                        [0 for _ in range(9)],
+                    ),
+                )
             if day_ahead:  # run day ahead dispatch w/ true loads from the future
                 if self.total_it % 24 == 0:
                     # data = {}
@@ -97,31 +114,30 @@ class TD3(object):
                     for idx in range(len(self.num_actions))
                 ]
             else:  # adaptive dispatch
-                if self.total_it % 24 ==0:
+                if self.total_it % 24 == 0:
                     actions = self.adaptive_dispatch(env, data)
-                elif self.total_it % 24 <=8:
+                elif self.total_it % 24 <= 8:
                     actions = [
                         np.array(self.action_planned_day[idx])[:, self.total_it % 24]
                         for idx in range(len(self.num_actions))
                     ]
-                elif self.total_it % 24 in [9,11,13]:
+                elif self.total_it % 24 in [9, 11, 13]:
                     actions = self.adaptive_dispatch(env, data)
-                elif self.total_it % 24 in [10,12,14]:
+                elif self.total_it % 24 in [10, 12, 14]:
                     actions = [
                         np.array(self.action_planned_day[idx])[:, 1]
                         for idx in range(len(self.num_actions))
                     ]
-                elif self.total_it % 24 <=20:
+                elif self.total_it % 24 <= 20:
                     actions = self.adaptive_dispatch(env, data)
                 elif self.total_it % 24 in [22]:
                     actions = self.adaptive_dispatch(env, data)
-                elif self.total_it % 24 in [21,23]:
+                elif self.total_it % 24 in [21, 23]:
                     actions = [
                         np.array(self.action_planned_day[idx])[:, 1]
                         for idx in range(len(self.num_actions))
                     ]
         else:  # run RBC
-<<<<<<< Updated upstream
 
             actions = self.agent_rbc.select_action(state)
 
@@ -150,18 +166,28 @@ class TD3(object):
         #     raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
 
         data_est = self.data_loader.model.estimate_data(
-            env, data, self.total_it, self.init_updates, self.memory #note that the init_updates are useless here
+            env,
+            data,
+            self.total_it,
+            self.init_updates,
+            self.memory,  # note that the init_updates are useless here
         )
-        data_est['c_bat_init'] = [[]]
-        data_est['c_Hsto_init'] = [[]]
-        data_est['c_Csto_init'] = [[]]
+        data_est["c_bat_init"] = [[]]
+        data_est["c_Hsto_init"] = [[]]
+        data_est["c_Csto_init"] = [[]]
         for bid in range(9):
-            data_est["c_Csto_init"][0].append(env.buildings[f'Building_{bid + 1}'].cooling_storage_soc[
-                                                -1] / env.buildings[f'Building_{bid + 1}'].cooling_storage.capacity)
-            data_est["c_Hsto_init"][0].append(env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
-                                            env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
-            data_est["c_bat_init"][0].append(env.buildings[f'Building_{bid + 1}'].electrical_storage_soc[
-                                               -1] / env.buildings[f'Building_{bid + 1}'].electrical_storage.capacity)
+            data_est["c_Csto_init"][0].append(
+                env.buildings[f"Building_{bid + 1}"].cooling_storage_soc[-1]
+                / env.buildings[f"Building_{bid + 1}"].cooling_storage.capacity
+            )
+            data_est["c_Hsto_init"][0].append(
+                env.buildings[f"Building_{bid + 1}"].dhw_storage_soc[-1]
+                / env.buildings[f"Building_{bid + 1}"].dhw_storage.capacity
+            )
+            data_est["c_bat_init"][0].append(
+                env.buildings[f"Building_{bid + 1}"].electrical_storage_soc[-1]
+                / env.buildings[f"Building_{bid + 1}"].electrical_storage.capacity
+            )
 
         self.data_loader.model.convert_to_numpy(data_est)
         self.logger_data.append(data_est)
@@ -208,64 +234,23 @@ class TD3(object):
             data_t["c_Csto_init"] = [[]]
             data_t["c_Hsto_init"] = [[]]
             for bid in range(9):
-                data_t["c_Csto_init"][0].append(env.buildings[f'Building_{bid + 1}'].cooling_storage_soc[
-                        -1] / env.buildings[f'Building_{bid + 1}'].cooling_storage.capacity)
-                data_t["c_Hsto_init"][0].append(env.buildings[f'Building_{bid + 1}'].dhw_storage_soc[-1] /
-                    env.buildings[f'Building_{bid + 1}'].dhw_storage.capacity)
-                data_t["c_bat_init"][0].append(env.buildings[f'Building_{bid + 1}'].electrical_storage_soc[
-                        -1] /env.buildings[f'Building_{bid + 1}'].electrical_storage.capacity)
-
+                data_t["c_Csto_init"][0].append(
+                    env.buildings[f"Building_{bid + 1}"].cooling_storage_soc[-1]
+                    / env.buildings[f"Building_{bid + 1}"].cooling_storage.capacity
+                )
+                data_t["c_Hsto_init"][0].append(
+                    env.buildings[f"Building_{bid + 1}"].dhw_storage_soc[-1]
+                    / env.buildings[f"Building_{bid + 1}"].dhw_storage.capacity
+                )
+                data_t["c_bat_init"][0].append(
+                    env.buildings[f"Building_{bid + 1}"].electrical_storage_soc[-1]
+                    / env.buildings[f"Building_{bid + 1}"].electrical_storage.capacity
+                )
 
             if type(self.data_loader.model) == Oracle:
-                _, self.init_updates = self.data_loader.model.init_values(
-                    data_t
-                )
+                _, self.init_updates = self.data_loader.model.init_values(data_t)
             else:
                 raise NotImplementedError  # implement way to load previous eod SOC values into current days' 1st hour.
-=======
-            # if (
-            #     self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6]
-            #     and self.total_it >= 1
-            # ):
-            #     actions = self.data_loader.select_action(self.total_it)
-            # else:
-            #     actions = self.agent_rbc.select_action(
-            #         state[0][self.agent_rbc.idx_hour]
-            #     )
-            actions = self.agent_rbc.select_action(
-                state[0][self.agent_rbc.idx_hour])
-        # upload action to memory
-        self._add_to_buffer(None, actions)
-        return actions, building_parameters
-
-
-    def _add_to_buffer(self, state, action):
-        """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
-        if state is not None:
-            self.data_loader.upload_state(state)
-
-        if action is not None:
-            self.data_loader.upload_action(action)
-            self.total_it += 1
-
-    def day_ahead_dispatch_pred(self):
-        """Returns day-ahead dispatch"""
-        data_est = None
-        if self.total_it % 24 == 0:  # save actions for 24hours
-            data_est = self.data_loader.estimate_data(self.memory, self.total_it)
-            self.data_loader.convert_to_numpy(data_est)
-
-            self.action_planned_day, optim_values, _ = zip(
-                *[
-                    self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
-                    for id in range(self.buildings)
-                ]
-            )
-            # Shape: 9, 3, 24
-            self.action_planned_day = np.array(self.action_planned_day)
-            self.logger.append(optim_values)  # add all variables - Optimization
->>>>>>> Stashed changes
-
 
         data_est = self.data_loader.model.estimate_data(
             env, data, self.total_it, self.init_updates, self.memory
@@ -296,7 +281,6 @@ class TD3(object):
             ]
         )
 
-<<<<<<< Updated upstream
         # compute E-grid
         # _, _, self.E_grid_planned_day = zip(
         #     *[
@@ -311,10 +295,6 @@ class TD3(object):
         ### DEBUG ###
         # gather data for NORL agent
         _, norl_cost_dispatch, _ = zip(
-=======
-
-        action_planned_day, optim_values, _ = zip(
->>>>>>> Stashed changes
             *[
                 self.actor_norl.forward(self.total_it % 24, data_est, id, dispatch=True)
                 for id in range(self.buildings)
@@ -401,7 +381,12 @@ class TD3(object):
         raise NotImplementedError
 
     def add_to_buffer_oracle(
-        self, state: np.ndarray, env: CityLearn, action: list, reward: list, next_state: np.ndarray
+        self,
+        state: np.ndarray,
+        env: CityLearn,
+        action: list,
+        reward: list,
+        next_state: np.ndarray,
     ):
         """Add to replay buffer"""
         # processing SOC's into suitable format

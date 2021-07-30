@@ -57,12 +57,12 @@ class DigitalTwin:
         self.solar_gen = np.zeros(9)
 
         # States that will require a predictor/oracle
-        self.E_hpC_max = np.ones(9)*100
-        self.E_ehH_max = np.ones(9)*100
-        self.E_bat_max = np.ones(9)*100
-        self.C_p_Csto = np.ones(9)*100
-        self.C_p_Hsto = np.ones(9)*100
-        self.C_p_bat = np.ones(9)*100
+        self.E_hpC_max = np.ones(9) * 100
+        self.E_ehH_max = np.ones(9) * 100
+        self.E_bat_max = np.ones(9) * 100
+        self.C_p_Csto = np.ones(9) * 100
+        self.C_p_Hsto = np.ones(9) * 100
+        self.C_p_bat = np.ones(9) * 100
         self.eta_bat = np.ones(9)
         self.E_pv = np.zeros(9)
         self.H_bd = np.zeros(9)
@@ -102,7 +102,7 @@ class DigitalTwin:
 
         data_dict = {}
         for bid in range(9):
-            data_dict[f'Building_{bid+1}'] = {
+            data_dict[f"Building_{bid+1}"] = {
                 "Heat_Pump": {
                     "nominal_power": self.E_hpC_max[bid],
                     "technical_efficiency": self.eta_hp_tech,
@@ -220,9 +220,9 @@ class DigitalTwin:
         self.C_max = memory["C_max"][time_step, :]
         self.H_max = memory["H_max"][time_step, :]
 
-        self.SOC_Csto = states[:, 25] *self.C_p_Csto
-        self.SOC_Hsto = states[:, 26]*self.C_p_Hsto
-        self.SOC_bat = states[:, 27]*self.C_p_bat
+        self.SOC_Csto = states[:, 25] * self.C_p_Csto
+        self.SOC_Hsto = states[:, 26] * self.C_p_Hsto
+        self.SOC_bat = states[:, 27] * self.C_p_bat
         # # Getting state for current time step and 9 buildings    # For testing purposes
         # self.E_hpC_max = np.ones(9)
         # self.E_ehH_max = np.ones(9)
@@ -288,7 +288,7 @@ class DigitalTwin:
                         self.SOC_Csto[dict_build[uid]],
                         self.C_bd[dict_build[uid]],
                         self.COP_C[dict_build[uid]],
-                        self.E_hpC_max[dict_build[uid]]
+                        self.E_hpC_max[dict_build[uid]],
                     )
                     elec_consumption_cooling_storage += (
                         building._electric_consumption_cooling_storage
@@ -303,7 +303,7 @@ class DigitalTwin:
                             self.E_ehH_max[dict_build[uid]],
                             self.C_p_Hsto[dict_build[uid]],
                             self.SOC_Hsto[dict_build[uid]],
-                            self.H_bd[dict_build[uid]]
+                            self.H_bd[dict_build[uid]],
                         )
                         elec_consumption_dhw_storage += (
                             building._electric_consumption_dhw_storage
@@ -476,15 +476,15 @@ class DigitalTwin:
         #         if value == True:
         #             if state_name == "net_electricity_consumption":
         #                 s.append(building.current_net_electricity_demand)
-            #                             print(np.shape(np.array(s[3])))
-            #                         elif state_name == 'cooling_storage_soc':
-            #                             s.append(self.buildings[uid].cooling_storage._soc/self.buildings[uid].cooling_storage.capacity)
-            #                         elif state_name == 'dhw_storage_soc':
-            #                             s.append(self.buildings[uid].dhw_storage._soc/self.buildings[uid].dhw_storage.capacity)
-            #                         elif state_name == 'electrical_storage_soc':
-            #                             s.append(self.buildings[uid].electrical_storage._soc/self.buildings[uid].electrical_storage.capacity)
+        #                             print(np.shape(np.array(s[3])))
+        #                         elif state_name == 'cooling_storage_soc':
+        #                             s.append(self.buildings[uid].cooling_storage._soc/self.buildings[uid].cooling_storage.capacity)
+        #                         elif state_name == 'dhw_storage_soc':
+        #                             s.append(self.buildings[uid].dhw_storage._soc/self.buildings[uid].dhw_storage.capacity)
+        #                         elif state_name == 'electrical_storage_soc':
+        #                             s.append(self.buildings[uid].electrical_storage._soc/self.buildings[uid].electrical_storage.capacity)
 
-            # self.state.append(np.array(s))
+        # self.state.append(np.array(s))
 
         # self.state = np.array(self.state, dtype="object")
 
@@ -535,11 +535,25 @@ class DigitalTwin:
         next_state[:, 28] = building_electric_demand
 
         for bid in range(9):
-            uid = f'Building_{bid+1}'
-            next_state[bid, 25] = self.buildings[uid].cooling_storage._soc / self.buildings[uid].cooling_storage.capacity if self.buildings[uid].cooling_storage.capacity>0 else 0
-            next_state[bid, 26] = self.buildings[uid].dhw_storage._soc / self.buildings[uid].dhw_storage.capacity if self.buildings[uid].dhw_storage.capacity>0 else 0
-            next_state[bid, 27] = self.buildings[uid].electrical_storage._soc/self.buildings[uid].electrical_storage.capacity if self.buildings[uid].electrical_storage.capacity>0 else 0
-
+            uid = f"Building_{bid+1}"
+            next_state[bid, 25] = (
+                self.buildings[uid].cooling_storage._soc
+                / self.buildings[uid].cooling_storage.capacity
+                if self.buildings[uid].cooling_storage.capacity > 0
+                else 0
+            )
+            next_state[bid, 26] = (
+                self.buildings[uid].dhw_storage._soc
+                / self.buildings[uid].dhw_storage.capacity
+                if self.buildings[uid].dhw_storage.capacity > 0
+                else 0
+            )
+            next_state[bid, 27] = (
+                self.buildings[uid].electrical_storage._soc
+                / self.buildings[uid].electrical_storage.capacity
+                if self.buildings[uid].electrical_storage.capacity > 0
+                else 0
+            )
 
         return next_state
 
