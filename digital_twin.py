@@ -275,6 +275,11 @@ class DigitalTwin:
         building_electric_demand = np.zeros(self.num_buildings)
         for bid in range(self.num_buildings):
             #a, (uid, building) in zip(actions, self.buildings.items()):
+#             print(bid)
+#             print(len(actions))
+#             print(actions[0][bid])
+#             print(np.shape(actions), total_it, type(actions))
+            actions = np.array(actions)
             a = actions[bid,:]
             uid = f'Building_{bid+1}'
 
