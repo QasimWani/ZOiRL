@@ -54,9 +54,9 @@ class Agent(TD3):
         )
 
         observation_space = kwargs["observation_space"]
-        self.env = kwargs["env"]
+#         self.env = kwargs["env"]
 
-        self.oracle = Oracle(self.env,kwargs["action_spaces"])
+#         self.oracle = Oracle(self.env,kwargs["action_spaces"])
 
 
         self.state_hist = []
@@ -353,7 +353,7 @@ class Agent(TD3):
         self.H_bd_hist.append(H_bd_hist)
         self.COP_C_hist.append(COP_C_hist)
 
-        if self.total_it % 24 == 23:  # Calculate cost at the end of the day
+        if self.total_it % 24 == 0:  # Calculate cost at the end of the day
 
             self.outputs = {
                 "E_netelectric_hist": self.E_netelectric_hist,
@@ -548,9 +548,7 @@ class Agent(TD3):
         # keep track of Optim/RBC ratios
         ratios = []
         E_grid_zeta_data = []
-
-        # Adding functionality for the evaluation of the current zeta as well
-#         self.zeta_k_list[4,:,:,:] = self.zeta
+        
         
         for zeta in self.zeta_k_list:
             # aggregate data for 24 hour and store in E_grid_zeta_data
@@ -569,7 +567,7 @@ class Agent(TD3):
                         for id in range(self.buildings)
                     ]
                 )
-
+                
                 next_state = self.Digital_Twin.transition(
                     cs,
                     actions,
@@ -586,7 +584,7 @@ class Agent(TD3):
 
             zeta_cost = self.get_cost(E_grid_zeta_data)
 
-            ratios.append(np.divide(zeta_cost / rbc_cost))     # Appending the ratio of costs for 9 buildings
+            ratios.append(np.divide(zeta_cost, rbc_cost))     # Appending the ratio of costs for 9 buildings
             
             E_grid_zeta_data = []  # To store E_grids for the new zeta
             
@@ -620,7 +618,7 @@ class Agent(TD3):
             zeta, cost = self.evaluate_zeta(current_state)  
             for i in range(self.buildings):
                 
-                if cost[i] < self.all_costs[-1][i]:  # update zeta
+                if cost[i] < self.all_costs[-1].squeeze(0)[i]:  # update zeta
                     self.zeta[:,:,i] = zeta[:,:,i] 
                     
                     # all_costs, costs
