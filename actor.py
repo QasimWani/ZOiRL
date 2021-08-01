@@ -24,6 +24,8 @@ class Actor:
         self.rho = rho
         # Optim specific
         self.constraints = []
+
+
         self.cost = None  # created at every call to `create_problem`. not used in DPP.
         # list of parameter names for Zeta
         zeta_keys = set(
@@ -293,9 +295,9 @@ class Actor:
             + SOC_Brelax_cost * 1e4
             + SOC_Crelax_cost * 1e4
             + SOC_Hrelax_cost * 1e4
-            + cp.sum(cp.abs(action_bat))
-            + cp.sum(cp.abs(action_C))
-            + cp.sum(cp.abs(action_H))
+            + cp.sum(cp.abs(action_bat)) * 1e2
+            + cp.sum(cp.abs(action_C)) * 1e2
+            + cp.sum(cp.abs(action_H)) * 1e2
         )
 
         ### constraints
@@ -536,6 +538,7 @@ class Actor:
         debug=False,
         dispatch=False,
     ):
+
         """Actor Optimization"""
         self.get_problem(t, parameters, building_id)  # Form problem using DPP
 
@@ -723,7 +726,7 @@ class Actor:
         E_grid_pkhist = (
             max(0, parameters["E_grid_prevhour"][t, building_id])
             if t == 0
-            else np.max([0, *parameters["E_grid"][:t, building_id]])
+            else np.max([0, *parameters["E_grid"][:(t+1), building_id]])
         )
 
         zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(zeta_plus_params)

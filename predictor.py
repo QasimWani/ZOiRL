@@ -210,6 +210,7 @@ class Predictor(DataLoader):
             value = np.array(value)
             if len(value.shape) == 1:
                 value = np.repeat(value.reshape(1, -1), window, axis=0)
+
             if np.shape(value) == (24, len(self.building_ids)):
                 data[key] = value
             else:
@@ -310,22 +311,23 @@ class Predictor(DataLoader):
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
-        # H_max = (
-        #     None if data is None else data["H_max"].max(axis=0)
-        # )  # load previous H_max
-        # if H_max is None:
-        #     H_max = np.max(H_bd, axis=0)
-        # else:
-        #     H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
-        #
-        # C_max = (
-        #     None if data is None else data["C_max"].max(axis=0)
-        # )  # load previous C_max
-        # if C_max is None:
-        #     C_max = np.max(C_bd, axis=0)
-        # else:
-        #     H_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
 
+        H_max = (
+            None if data is None else data["H_max"].max(axis=0)
+        )  # load previous H_max
+        if H_max is None:
+            H_max = np.max(H_bd, axis=0)
+        else:
+            H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
+
+        C_max = (
+            None if data is None else data["C_max"].max(axis=0)
+        )  # load previous C_max
+        if C_max is None:
+            C_max = np.max(C_bd, axis=0)
+        else:
+            C_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
+            
         temp = np.array([future_temp[uid].flatten() for uid in self.building_ids]).T
         COP_C = np.zeros((window, len(self.building_ids)))
         for hour in range(window):
@@ -357,13 +359,12 @@ class Predictor(DataLoader):
         observation_data["E_grid"] = np.pad(egc, ((0, T - egc.shape[0]), (0, 0)))
 
         observation_data["E_grid_prevhour"] = np.zeros((T, len(self.building_ids)))
-        observation_data["E_grid_prevhour"][0] = np.array(
-            self.state_buffer.get(-2)["elec_cons"]
-        )[-1]
-        for hour in range(1, timestep % 24):
-            observation_data["E_grid_prevhour"][hour] = observation_data["E_grid"][
-                hour - 1
-            ]
+        # observation_data["E_grid_prevhour"][0] = np.array(
+        #     self.state_buffer.get(-2)["elec_cons"]
+        # )[-1]
+        observation_data["E_grid_prevhour"][0] = egc[0]
+        for hour in range(1, timestep % 24+1):
+            observation_data["E_grid_prevhour"][hour] = observation_data["E_grid"][hour]
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
