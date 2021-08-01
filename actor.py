@@ -25,7 +25,6 @@ class Actor:
         # Optim specific
         self.constraints = []
 
-
         self.cost = None  # created at every call to `create_problem`. not used in DPP.
         # list of parameter names for Zeta
         zeta_keys = set(
@@ -295,9 +294,9 @@ class Actor:
             + SOC_Brelax_cost * 1e4
             + SOC_Crelax_cost * 1e4
             + SOC_Hrelax_cost * 1e4
-            + cp.sum(cp.abs(action_bat)) * 1e2
-            + cp.sum(cp.abs(action_C)) * 1e2
-            + cp.sum(cp.abs(action_H)) * 1e2
+            + cp.sum(cp.abs(action_bat)) * 1e1
+            + cp.sum(cp.abs(action_C)) * 1e1
+            + cp.sum(cp.abs(action_H)) * 1e1
         )
 
         ### constraints
@@ -549,7 +548,6 @@ class Actor:
                 verbose=debug, max_iters=1000
             )  # Returns the optimal value.
         except:  # try another solver
-            print(f"\nSolving using SCS at t = {t} for building {building_id}")
             status = self.prob[t].solve(
                 solver="SCS", verbose=debug, max_iters=1000
             )  # Returns the optimal value.
@@ -569,6 +567,7 @@ class Actor:
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
                     actions[var.name()] = np.array(var.value)[0] + offset
         else:
+            print(f"\nDefault solution at t = {t} for building {building_id}")
             for var in self.prob[t].variables():
                 if dispatch:
                     offset = np.zeros(len(var.value))
@@ -581,30 +580,7 @@ class Actor:
                     offset = 0
                     if "action" in str(var.name()):
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
-                    # elif "E_grid" in str(var.name()):
-                    # offset = parameters["E_grid"][t, building_id]
                     actions[var.name()] = offset
-
-        # prune out zeta - set zeta values for later use in backward pass.
-        # self.prune_update_zeta(t, prob.param_dict, building_id)
-
-        ## compute dispatch cost
-        # if dispatch:
-        #     ramping_cost = np.sum(
-        #         np.abs(
-        #             actions["E_grid"][1:]
-        #             + actions["E_grid_sell"][1:]
-        #             - actions["E_grid"][:-1]
-        #             - actions["E_grid_sell"][:-1]
-        #         )
-        #     )
-        #     net_peak_electricity_cost = np.max(actions["E_grid"])
-        #     virtual_electricity_cost = np.sum(
-        #         self.params["p_ele"][:, building_id] * actions["E_grid"]
-        #     )
-        #     dispatch_cost = (
-        #         ramping_cost + net_peak_electricity_cost + virtual_electricity_cost
-        #     )
 
         if self.num_actions[building_id].shape[0] == 2:
             return (
@@ -726,7 +702,7 @@ class Actor:
         E_grid_pkhist = (
             max(0, parameters["E_grid_prevhour"][t, building_id])
             if t == 0
-            else np.max([0, *parameters["E_grid"][:(t+1), building_id]])
+            else np.max([0, *parameters["E_grid"][: (t + 1), building_id]])
         )
 
         zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(zeta_plus_params)
