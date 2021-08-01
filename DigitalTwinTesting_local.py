@@ -65,7 +65,7 @@ costs_peak_net_ele = []
 
 t_idx = 0
 # run for a month - NOTE: THIS WILL TAKE ~2 HOURS TO RUN. reduce `end_time` for quicker results.
-end_time = RBC_THRESHOLD + 24 * 50
+end_time = RBC_THRESHOLD + 24 * 20
 
 start_time = time.time()
 
@@ -117,6 +117,78 @@ tmp_rbc_e_grid = np.array(E_grid_RBC[RBC_THRESHOLD + 1:])
 np.shape(tmp_e_grid_true), np.shape(tmp_rbc_e_grid), np.shape(e_grid)
 
 
+
+
+
+check_data = {}
+debug_item = [
+    "E_grid",
+    "E_bal_relax",
+    "H_bal_relax",
+    "C_bal_relax",
+    "E_grid_sell",
+    "E_hpC",
+    "E_ehH",
+    "SOC_bat",
+    "SOC_Brelax",
+    "action_bat",
+    "SOC_H",
+    "SOC_Hrelax",
+    "action_H",
+    "SOC_C",
+    "SOC_Crelax",
+    "action_C",
+]
+for key in debug_item:
+    check_data[key] = [[] for i in range(9)]
+check_params = {}
+debug_params1 = ["E_grid_prevhour", 'c_bat_init','c_Hsto_init','c_Csto_init']
+debug_params2 = ["E_ns", "H_bd",'C_bd','E_pv','COP_C','C_p_bat','C_p_Hsto','C_p_Csto']
+for key in debug_params1:
+    check_params[key] = [[] for i in range(9)]
+for key in debug_params2:
+    check_params[key] = [[] for i in range(9)]
+
+vars_RL = agents.logger
+pars_RL = agents.optim_param_logger
+# collect all data
+start_time = RBC_THRESHOLD
+num_days = int((end_time - start_time)/24)
+for i in range(end_time - start_time):
+    optim_var = vars_RL[start_time + i - RBC_THRESHOLD]
+    optim_param = pars_RL[start_time + i]
+    for key in debug_item:
+        for bid in range(9):
+            check_data[key][bid].append(optim_var[bid][key])
+    for key in debug_params1:
+        for bid in range(9):
+            check_params [key][bid].append(optim_param[key][i%24,bid])
+
+for i in range(num_days):
+
+    for key in debug_params2:
+        for bid in range(9):
+            val_t = [[] for _ in range(24)]
+            for hour_i in range(24):
+                for hour_j in range(hour_i+1):
+                    optim_param = pars_RL[start_time + i * 24+hour_j]
+                    val_t[hour_i].append(optim_param[key][hour_i,bid])
+            for hour_i in range(24):
+                check_params[key][bid].append(np.mean(np.array(val_t[hour_i])))
+
+for key in debug_params2:
+    for bid in range(9):
+        check_params[key][bid] = np.array(check_params[key][bid])
+
+for key in debug_params1:
+    for bid in range(9):
+        check_params[key][bid] = np.array(check_params[key][bid])
+
+
+
+
+
+
 # plot E_grid for RL and RBC
 end_plot = end_time - 24 * 2 - RBC_THRESHOLD
 start_plot = end_plot - 24 * 10  # plots last week of the month data
@@ -136,6 +208,125 @@ for i in range(3):
             axs[i, j].set_xlabel("Hour")
 plt.legend()
 fig.savefig("images/Egrid_compare.pdf", bbox_inches="tight")
+
+
+
+# Debug: plot battery initial values
+# unnormalized SOCs
+env_comp_item = ["electrical_storage", "cooling_storage", "dhw_storage"]
+data_comp_item = ['c_bat_init','c_Csto_init','c_Hsto_init']
+data_comp_item2 = ['C_p_bat','C_p_Csto','C_p_Hsto']
+start_plot = RBC_THRESHOLD+24*5
+end_plot = start_plot + 5*24
+for key_i in range(len(env_comp_item)):
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i in range(3):
+        for j in range(3):
+            bid = i * 3 + j
+            optim_data_soc1 = check_params[data_comp_item[key_i]][bid]
+            optim_data_soc2 = check_params[data_comp_item2[key_i]][bid]
+            optim_data_soc = optim_data_soc1*optim_data_soc2
+            data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),"soc",))
+            axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+            axs[i, j].plot(np.arange(1,1+end_plot-start_plot),data_env[start_plot:end_plot],'-o', label="true SOC")
+            axs[i, j].plot(np.arange(end_plot-start_plot),optim_data_soc[(start_plot-RBC_THRESHOLD):(end_plot-RBC_THRESHOLD)], label="init SOC")
+
+            axs[i, j].grid()
+            if j == 0:
+                axs[i, j].set_ylabel(env_comp_item[key_i])
+            if i == 0:
+                axs[i, j].set_xlabel("Hour")
+    plt.legend()
+    fig.savefig(f"images/{env_comp_item[key_i]}_optim_env_SOC.pdf", bbox_inches="tight")
+
+
+# normalized SOCs
+for key_i in range(len(env_comp_item)):
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i in range(3):
+        for j in range(3):
+            bid = i * 3 + j
+            optim_data_soc = check_params[data_comp_item[key_i]][bid]
+            data_env = E_grid_true[:,bid]
+            axs[i, j].set_title(f"Building {bid + 1}")
+            axs[i, j].plot(np.arange(1,1+end_plot-start_plot),data_env[start_plot:end_plot],'-o', label="true E grid prev")
+            axs[i, j].plot(np.arange(end_plot-start_plot),optim_data_soc[(start_plot-RBC_THRESHOLD):(end_plot-RBC_THRESHOLD)], label="Optim E grid prev")
+            axs[i, j].grid()
+            if j == 0:
+                axs[i, j].set_ylabel(env_comp_item[key_i])
+            if i == 0:
+                axs[i, j].set_xlabel("Hour")
+    plt.legend()
+    fig.savefig(f"images/Egridprev_optim_env_normalized.pdf", bbox_inches="tight")
+
+# debug: capacity
+env_comp_item = ["electrical_storage", "cooling_storage", "dhw_storage"]
+data_comp_item2 = ['C_p_bat','C_p_Csto','C_p_Hsto']
+for key_i in range(len(env_comp_item)):
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i in range(3):
+        for j in range(3):
+            bid = i * 3 + j
+            optim_data_soc = check_params[data_comp_item2[key_i]][bid]
+            data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),"capacity",))
+            axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+            axs[i, j].plot(np.arange(1,1+end_plot-start_plot),data_env*np.ones(end_plot-start_plot),'-o', label="true capacity")
+            axs[i, j].plot(np.arange(end_plot-start_plot),optim_data_soc[(start_plot-RBC_THRESHOLD):(end_plot-RBC_THRESHOLD)], label="Optim capacity")
+
+            axs[i, j].grid()
+            if j == 0:
+                axs[i, j].set_ylabel(env_comp_item[key_i])
+            if i == 0:
+                axs[i, j].set_xlabel("Hour")
+    plt.legend()
+    fig.savefig(f"images/{env_comp_item[key_i]}_optim_env_capacity.pdf", bbox_inches="tight")
+
+# debug: E_grid prev hour
+fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+for i in range(3):
+    for j in range(3):
+        bid = i * 3 + j
+        optim_data_ep = check_params["E_grid_prevhour"][bid]
+        data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),"soc",))/np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),"capacity",))
+        axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+        axs[i, j].plot(np.arange(1,1+end_plot-start_plot),data_env[start_plot:end_plot],'-o', label="true SOC (normalized)")
+        axs[i, j].plot(np.arange(end_plot-start_plot),optim_data_ep[(start_plot-RBC_THRESHOLD):(end_plot-RBC_THRESHOLD)], label="Init SOC (normalized)")
+        axs[i, j].grid()
+        if j == 0:
+            axs[i, j].set_ylabel(env_comp_item[key_i])
+        if i == 0:
+            axs[i, j].set_xlabel("Hour")
+plt.legend()
+fig.savefig(f"images/{env_comp_item[key_i]}_optim_env_normalized_SOCs.pdf", bbox_inches="tight")
+
+
+env_comp_item = ["non_shiftable_load", "dhw_demand",'cooling_demand','solar_gen']
+data_comp_item = ["E_ns", "H_bd",'C_bd','E_pv']
+for key_i in range(len(env_comp_item)):
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i in range(3):
+        for j in range(3):
+            bid = i * 3 + j
+            optim_data_soc = check_params[data_comp_item[key_i]][bid]
+            data_env = np.array(env.buildings["Building_" + str(bid + 1)].sim_results[env_comp_item[key_i]])
+            axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+            axs[i, j].plot(np.arange(1,1+end_plot-start_plot),data_env[start_plot:end_plot],'-o', label="true value")
+            axs[i, j].plot(np.arange(end_plot-start_plot),optim_data_soc[(start_plot-RBC_THRESHOLD):(end_plot-RBC_THRESHOLD)], label="Optim prediction")
+
+            axs[i, j].grid()
+            if j == 0:
+                axs[i, j].set_ylabel(env_comp_item[key_i])
+            if i == 0:
+                axs[i, j].set_xlabel("Hour")
+    plt.legend()
+    fig.savefig(f"images/{env_comp_item[key_i]}_optim_env.pdf", bbox_inches="tight")
+
+
+
+
+
+
+
 
 ## Plot evaluations
 
@@ -352,7 +543,7 @@ plt.legend()
 fig.savefig(f"images/cost_ratio_compare.pdf", bbox_inches="tight")
 # print(all_costs)
 
-bid = [0, 1, 2, 4, 5, 6, 7, 8]
+bid = [0]
 
 fig1, ax1 = plt.subplots()
 ax1.set_title(f"Total cost CEM/RBC")
@@ -364,4 +555,5 @@ ax1.set_ylabel("Cost (Ratio)")
 ax1.set_xlabel("Day")
 plt.legend()
 
-print(np.mean(np.sum(CEM_cost["total_cost"][bid],axis=0) / np.sum(RBC_cost["total_cost"][bid],axis=0)))
+bid = [4]
+(np.mean(np.sum(CEM_cost["total_cost"][bid],axis=0) / np.sum(RBC_cost["total_cost"][bid],axis=0)))
