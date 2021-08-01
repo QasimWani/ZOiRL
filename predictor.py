@@ -90,7 +90,6 @@ class Predictor(DataLoader):
 
         self.a_c_high = [action_space[uid].high[0] for uid in self.building_ids]
         self.a_h_high = [action_space[uid].high[1] for uid in self.building_ids]
-        print(self.a_c_high)
 
         # define regression model
         self.regr = LinearRegression(
