@@ -612,6 +612,3 @@ ax1.set_ylabel("Cost (Ratio)")
 ax1.set_xlabel("Day")
 plt.legend()
 fig.savefig(f"images/cost_ratio_aggregate.pdf", bbox_inches="tight")
-
-bid = [4]
-(np.mean(np.sum(CEM_cost["total_cost"][bid],axis=0) / np.sum(RBC_cost["total_cost"][bid],axis=0)))
