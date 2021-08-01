@@ -720,20 +720,45 @@ plt.legend()
 fig.savefig(f"images/cost_ratio_compare.pdf", bbox_inches="tight")
 # print(all_costs)
 
-bid = [0]
 
-fig1, ax1 = plt.subplots()
+# aggregate cost
+
+ramping_cost_CEM_agg = []
+ramping_cost_RBC_agg = []
+peak_electricity_cost_CEM_agg = []
+peak_electricity_cost_RBC_agg = []
+tot_cost_ratio_agg = []
+
+for i in range(time_sim):
+    CEM_E_grid_t = np.sum(
+        E_grid_true[(RBC_THRESHOLD + i * 24) : (RBC_THRESHOLD + (i + 1) * 24), :],
+        axis=1,
+    )
+    RBC_Egrid_t = np.sum(
+        E_grid_RBC[(RBC_THRESHOLD + i * 24) : (RBC_THRESHOLD + (i + 1) * 24), :], axis=1
+    )
+    ramping_cost_CEM_agg.append(np.sum(np.abs(CEM_E_grid_t[1:] - CEM_E_grid_t[:-1])))
+    ramping_cost_RBC_agg.append(np.sum(np.abs(RBC_Egrid_t[1:] - RBC_Egrid_t[:-1])))
+    peak_electricity_cost_CEM_agg.append(np.max(CEM_E_grid_t))
+    peak_electricity_cost_RBC_agg.append(np.max(RBC_Egrid_t))
+    tot_cost_ratio_agg.append(
+        0.5
+        * (
+            np.max(CEM_E_grid_t) / np.max(RBC_Egrid_t)
+            + np.sum(np.abs(CEM_E_grid_t[1:] - CEM_E_grid_t[:-1]))
+            / np.sum(np.abs(RBC_Egrid_t[1:] - RBC_Egrid_t[:-1]))
+        )
+    )
+
+
+fig, ax1 = plt.subplots()
 ax1.set_title(f"Total cost CEM/RBC")
-ax1.plot(
-    np.sum(CEM_cost["total_cost"][bid], axis=0)
-    / np.sum(RBC_cost["total_cost"][bid], axis=0),
-    label=f"CEM/RBC",
-)  # plot true E grid
-ax1.plot(all_costs, label=f"CEM daily costs")
+ax1.plot(np.array(tot_cost_ratio_agg), label=f"CEM/RBC ratios")  # plot true E grid
 ax1.grid()
 ax1.set_ylabel("Cost (Ratio)")
 ax1.set_xlabel("Day")
 plt.legend()
+fig.savefig(f"images/cost_ratio_aggregate.pdf", bbox_inches="tight")
 
 bid = [4]
 (
