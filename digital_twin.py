@@ -217,8 +217,6 @@ class DigitalTwin:
         self.H_bd = memory["H_bd"][time_step, :]
         self.C_bd = memory["C_bd"][time_step, :]
         self.COP_C = memory["COP_C"][time_step, :]
-        self.C_max = memory["C_max"][time_step, :]
-        self.H_max = memory["H_max"][time_step, :]
 
         self.SOC_Csto = states[:, 25] *self.C_p_Csto
         self.SOC_Hsto = states[:, 26]*self.C_p_Hsto
