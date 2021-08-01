@@ -1,4 +1,3 @@
-
 # ### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
 
 # '''Import any packages here'''
@@ -6,27 +5,26 @@
 # import torch
 
 # class Agent:
-#     def __init__(self, building_ids, buildings_states_actions, building_info):     
+#     def __init__(self, building_ids, buildings_states_actions, building_info):
 #         with open(buildings_states_actions) as json_file:
 #             self.buildings_states_actions = json.load(json_file)
-            
+
 #         '''Initialize the class and define any hyperparameters of the controller'''
-        
-            
+
+
 #     def select_action(self, states):
-        
+
 #         '''Action selection algorithm. You can set coordination_vars = None if you do not want to use this variable '''
-            
+
 #         return actions, coordination_vars
-                
-        
+
+
 #     def add_to_buffer(self, states, actions, rewards, next_states, done, coordination_vars=None, coordination_vars_next=None):
-        
+
 #         '''Make any updates to your policy, you don't have to use all the variables above (you can leave the coordination
 #         variables empty if you wish, or use them to share information among your different agents). You can add a counter
 #         within this function to compute the time-step of the simulation, since it will be called once per time-step'''
-        
-        
+
 
 from copy import deepcopy
 from TD3 import TD3
@@ -50,14 +48,13 @@ class Agent(TD3):
         super().__init__(
             num_actions=kwargs["action_spaces"],
             num_buildings=len(kwargs["building_ids"]),
-            rbc_threshold=336
+            rbc_threshold=336,
         )
 
         observation_space = kwargs["observation_space"]
-#         self.env = kwargs["env"]
+        #         self.env = kwargs["env"]
 
-#         self.oracle = Oracle(self.env,kwargs["action_spaces"])
-
+        #         self.oracle = Oracle(self.env,kwargs["action_spaces"])
 
         self.state_hist = []
         self.E_grid_dt = []
@@ -71,13 +68,14 @@ class Agent(TD3):
 
         self.p_ele_logger = []
         self.mean_elite_set = []
-        self.loads = {'E_ns':[],
-                      'C_bd': [],
-                      'H_bd':[],
-                      'E_ns_dt': [],
-                      'C_bd_dt': [],
-                      'H_bd_dt': []
-                      }
+        self.loads = {
+            "E_ns": [],
+            "C_bd": [],
+            "H_bd": [],
+            "E_ns_dt": [],
+            "C_bd_dt": [],
+            "H_bd_dt": [],
+        }
         # Observed states initialisation
         self.E_netelectric_hist = []
         self.E_NS_hist = []
@@ -101,12 +99,16 @@ class Agent(TD3):
         self.zeta_eta_ehH = 0.9
         self.zeta_c_bat_end = 0.1
 
-        self.mean_p_ele = [np.ones(24)] * self.buildings          # Having mean and range for each of the hour
-        self.std_p_ele = [0.2*np.ones(24)] * self.buildings
+        self.mean_p_ele = [
+            np.ones(24)
+        ] * self.buildings  # Having mean and range for each of the hour
+        self.std_p_ele = [0.2 * np.ones(24)] * self.buildings
         self.range_p_ele = [0.1, 5]
 
         # Initialising the elite sets
-        self.elite_set = []  # Storing best 5 zetas i.e. a list of 5 lists which are further a list of 24 lists of size 9
+        self.elite_set = (
+            []
+        )  # Storing best 5 zetas i.e. a list of 5 lists which are further a list of 24 lists of size 9
         self.elite_set_prev = []  # Same format as elite_set
 
         # Initialising the list of costs after using certain params zetas
@@ -139,17 +141,17 @@ class Agent(TD3):
             ((4, 1, 24, len(observation_space)))
         )  # 4 different Zetas.
 
-        self.zeta_k_list[1,:,0:13, :] = 0.2
-        self.zeta_k_list[1,:,13:19, :] = 5
-        self.zeta_k_list[1,:,19:23, :] = 0.2
+        self.zeta_k_list[1, :, 0:13, :] = 0.2
+        self.zeta_k_list[1, :, 13:19, :] = 5
+        self.zeta_k_list[1, :, 19:23, :] = 0.2
 
-        self.zeta_k_list[2,:,0:6, :] = 0.2
-        self.zeta_k_list[2,:,7:19, :] = 5
-        self.zeta_k_list[2,:,20:23, :] = 0.2
+        self.zeta_k_list[2, :, 0:6, :] = 0.2
+        self.zeta_k_list[2, :, 7:19, :] = 5
+        self.zeta_k_list[2, :, 20:23, :] = 0.2
 
-        self.zeta_k_list[3,:,0:5, :] = 0.2
-        self.zeta_k_list[3,:,11:17, :] = 2
-        self.zeta_k_list[3,:,22:23, :] = 0.2
+        self.zeta_k_list[3, :, 0:5, :] = 0.2
+        self.zeta_k_list[3, :, 11:17, :] = 2
+        self.zeta_k_list[3, :, 22:23, :] = 0.2
 
         self.dt_building_logger = []
         self.e_soc_logger = []
@@ -405,13 +407,13 @@ class Agent(TD3):
     def select_action(self, state, day_ahead: bool = False):
         """Overrides from `TD3`. Utilizes CEM and Digital Twin computations"""
         # update zeta
-        self.set_zeta()
+        # self.set_zeta()
         # run forward pass
         actions, parameters = super().select_action(state, day_ahead)
         # evaluate agent
         self.evaluate_cost(state)
         # digital twin
-        self.digital_twin_interface(state, parameters)
+        # self.digital_twin_interface(state, parameters)
         return actions
 
     def select_action_debug(self, state, day_ahead: bool = False):
@@ -424,9 +426,25 @@ class Agent(TD3):
         # actions, parameters = super().select_action(state, day_ahead)
 
         parameters = {}
-        items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
-                 "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
-        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)
+        items = [
+            "E_hpC_max",
+            "E_ehH_max",
+            "E_bat_max",
+            "C_p_Hsto",
+            "C_p_bat",
+            "C_p_Csto",
+            "E_pv",
+            "H_bd",
+            "C_bd",
+            "COP_C",
+            "C_max",
+            "H_max",
+            "E_ns",
+            "E_pv",
+        ]
+        data_orc = self.oracle.get_current_data_oracle(
+            self.env, self.total_it, None, None
+        )
         for item in items:
             parameters[item] = np.zeros((24, 9))
             if item == "E_bat_max":
@@ -444,19 +462,17 @@ class Agent(TD3):
         # evaluate agent
         # self.evaluate_cost(state)
 
-
-
         # digital twin
-        if self.total_it >= self.rbc_threshold + 48 and self.total_it % 24 == 0:  # end of day, rerun with the digital twin for the past day
+        if (
+            self.total_it >= self.rbc_threshold + 48 and self.total_it % 24 == 0
+        ):  # end of day, rerun with the digital twin for the past day
             initial_state = self.state_hist[self.total_it - 24]
 
             # get RBC cost for doing rbc actions for one day
             cs = deepcopy(initial_state)
 
             for t in range(24):
-                self.E_grid_dt.append(
-                    cs[:, 28]
-                )
+                self.E_grid_dt.append(cs[:, 28])
                 actions_dt = self.agent_rbc.select_action(t + 1)
                 # actions_dt[2, :] = 0
                 # actions_dt[3, :] = 0
@@ -479,21 +495,18 @@ class Agent(TD3):
                 cs = next_state
 
         elif self.total_it < self.rbc_threshold + 24:
-            self.E_grid_dt.append(
-                np.zeros(9)
-            )
+            self.E_grid_dt.append(np.zeros(9))
             self.dt_building_logger.append([])
             self.e_soc_logger.append([])
             self.h_soc_logger.append([])
             self.c_soc_logger.append([])
 
-
         self.update_hour_of_day_data(parameters, (self.total_it) % 24)
 
         self.total_it += 1
 
-
         return actions
+
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
     def update_hour_of_day_data(self, parameters: dict, t: int):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
@@ -517,7 +530,7 @@ class Agent(TD3):
 
         total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
 
-        cost = total_cost          # Array of size 9
+        cost = total_cost  # Array of size 9
 
         return cost
 
@@ -548,8 +561,7 @@ class Agent(TD3):
         # keep track of Optim/RBC ratios
         ratios = []
         E_grid_zeta_data = []
-        
-        
+
         for zeta in self.zeta_k_list:
             # aggregate data for 24 hour and store in E_grid_zeta_data
             cs = deepcopy(current_state)
@@ -567,7 +579,7 @@ class Agent(TD3):
                         for id in range(self.buildings)
                     ]
                 )
-                
+
                 next_state = self.Digital_Twin.transition(
                     cs,
                     actions,
@@ -584,29 +596,31 @@ class Agent(TD3):
 
             zeta_cost = self.get_cost(E_grid_zeta_data)
 
-            ratios.append(np.divide(zeta_cost, rbc_cost))     # Appending the ratio of costs for 9 buildings
-            
+            ratios.append(
+                np.divide(zeta_cost, rbc_cost)
+            )  # Appending the ratio of costs for 9 buildings
+
             E_grid_zeta_data = []  # To store E_grids for the new zeta
-            
+
         ratios = np.array(ratios)
-        
-        zeta_args_best = np.zeros(self.buildings)  
-        
-        zeta = np.zeros(((1,24,9)))
-        
+
+        zeta_args_best = np.zeros(self.buildings)
+
+        zeta = np.zeros(((1, 24, 9)))
+
         cost_ratios = np.zeros(9)
 
         for i in range(self.buildings):
-            
-            zeta_args_best[i] = np.argmin(ratios[:,i])
-            
+
+            zeta_args_best[i] = np.argmin(ratios[:, i])
+
             a = int(zeta_args_best[i])
-            zeta[:,:,i] = self.zeta_k_list[a,:,:,i] 
-            
-            cost_ratios[i] = np.min(ratios[:,i])
-        
+            zeta[:, :, i] = self.zeta_k_list[a, :, :, i]
+
+            cost_ratios[i] = np.min(ratios[:, i])
+
         return zeta, cost_ratios
-    
+
     def digital_twin_interface(self, current_state, parameters):
         """Main interface for utilizing Digital Twin"""
         if self.total_it <= self.rbc_threshold:
@@ -615,12 +629,12 @@ class Agent(TD3):
         # if self.total_it % 24 == 1:  # start of day
         self.update_hour_of_day_data(parameters, (self.total_it - 1) % 24)
         if self.total_it % 24 == 0:  # end of day
-            zeta, cost = self.evaluate_zeta(current_state)  
+            zeta, cost = self.evaluate_zeta(current_state)
             for i in range(self.buildings):
-                
+
                 if cost[i] < self.all_costs[-1].squeeze(0)[i]:  # update zeta
-                    self.zeta[:,:,i] = zeta[:,:,i] 
-                    
+                    self.zeta[:, :, i] = zeta[:, :, i]
+
                     # all_costs, costs
             self.set_zeta(self.zeta)
 

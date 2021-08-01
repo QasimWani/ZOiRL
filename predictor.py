@@ -192,7 +192,7 @@ class Predictor(DataLoader):
         self, previous_data: dict, current_data: dict, window: int = 24
     ):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
-        TOTAL_PARAMS = 19
+        TOTAL_PARAMS = 21
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
