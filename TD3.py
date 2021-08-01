@@ -47,6 +47,7 @@ class TD3(object):
         ### --- log details ---
         self.logger = []
         self.norl_logger = []
+        self.optim_param_logger = []
 
         self.critic = [
             Critic(num_buildings, num_actions),
@@ -87,6 +88,7 @@ class TD3(object):
                 actions, building_parameters = self.day_ahead_dispatch_pred()
             else:
                 actions, building_parameters = self.adaptive_dispatch_pred()
+                self.optim_param_logger.append(building_parameters)
         else:  # run RBC
             if (
                 self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6]
@@ -97,6 +99,7 @@ class TD3(object):
                 actions = self.agent_rbc.select_action(
                     state[0][self.agent_rbc.idx_hour]
                 )
+            self.optim_param_logger.append([])
 
         # upload action to memory
         self._add_to_buffer(None, actions)
