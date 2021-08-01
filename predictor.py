@@ -88,6 +88,10 @@ class Predictor(DataLoader):
         self.CF_B = 0
         self.rbc_threshold = 336
 
+        self.a_c_high = [action_space[uid].high[0] for uid in self.building_ids]
+        self.a_h_high = [action_space[uid].high[1] for uid in self.building_ids]
+        print(self.a_c_high)
+
         # define regression model
         self.regr = LinearRegression(
             fit_intercept=False
@@ -190,7 +194,7 @@ class Predictor(DataLoader):
         self, previous_data: dict, current_data: dict, window: int = 24
     ):
         """Parses `current_data` for optimization and loads into `data`. Everything is of shape 24, 9"""
-        TOTAL_PARAMS = 21
+        TOTAL_PARAMS = 19
         assert (
             len(current_data)
             == TOTAL_PARAMS  # actions + rewards + E_grid_collect. Section 1.3.1
@@ -307,21 +311,21 @@ class Predictor(DataLoader):
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
-        H_max = (
-            None if data is None else data["H_max"].max(axis=0)
-        )  # load previous H_max
-        if H_max is None:
-            H_max = np.max(H_bd, axis=0)
-        else:
-            H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
-
-        C_max = (
-            None if data is None else data["C_max"].max(axis=0)
-        )  # load previous C_max
-        if C_max is None:
-            C_max = np.max(C_bd, axis=0)
-        else:
-            H_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
+        # H_max = (
+        #     None if data is None else data["H_max"].max(axis=0)
+        # )  # load previous H_max
+        # if H_max is None:
+        #     H_max = np.max(H_bd, axis=0)
+        # else:
+        #     H_max = np.max([H_max, H_bd.max(axis=0)], axis=0)  # global max
+        #
+        # C_max = (
+        #     None if data is None else data["C_max"].max(axis=0)
+        # )  # load previous C_max
+        # if C_max is None:
+        #     C_max = np.max(C_bd, axis=0)
+        # else:
+        #     H_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
 
         temp = np.array([future_temp[uid].flatten() for uid in self.building_ids]).T
         COP_C = np.zeros((window, len(self.building_ids)))
@@ -329,18 +333,19 @@ class Predictor(DataLoader):
             for bid in self.building_ids:
                 COP_C[hour, bid] = self.cop_cal(temp[hour, bid])
 
-        E_hpC_max = np.max(C_bd / COP_C, axis=0)
-        E_ehH_max = H_max / 0.95
+        C_p_Csto = additional_parameters["C_p_Csto"]
+        C_p_Hsto = additional_parameters["C_p_Hsto"]
         C_p_bat = additional_parameters["C_p_bat"]
+
+        E_hpC_max = np.array(C_p_Csto) * np.array(self.a_c_high) / 2
+        E_ehH_max = np.array(C_p_Hsto) * np.array(self.a_h_high) / 0.9
+
 
         c_bat_init = np.array(self.state_buffer.get(-1)["soc_b"])[-1]
         c_bat_init[c_bat_init == np.inf] = 0
 
-        C_p_Hsto = additional_parameters["C_p_Hsto"]
-
         c_Hsto_init = np.array(self.state_buffer.get(-1)["soc_h"])[-1]
         c_Hsto_init[c_Hsto_init == np.inf] = 0
-        C_p_Csto = additional_parameters["C_p_Csto"]
 
         # nominal power
         E_bat_max = additional_parameters["E_bat_max"]
@@ -364,8 +369,8 @@ class Predictor(DataLoader):
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
         observation_data["C_bd"] = C_bd
-        observation_data["H_max"] = H_max
-        observation_data["C_max"] = C_max
+        # observation_data["H_max"] = H_max
+        # observation_data["C_max"] = C_max
 
         observation_data["E_pv"] = E_pv
 
