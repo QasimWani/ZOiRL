@@ -206,7 +206,7 @@ class Predictor(DataLoader):
         for key, value in current_data.items():
             value = np.array(value)
             if len(value.shape) == 1:
-                value = np.repeat(value, window).reshape(window, len(self.building_ids))
+                value = np.repeat(value.reshape(1, -1), window, axis=0)
             if np.shape(value) == (24, len(self.building_ids)):
                 data[key] = value
             else:
@@ -390,7 +390,6 @@ class Predictor(DataLoader):
 
         # add reward \in R^9 (scalar value for each building)
         # observation_data["reward"] = self.action_buffer.get(-1)["reward"]
-
         return observation_data
 
     def upload_data(self, state, action):
