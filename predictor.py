@@ -75,6 +75,7 @@ class Predictor(DataLoader):
     when we initialize the digital twin, we may call get_params for capacity and nominal power data
 
     """
+
     def __init__(self, action_space: list) -> None:
         super().__init__(action_space)
         self.building_ids = range(len(self.action_space))  # number of buildings
@@ -92,9 +93,7 @@ class Predictor(DataLoader):
         self.a_h_high = [action_space[uid].high[1] for uid in self.building_ids]
 
         # define regression model
-        self.regr = LinearRegression(
-            fit_intercept=False
-        )  # , positive=True)
+        self.regr = LinearRegression(fit_intercept=False)  # , positive=True)
         # average and peak values for load prediction
         self.avg_h_load = {uid: np.zeros(24) for uid in self.building_ids}
         self.avg_c_load = {uid: np.ones(24) for uid in self.building_ids}
@@ -311,7 +310,6 @@ class Predictor(DataLoader):
         H_bd = np.array([heating_estimate[key] for key in self.building_ids]).T
         C_bd = np.array([cooling_estimate[key] for key in self.building_ids]).T
 
-
         H_max = (
             None if data is None else data["H_max"].max(axis=0)
         )  # load previous H_max
@@ -327,7 +325,7 @@ class Predictor(DataLoader):
             C_max = np.max(C_bd, axis=0)
         else:
             C_max = np.max([C_max, C_bd.max(axis=0)], axis=0)  # global max
-            
+
         temp = np.array([future_temp[uid].flatten() for uid in self.building_ids]).T
         COP_C = np.zeros((window, len(self.building_ids)))
         for hour in range(window):
@@ -340,7 +338,6 @@ class Predictor(DataLoader):
 
         E_hpC_max = np.array(C_p_Csto) * np.array(self.a_c_high) / 2
         E_ehH_max = np.array(C_p_Hsto) * np.array(self.a_h_high) / 0.9
-
 
         c_bat_init = np.array(self.state_buffer.get(-1)["soc_b"])[-1]
         c_bat_init[c_bat_init == np.inf] = 0
@@ -363,14 +360,14 @@ class Predictor(DataLoader):
         #     self.state_buffer.get(-2)["elec_cons"]
         # )[-1]
         observation_data["E_grid_prevhour"][0] = egc[0]
-        for hour in range(1, timestep % 24+1):
+        for hour in range(1, timestep % 24 + 1):
             observation_data["E_grid_prevhour"][hour] = observation_data["E_grid"][hour]
 
         observation_data["E_ns"] = E_ns
         observation_data["H_bd"] = H_bd
         observation_data["C_bd"] = C_bd
-        # observation_data["H_max"] = H_max
-        # observation_data["C_max"] = C_max
+        observation_data["H_max"] = H_max
+        observation_data["C_max"] = C_max
 
         observation_data["E_pv"] = E_pv
 
@@ -1030,21 +1027,39 @@ class Predictor(DataLoader):
             #     print(uid)
             # ----------record average-------------
             if prev_daytype in [7]:
-                self.c_weekend1_avg[uid] = self.c_weekend1_avg[uid] * 0.5 + est_c_load[uid] * 0.5 \
-                    if self.c_weekend1_avg[uid].all() != 0 else est_c_load[uid]
-                self.h_weekend1_avg[uid] = self.h_weekend1_avg[uid] * 0.5 + est_h_load[uid] * 0.5 \
-                    if self.h_weekend1_avg[uid].all() != 0 else est_h_load[uid]
+                self.c_weekend1_avg[uid] = (
+                    self.c_weekend1_avg[uid] * 0.5 + est_c_load[uid] * 0.5
+                    if self.c_weekend1_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekend1_avg[uid] = (
+                    self.h_weekend1_avg[uid] * 0.5 + est_h_load[uid] * 0.5
+                    if self.h_weekend1_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
             elif prev_daytype in [1, 8]:
-                self.c_weekend2_avg[uid] = self.c_weekend2_avg[uid] * 0.5 + est_c_load[uid] * 0.5 \
-                    if self.c_weekend2_avg[uid].all() != 0 else est_c_load[uid]
-                self.h_weekend2_avg[uid] = self.h_weekend2_avg[uid] * 0.5 + est_h_load[uid] * 0.5 \
-                    if self.h_weekend2_avg[uid].all() != 0 else est_h_load[uid]
+                self.c_weekend2_avg[uid] = (
+                    self.c_weekend2_avg[uid] * 0.5 + est_c_load[uid] * 0.5
+                    if self.c_weekend2_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekend2_avg[uid] = (
+                    self.h_weekend2_avg[uid] * 0.5 + est_h_load[uid] * 0.5
+                    if self.h_weekend2_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
             else:
-                self.c_weekday_avg[uid] = self.c_weekday_avg[uid] * 0.8 + est_c_load[uid] * 0.2 \
-                    if self.c_weekday_avg[uid].all() != 0 else est_c_load[uid]
-                self.h_weekday_avg[uid] = self.h_weekday_avg[uid] * 0.8 + est_h_load[uid] * 0.2 \
-                    if self.h_weekday_avg[uid].all() != 0 else est_h_load[uid]
-            #------------use average-------------
+                self.c_weekday_avg[uid] = (
+                    self.c_weekday_avg[uid] * 0.8 + est_c_load[uid] * 0.2
+                    if self.c_weekday_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekday_avg[uid] = (
+                    self.h_weekday_avg[uid] * 0.8 + est_h_load[uid] * 0.2
+                    if self.h_weekday_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
+            # ------------use average-------------
             if daytype in [7]:
                 est_h_load[uid] = self.h_weekend1_avg[uid]
                 est_c_load[uid] = self.c_weekend1_avg[uid]
@@ -1064,8 +1079,8 @@ class Predictor(DataLoader):
                 est_h_load[uid][index_h] = est_h_load[uid][index_h] * 1
                 est_c_load[uid][index_c] = est_c_load[uid][index_c] * 1
 
-            adaptive_h_load[uid] = est_h_load[uid][T - window:]
-            adaptive_c_load[uid] = est_c_load[uid][T - window:]
+            adaptive_h_load[uid] = est_h_load[uid][T - window :]
+            adaptive_c_load[uid] = est_c_load[uid][T - window :]
 
             # if timestep % 24 == 0:
             #     print(prev_daytype, daytype, uid)
@@ -1091,7 +1106,6 @@ class Predictor(DataLoader):
                     self.ratio_h_est[uid].append([0])
                     self.H_bd_est[uid].append([0])
             self.quantile_reg()
-
 
         if self.E_day is False and self.timestep % 24 == 22:
             self.H_day = not self.H_day
