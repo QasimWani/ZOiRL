@@ -77,7 +77,7 @@ costs_peak_net_ele = []
 
 t_idx = 0
 # run for a month - NOTE: THIS WILL TAKE ~2 HOURS TO RUN. reduce `end_time` for quicker results.
-end_time = RBC_THRESHOLD + 24 * 365
+end_time = RBC_THRESHOLD + 24 * 90  # 1 year
 
 start_time = time.time()
 
@@ -507,22 +507,22 @@ all_costs = agents.all_costs
 all_costs = np.mean(all_costs, axis=2)
 
 
-p_ele_data = np.array(agents.p_ele_logger)
+# p_ele_data = np.array(agents.p_ele_logger)
 
-fig, axs = plt.subplots(3, 3, figsize=(15, 15))
-for i in range(3):
-    for j in range(3):
-        bid = i * 3 + j
-        axs[i, j].set_title(f"Building {bid + 1}")
-        axs[i, j].imshow(
-            np.squeeze(p_ele_data[:, 0, :, bid]), cmap="viridis", aspect="auto"
-        )
-        if j == 0:
-            axs[i, j].set_ylabel("theta")
-        if i == 0:
-            axs[i, j].set_xlabel("Day")
-plt.legend()
-fig.savefig("images/theta_evolve.pdf", bbox_inches="tight")
+# fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+# for i in range(3):
+#     for j in range(3):
+#         bid = i * 3 + j
+#         axs[i, j].set_title(f"Building {bid + 1}")
+#         axs[i, j].imshow(
+#             np.squeeze(p_ele_data[:, 0, :, bid]), cmap="viridis", aspect="auto"
+#         )
+#         if j == 0:
+#             axs[i, j].set_ylabel("theta")
+#         if i == 0:
+#             axs[i, j].set_xlabel("Day")
+# plt.legend()
+# fig.savefig("images/theta_evolve.pdf", bbox_inches="tight")
 
 ##########################
 
@@ -630,6 +630,7 @@ for i in range(3):
         if i == 0:
             axs[i, j].set_xlabel("Hour")
 plt.legend()
+plt.show()
 fig.savefig("images/E_grid_CEM.pdf", bbox_inches="tight")
 
 ## plotting the costs
@@ -717,6 +718,7 @@ for i in range(3):
         if i == 0:
             axs[i, j].set_xlabel("Day")
 plt.legend()
+plt.show()
 fig.savefig(f"images/cost_ratio_compare.pdf", bbox_inches="tight")
 # print(all_costs)
 
@@ -751,6 +753,8 @@ for i in range(time_sim):
     )
 
 
+print("Aggregate cost", np.mean(tot_cost_ratio_agg))
+
 fig, ax1 = plt.subplots()
 ax1.set_title(f"Total cost CEM/RBC")
 ax1.plot(np.array(tot_cost_ratio_agg), label=f"CEM/RBC ratios")  # plot true E grid
@@ -758,4 +762,5 @@ ax1.grid()
 ax1.set_ylabel("Cost (Ratio)")
 ax1.set_xlabel("Day")
 plt.legend()
+plt.show()
 fig.savefig(f"images/cost_ratio_aggregate.pdf", bbox_inches="tight")
