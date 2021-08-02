@@ -221,10 +221,26 @@ class DigitalTwin:
 #         self.H_bd = memory["H_bd"][time_step, :]
 #         self.C_bd = memory["C_bd"][time_step, :]
 #         self.COP_C = memory["COP_C"][time_step, :]
+          
         
         
-            
-        self.E_NS = np.mean(memory["E_ns"][:time_step, :], axis = 0)
+        
+#         self.E_NS = np.array(memory["E_ns"])
+#         self.solar_gen = np.array(memory["E_pv"])
+#         self.E_hpC_max = np.array(memory["E_hpC_max"])
+#         self.E_ehH_max = np.array(memory["E_ehH_max"])
+#         self.E_bat_max = np.array(memory["C_p_bat"])
+#         self.C_p_Hsto = np.array(memory["C_p_Hsto"])
+#         self.C_p_Csto = np.array(memory["C_p_Csto"])
+#         self.C_p_bat = np.array(memory["C_p_bat"])
+#         self.eta_bat = zeta["eta_bat"][time_step, :]
+#         self.E_pv = np.array(memory["E_pv"])
+#         self.H_bd = np.array(memory["H_bd"])
+#         self.C_bd = np.array(memory["C_bd"])
+#         self.COP_C = np.array(memory["COP_C"])
+        
+        
+        self.E_NS = np.mean(np.array(memory["E_ns"])[:time_step, :], axis = 0)
         self.solar_gen = np.mean(memory["E_pv"][:time_step, :], axis = 0)
         self.E_hpC_max = np.mean(memory["E_hpC_max"][:time_step, :], axis = 0)
         self.E_ehH_max = np.mean(memory["E_ehH_max"][:time_step, :], axis = 0)
@@ -301,7 +317,7 @@ class DigitalTwin:
             actions = np.array(actions)
             a = actions[bid,:]
             uid = f'Building_{bid+1}'
-
+#             print(np.shape(self.E_hpC_max))
             _electric_demand_cooling = self.buildings[uid].set_storage_cooling(
                         a[0],
                         self.C_p_Csto[bid],

@@ -225,6 +225,7 @@ class Agent(TD3):
             
 #         print('CEM Egrid shape = ', np.shape(E_grid_data))
         E_grid_data = E_grid_data[1:22,:]
+#         print('zeta Egrid = ', E_grid_data)
         ramping_cost = []
         peak_electricity_cost = []
 
@@ -264,6 +265,7 @@ class Agent(TD3):
             E_grid_rbc_data = np.array(E_grid_rbc_data)
         
         E_grid_rbc_data = E_grid_rbc_data[1:22,:]
+#         print('rbc Egrid = ', E_grid_rbc_data)
         ramping_cost_rbc = []
         peak_electricity_cost_rbc = []
 
@@ -496,9 +498,19 @@ class Agent(TD3):
         actions, parameters = super().select_action(state, day_ahead)
         # evaluate agent
         self.evaluate_cost(state)
-        # digital twin
-        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
-        self.digital_twin_interface(state, data_orc)
+        
+#         digital twin 
+        if self.total_it%24 >= self.rbc_threshold:
+            items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
+                     "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
+            data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
+            for item in items:
+                parameters[item] = np.zeros((24, 9))
+
+                parameters[item][self.total_it % 24, :] = np.array(data_orc[item])
+  
+        self.digital_twin_interface(state, parameters)
+    
         return actions
 
     def select_action_debug(self, state, day_ahead: bool = False):
@@ -593,6 +605,7 @@ class Agent(TD3):
             E_grid_data = np.array(E_grid_data)
         
         E_grid_data = E_grid_data[1:23,:]
+#         print(E_grid_data)
         ramping_cost = []
         peak_electricity_cost = []
 
@@ -653,6 +666,7 @@ class Agent(TD3):
             cs = deepcopy(current_state)
 
             for t in range(24):
+                
                 self.set_zeta(zeta)
                 actions, optim_values, _ = zip(
                     *[
@@ -679,6 +693,7 @@ class Agent(TD3):
                 )  # Appending Electricity demand to the E_grid_data
 
                 cs = next_state
+            
             
             zeta_cost = self.get_cost(E_grid_zeta_data)
             
