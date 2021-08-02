@@ -24,6 +24,8 @@ class Actor:
         self.rho = rho
         # Optim specific
         self.constraints = []
+        self.scs_cnt = [0 for _ in range(9)]
+        self.fail_cnt = [0 for _ in range(9)]
 
         self.cost = None  # created at every call to `create_problem`. not used in DPP.
         # list of parameter names for Zeta
@@ -551,6 +553,7 @@ class Actor:
             status = self.prob[t].solve(
                 solver="SCS", verbose=debug, max_iters=1000
             )  # Returns the optimal value.
+            self.scs_cnt[building_id] += 1
 
         if float("-inf") < status < float("inf"):
             for var in self.prob[t].variables():
@@ -567,6 +570,7 @@ class Actor:
                         offset = self.rbc_actions[var.name()][building_id, t % 24]
                     actions[var.name()] = np.array(var.value)[0] + offset
         else:
+            self.fail_cnt[building_id] += 1
             print(f"\nDefault solution at t = {t} for building {building_id}")
             for var in self.prob[t].variables():
                 if dispatch:
