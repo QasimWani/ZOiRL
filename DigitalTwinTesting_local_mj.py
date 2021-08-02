@@ -20,6 +20,24 @@ import numpy as np
 import pandas as pd
 import torch
 
+
+class Logger(object):
+    def __init__(self):
+        self.terminal = sys.stdout
+        self.log = open("images/logfile.log", "a")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        #this flush method is needed for python 3 compatibility.
+        #this handles the flush command by doing nothing.
+        #you might want to specify some extra behavior here.
+        pass
+
+sys.stdout = Logger()
+
 # Load environment
 climate_zone = 5
 params = {
@@ -721,6 +739,8 @@ for k in range(len(item_cost)):
                 axs[i, j].set_ylabel("Cost")
             if i == 0:
                 axs[i, j].set_xlabel("Day")
+            print(f'Mean {item_cost[k]} ratio for building {bid+1}')
+            print(np.mean(np.array(CEM_cost[item_cost[k]][bid, :])/np.array(RBC_cost[item_cost[k]][bid, :])))
     plt.legend()
     fig.savefig(f"images/{item_cost[k]}_compare.pdf", bbox_inches="tight")
 
