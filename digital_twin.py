@@ -204,19 +204,40 @@ class DigitalTwin:
         time_step = total_it % 24
 
         # Getting state for current time step and 9 buildings
-        self.E_NS = memory["E_ns"][time_step, :]
-        self.solar_gen = memory["E_pv"][time_step, :]
-        self.E_hpC_max = memory["E_hpC_max"][time_step, :]
-        self.E_ehH_max = memory["E_ehH_max"][time_step, :]
-        self.E_bat_max = memory["E_bat_max"][time_step, :]
-        self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
-        self.C_p_Csto = memory["C_p_Csto"][time_step, :]
-        self.C_p_bat = memory["C_p_bat"][time_step, :]
+        
+        
+        
+#         self.E_NS = memory["E_ns"][time_step, :]
+#         print(np.shape(self.E_NS))
+#         self.solar_gen = memory["E_pv"][time_step, :]
+#         self.E_hpC_max = memory["E_hpC_max"][time_step, :]
+#         self.E_ehH_max = memory["E_ehH_max"][time_step, :]
+#         self.E_bat_max = memory["E_bat_max"][time_step, :]
+#         self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
+#         self.C_p_Csto = memory["C_p_Csto"][time_step, :]
+#         self.C_p_bat = memory["C_p_bat"][time_step, :]
+#         self.eta_bat = zeta["eta_bat"][time_step, :]
+#         self.E_pv = memory["E_pv"][time_step, :]
+#         self.H_bd = memory["H_bd"][time_step, :]
+#         self.C_bd = memory["C_bd"][time_step, :]
+#         self.COP_C = memory["COP_C"][time_step, :]
+        
+        
+            
+        self.E_NS = np.mean(memory["E_ns"][:time_step, :], axis = 0)
+        self.solar_gen = np.mean(memory["E_pv"][:time_step, :], axis = 0)
+        self.E_hpC_max = np.mean(memory["E_hpC_max"][:time_step, :], axis = 0)
+        self.E_ehH_max = np.mean(memory["E_ehH_max"][:time_step, :], axis = 0)
+        self.E_bat_max = np.mean(memory["E_bat_max"][:time_step, :], axis = 0)
+        self.C_p_Hsto = np.mean(memory["C_p_Hsto"][:time_step, :], axis = 0)
+        self.C_p_Csto = np.mean(memory["C_p_Csto"][:time_step, :], axis = 0)
+        self.C_p_bat = np.mean(memory["C_p_bat"][:time_step, :], axis = 0)
         self.eta_bat = zeta["eta_bat"][time_step, :]
-        self.E_pv = memory["E_pv"][time_step, :]
-        self.H_bd = memory["H_bd"][time_step, :]
-        self.C_bd = memory["C_bd"][time_step, :]
-        self.COP_C = memory["COP_C"][time_step, :]
+        self.E_pv = np.mean(memory["E_pv"][:time_step, :], axis = 0)
+        self.H_bd = np.mean(memory["H_bd"][:time_step, :], axis = 0)
+        self.C_bd = np.mean(memory["C_bd"][:time_step, :], axis = 0)
+        self.COP_C = np.mean(memory["COP_C"][:time_step, :], axis = 0)
+            
 
         self.SOC_Csto = states[:, 25] *self.C_p_Csto
         self.SOC_Hsto = states[:, 26]*self.C_p_Hsto
