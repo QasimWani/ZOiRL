@@ -54,9 +54,9 @@ class Agent(TD3):
         )
 
         observation_space = kwargs["observation_space"]
-#         self.env = kwargs["env"]
+        self.env = kwargs["env"]
 
-#         self.oracle = Oracle(self.env,kwargs["action_spaces"])
+        self.oracle = Oracle(self.env,kwargs["action_spaces"])
 
 
         self.state_hist = []
@@ -69,6 +69,7 @@ class Agent(TD3):
         self.flag = 0
         self.all_costs = []
         self.DT_costs = []
+        self.sod = np.ones((9,30))
 
         self.p_ele_logger = []
         self.mean_elite_set = []
@@ -137,7 +138,7 @@ class Agent(TD3):
 
         # @Vanshaj, make sure you define this!
         self.zeta_k_list = np.ones(
-            ((4, 1, 24, len(observation_space)))
+            ((5, 1, 24, len(observation_space)))
         )  # 4 different Zetas.
 
         self.zeta_k_list[1,:,0:13, :] = 0.2
@@ -223,7 +224,7 @@ class Agent(TD3):
             E_grid_data = np.array(E_grid_data)
             
 #         print('CEM Egrid shape = ', np.shape(E_grid_data))
-        
+        E_grid_data = E_grid_data[1:22,:]
         ramping_cost = []
         peak_electricity_cost = []
 
@@ -238,8 +239,48 @@ class Agent(TD3):
         total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
         
         total_cost = np.reshape(total_cost, (1, self.buildings))
+        
+        E_grid_rbc_data = []
 
-        cost = total_cost          # Array of size 9
+        # get RBC cost for doing rbc actions for one day
+        cs = deepcopy(self.sod)
+        
+        for t in range(23):
+            next_state = self.Digital_Twin.transition(
+                cs,
+                self.agent_rbc.select_action(t),
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
+
+            E_grid_rbc_data.append(
+                next_state[:, 28]
+            )  # Apeending Electricity demand to the E_grid_data
+
+            cs = next_state
+            
+        if isinstance(E_grid_rbc_data, list):
+            E_grid_rbc_data = np.array(E_grid_rbc_data)
+        
+        E_grid_rbc_data = E_grid_rbc_data[1:22,:]
+        ramping_cost_rbc = []
+        peak_electricity_cost_rbc = []
+
+        for bid in range(9):
+            ramping_cost_t_rbc = []
+            peak_electricity_cost_t_rbc = []
+            E_grid_t_rbc = E_grid_rbc_data[:, bid]  #  24*1
+
+            ramping_cost_rbc.append(np.sum(np.abs(E_grid_t_rbc[1:] - E_grid_t_rbc[:-1])))  # Size 9
+            peak_electricity_cost_rbc.append(np.max(E_grid_t_rbc))  # Size 9
+
+        rbc_cost = np.array(ramping_cost_rbc) + np.array(peak_electricity_cost_rbc)  # Size 9
+        
+        rbc_cost = np.reshape(rbc_cost, (1, self.buildings))
+        
+        
+        cost = np.divide(total_cost, rbc_cost) 
 
         return cost
 
@@ -355,6 +396,9 @@ class Agent(TD3):
         """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
         if self.total_it <= self.rbc_threshold:
             return
+        
+        if self.total_it % 24 == 0:
+            self.sod = state
 
         E_observed = state[:, 28]  # Storing E_grid for all buildings
 
@@ -453,7 +497,8 @@ class Agent(TD3):
         # evaluate agent
         self.evaluate_cost(state)
         # digital twin
-        self.digital_twin_interface(state, parameters)
+        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
+        self.digital_twin_interface(state, data_orc)
         return actions
 
     def select_action_debug(self, state, day_ahead: bool = False):
@@ -468,7 +513,7 @@ class Agent(TD3):
         parameters = {}
         items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
                  "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
-        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)
+        data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
         for item in items:
             parameters[item] = np.zeros((24, 9))
             if item == "E_bat_max":
@@ -541,37 +586,13 @@ class Agent(TD3):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
         self.day_data[t] = parameters
         
-#     def get_cem_daily_cost(self, E_grid_data: np.ndarray):
-#         """Computes cost from E_grid_data for 9 buildings"""
-        
-#         if isinstance(E_grid_data, list):
-#             E_grid_data = np.array(E_grid_data)
-
-#         ramping_cost = []
-#         peak_electricity_cost = []
-
-#         for bid in range(9):
-#             ramping_cost_t = []
-#             peak_electricity_cost_t = []
-#             E_grid_t = E_grid_data[:, bid]  #  24*1
-
-#             ramping_cost.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))  # Size 9
-#             peak_electricity_cost.append(np.max(E_grid_t))  # Size 9
-
-#         total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
-        
-#         total_cost = np.reshape(total_cost, (1, self.buildings))
-
-#         cost = total_cost          # Array of size 9
-
-#         return cost
 
     def get_cost(self, E_grid_data: np.ndarray):
         """Computes cost from E_grid_data for 9 buildings"""
         if isinstance(E_grid_data, list):
             E_grid_data = np.array(E_grid_data)
         
-#         print('DT Egrid shape = ', np.shape(E_grid_data))
+        E_grid_data = E_grid_data[1:23,:]
         ramping_cost = []
         peak_electricity_cost = []
 
@@ -579,11 +600,15 @@ class Agent(TD3):
             ramping_cost_t = []
             peak_electricity_cost_t = []
             E_grid_t = E_grid_data[:, bid]  #  24*1
-
+            
             ramping_cost.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))  # Size 9
             peak_electricity_cost.append(np.max(E_grid_t))  # Size 9
-
+            
+#         print(ramping_cost)
+#         print(peak_electricity_cost)
+        
         total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
+        
 
         cost = total_cost          # Array of size 9
 
@@ -619,8 +644,8 @@ class Agent(TD3):
         E_grid_zeta_data = []
         all_zeta_costs = []
         
-#         # Evaluating for the current zeta as well
-#         self.zeta_k_list[4,:,:, :] = self.zeta
+        # Evaluating for the current zeta as well
+        self.zeta_k_list[4,:,:, :] = self.zeta
         
         for zeta in self.zeta_k_list:
             
@@ -663,7 +688,7 @@ class Agent(TD3):
             
             E_grid_zeta_data = []  # To store E_grids for the new zeta
             
-        self.DT_costs.append(all_zeta_costs[-1])
+        self.DT_costs.append(ratios[-1])
         
         ratios = np.array(ratios)
         
