@@ -241,15 +241,10 @@ class Predictor(DataLoader):
                 elec_dem[uid].append(np.array(buffer.get(i)["elec_dem"])[:, uid])
                 solar_gen[uid].append(np.array(buffer.get(i)["solar_gen"])[:, uid])
 
-        for i in range(-5, 1):
-            for uid in self.building_ids:
-                solar_gen[uid].append(np.array(buffer.get(i)["solar_gen"])[:, uid])
-
-        for i in range(len(solar_gen[0])):
+        for i in range(len(elec_dem[0])):
             for uid in self.building_ids:
                 solar_alldays[uid] += solar_gen[uid][i]
 
-        for i in range(len(elec_dem[0])):
             if daytype[0][i] in [7]:
                 weekend1 += 1
                 for uid in self.building_ids:
@@ -264,19 +259,19 @@ class Predictor(DataLoader):
                     elec_weekday[uid] += elec_dem[uid][i]
 
         for uid in self.building_ids:
-            self.solar_avg[uid] = solar_alldays[uid] / 5
+            self.solar_avg[uid] = solar_alldays[uid] / 13
             self.elec_weekday_avg[uid] = elec_weekday[uid] / weekday
             self.elec_weekend1_avg[uid] = (
                 elec_weekend1[uid] / weekend1
                 if self.elec_weekend1_avg[uid].all() == np.zeros(24).all()
-                else 0.5 * self.elec_weekend1_avg[uid]
-                + elec_weekend1[uid] * 0.5
+                else (1 - weekend1 * 0.2) * self.elec_weekend1_avg[uid]
+                + elec_weekend1[uid] * 0.2
             )
             self.elec_weekend2_avg[uid] = (
                 elec_weekend2[uid] / weekend2
                 if self.elec_weekend2_avg[uid].all() == np.zeros(24).all()
-                else 0.5 * self.elec_weekend2_avg[uid]
-                + elec_weekend2[uid] * 0.5
+                else (1 - weekend2 * 0.2) * self.elec_weekend2_avg[uid]
+                + elec_weekend2[uid] * 0.2
             )
 
     # TODO: @Zhiyao - make sure in the case of adaptive this returns (and is sent to actor.py --> see TD3.py (select_action)) data of dimensions (window, 9)
@@ -290,7 +285,7 @@ class Predictor(DataLoader):
         """Helper method for uploading data to memory. This is for estimation only!!!"""
         T = 24
         window = T - timestep % 24
-        self.timestep = timestep
+
         observation_data = {}
 
         # get previous day's buffer
@@ -627,94 +622,92 @@ class Predictor(DataLoader):
         x_solar, y_solar, x_elec, y_elec = self.reshape_array(pred_buffer)
         for uid in self.building_ids:
             self.regr_solar[uid].fit(x_solar[uid], y_solar[uid])
-            # self.regr_elec[uid].fit(x_elec[uid], y_elec[uid])
+            self.regr_elec[uid].fit(x_elec[uid], y_elec[uid])
         # ------------------start prediction-------------------
         input_solar, input_elec = self.gather_input(timestep)
-        solar_gen = {uid: np.zeros([T]) for uid in self.building_ids}
-        elec_dem = {uid: np.zeros([T]) for uid in self.building_ids}
+        solar_gen = {uid: np.zeros([window + 2]) for uid in self.building_ids}
+        elec_dem = {uid: np.zeros([window + 2]) for uid in self.building_ids}
 
         daytype = {uid: 0 for uid in self.building_ids}
         day_pred_solar = {uid: np.zeros([window]) for uid in self.building_ids}
         day_pred_elec = {uid: np.zeros([window]) for uid in self.building_ids}
 
         for uid in self.building_ids:
-        #     if timestep % 24 in [0]:
-        #         solar_gen[uid][0] = (
-        #             pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
-        #         )
-        #         solar_gen[uid][1] = (
-        #             pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
-        #             - self.solar_avg[uid][0]
-        #         )
-        #     else:
-        #         solar_gen[uid][0] = (
-        #             pred_buffer.get(-1)["solar_gen"][(timestep - 1) % 24][uid]
-        #             - self.solar_avg[uid][(timestep - 1) % 24]
-        #         )
-        #         solar_gen[uid][1] = (
-        #             pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
-        #             - self.solar_avg[uid][timestep % 24]
-        #         )
+            if timestep % 24 in [0]:
+                solar_gen[uid][0] = (
+                    pred_buffer.get(-2)["solar_gen"][-1][uid] - self.solar_avg[uid][23]
+                )
+                solar_gen[uid][1] = (
+                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
+                    - self.solar_avg[uid][0]
+                )
+            else:
+                solar_gen[uid][0] = (
+                    pred_buffer.get(-1)["solar_gen"][(timestep - 1) % 24][uid]
+                    - self.solar_avg[uid][(timestep - 1) % 24]
+                )
+                solar_gen[uid][1] = (
+                    pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]
+                    - self.solar_avg[uid][timestep % 24]
+                )
             daytype[uid] = pred_buffer.get(-1)["daytype"][0][uid]
 
-
-            #
-            # if timestep % 24 in [0]:
-            #     if daytype[uid] in [7]:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-2)["elec_dem"][-1][uid]
-            #             - self.elec_weekend1_avg[uid][23]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][0][uid]
-            #             - self.elec_weekend1_avg[uid][0]
-            #         )
-            #     elif daytype[uid] in [1, 8]:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-2)["elec_dem"][-1][uid]
-            #             - self.elec_weekend2_avg[uid][23]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][0][uid]
-            #             - self.elec_weekend2_avg[uid][0]
-            #         )
-            #     else:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-2)["elec_dem"][-1][uid]
-            #             - self.elec_weekday_avg[uid][23]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][0][uid]
-            #             - self.elec_weekday_avg[uid][0]
-            #         )
-            # else:
-            #     if daytype[uid] in [7]:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-            #             - self.elec_weekend1_avg[uid][(timestep - 1) % 24]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
-            #             - self.elec_weekend1_avg[uid][timestep % 24]
-            #         )
-            #     elif daytype[uid] in [1, 8]:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-            #             - self.elec_weekend2_avg[uid][(timestep - 1) % 24]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
-            #             - self.elec_weekend2_avg[uid][timestep % 24]
-            #         )
-            #     else:
-            #         elec_dem[uid][0] = (
-            #             pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
-            #             - self.elec_weekday_avg[uid][(timestep - 1) % 24]
-            #         )
-            #         elec_dem[uid][1] = (
-            #             pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
-            #             - self.elec_weekday_avg[uid][timestep % 24]
-            #         )
+            if timestep % 24 in [0]:
+                if daytype[uid] in [7]:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-2)["elec_dem"][-1][uid]
+                        - self.elec_weekend1_avg[uid][23]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][0][uid]
+                        - self.elec_weekend1_avg[uid][0]
+                    )
+                elif daytype[uid] in [1, 8]:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-2)["elec_dem"][-1][uid]
+                        - self.elec_weekend2_avg[uid][23]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][0][uid]
+                        - self.elec_weekend2_avg[uid][0]
+                    )
+                else:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-2)["elec_dem"][-1][uid]
+                        - self.elec_weekday_avg[uid][23]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][0][uid]
+                        - self.elec_weekday_avg[uid][0]
+                    )
+            else:
+                if daytype[uid] in [7]:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekend1_avg[uid][(timestep - 1) % 24]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
+                        - self.elec_weekend1_avg[uid][timestep % 24]
+                    )
+                elif daytype[uid] in [1, 8]:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekend2_avg[uid][(timestep - 1) % 24]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
+                        - self.elec_weekend2_avg[uid][timestep % 24]
+                    )
+                else:
+                    elec_dem[uid][0] = (
+                        pred_buffer.get(-1)["elec_dem"][(timestep - 1) % 24][uid]
+                        - self.elec_weekday_avg[uid][(timestep - 1) % 24]
+                    )
+                    elec_dem[uid][1] = (
+                        pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]
+                        - self.elec_weekday_avg[uid][timestep % 24]
+                    )
 
             # # daytype[uid] = pred_buffer.get_recent()["day"][0][uid]
             # if daytype[uid] in [7]:
@@ -733,82 +726,41 @@ class Predictor(DataLoader):
             #         - self.elec_weekday_avg[uid][0]
             #     )
 
-            # for i in range(np.shape(input_solar[uid])[0]):
-            #     x_pred = [
-            #         [
-            #             solar_gen[uid][i],
-            #             solar_gen[uid][i + 1],
-            #             input_solar[uid][i, 0],
-            #             input_solar[uid][i, 1],
-            #         ]
-            #     ]
-            #     y_pred = self.regr_solar[uid].predict(x_pred)
-            #     avg = self.solar_avg[uid][(i + 1 + timestep) % 24]
-            #     day_pred_solar[uid][i] = max(0, y_pred.item() + avg)
-            #     solar_gen[uid][i + 2] = y_pred.item()
-            # day_pred_solar[uid] = np.append(
-            #     np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
-            #     day_pred_solar[uid][0 : window - 1],
-            # )
+            for i in range(np.shape(input_solar[uid])[0]):
+                x_pred = [
+                    [
+                        solar_gen[uid][i],
+                        solar_gen[uid][i + 1],
+                        input_solar[uid][i, 0],
+                        input_solar[uid][i, 1],
+                    ]
+                ]
+                y_pred = self.regr_solar[uid].predict(x_pred)
+                avg = self.solar_avg[uid][(i + 1 + timestep) % 24]
+                day_pred_solar[uid][i] = max(0, y_pred.item() + avg)
+                solar_gen[uid][i + 2] = y_pred.item()
+            day_pred_solar[uid] = np.append(
+                np.array([pred_buffer.get(-1)["solar_gen"][timestep % 24][uid]]),
+                day_pred_solar[uid][0 : window - 1],
+            )
 
-            """now you are at hour 7, so far you have obsverd actual loads e1,...,e7. 
-            and you want to predict for load for hours 8 to 24. the average load profile is a1,...,,a24. 
-            so you first calculate the offset d= (e1+...+d7)/7 - (a1+...+a7)/7. 
-            if d >0, it means the current day may have higher loads than average. 
-            then for the prediction, yoou just predict a8+d,...,a_24+d"""
-            if daytype[uid] in [7]:
-                elec_dem = self.elec_weekend1_avg[uid]
-            elif daytype[uid] in [1, 8]:
-                elec_dem = self.elec_weekend2_avg[uid]
-            else:
-                elec_dem = self.elec_weekday_avg[uid]
-            solar_gen = self.solar_avg[uid]
-
-            if timestep % 24 == 0:
-                day_pred_elec[uid] = elec_dem
-                day_pred_solar[uid] = solar_gen
-            else:
-                today_e_load = np.array(pred_buffer.get(-1)["elec_dem"])
-                today_s_load = np.array(pred_buffer.get(-1)["solar_gen"])
-                day_hour = (timestep % 24)
-                if timestep % 24 in [1, 2]:
-                    offset_e = np.sum(today_e_load[-day_hour:, uid]) / day_hour -\
-                             np.sum(elec_dem[: day_hour]) / day_hour
-                    day_pred_elec[uid] = elec_dem[day_hour:] + offset_e
-
-                    offset_s = np.sum(today_s_load[-day_hour:, uid]) / day_hour -\
-                             np.sum(solar_gen[: day_hour]) / day_hour
-                    day_pred_solar[uid] = solar_gen[day_hour:] + offset_s
+            for i in range(len(input_elec[uid])):
+                x_pred = [
+                    [elec_dem[uid][i], elec_dem[uid][i + 1], input_elec[uid][i, 0]]
+                ]  # ignore humidity
+                y_pred = self.regr_elec[uid].predict(x_pred)
+                if daytype[uid] in [7]:
+                    avg = self.elec_weekend1_avg[uid][(i + 1 + timestep) % 24]
+                elif daytype[uid] in [1, 8]:
+                    avg = self.elec_weekend2_avg[uid][(i + 1 + timestep) % 24]
                 else:
-                    offset_e = np.sum(today_e_load[-3:, uid]) / 3 -\
-                             np.sum(elec_dem[day_hour-3: day_hour]) / 3
-                    day_pred_elec[uid] = elec_dem[day_hour:] + offset_e
-
-                    offset_s = np.sum(today_s_load[-3:, uid]) / 3 - \
-                               np.sum(solar_gen[day_hour-3: day_hour]) / 3
-                    day_pred_solar[uid] = solar_gen[day_hour:] + offset_s
-
-                for t in range(len(day_pred_elec[uid])):
-                    day_pred_elec[uid][t] = max(0, day_pred_elec[uid][t])
-                    day_pred_solar[uid][t] = max(0, day_pred_solar[uid][t])
-
-            # for i in range(len(input_elec[uid])):
-            #     x_pred = [
-            #         [elec_dem[uid][i], elec_dem[uid][i + 1]]
-            #     ]  # ignore humidity
-            #     y_pred = self.regr_elec[uid].predict(x_pred)
-            #     if daytype[uid] in [7]:
-            #         avg = self.elec_weekend1_avg[uid][(i + 1 + timestep) % 24]
-            #     elif daytype[uid] in [1, 8]:
-            #         avg = self.elec_weekend2_avg[uid][(i + 1 + timestep) % 24]
-            #     else:
-            #         avg = self.elec_weekday_avg[uid][(i + 1 + timestep) % 24]
-            #     day_pred_elec[uid][i] = max(0, y_pred.item() + avg)
-            #     elec_dem[uid][i + 2] = y_pred.item()
-            # day_pred_elec[uid] = np.append(
-            #     np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
-            #     day_pred_elec[uid][: window - 1],
-            # )
+                    avg = self.elec_weekday_avg[uid][(i + 1 + timestep) % 24]
+                day_pred_elec[uid][i] = max(0, y_pred.item() + avg)
+                elec_dem[uid][i + 2] = y_pred.item()
+            day_pred_elec[uid] = np.append(
+                np.array([pred_buffer.get(-1)["elec_dem"][timestep % 24][uid]]),
+                day_pred_elec[uid][: window - 1],
+            )
 
         return day_pred_solar, day_pred_elec, input_elec
 
@@ -880,6 +832,7 @@ class Predictor(DataLoader):
                         )
 
                     x_append1 = [x_temp1, x_temp2]
+                    x_append2 = [x_tout[i][uid]]
 
                     if daytype[i][uid] in [7]:
                         y = elec_dem[i][uid] - self.elec_weekend1_avg[uid][i % 24]
@@ -888,7 +841,7 @@ class Predictor(DataLoader):
                     else:
                         y = elec_dem[i][uid] - self.elec_weekday_avg[uid][i % 24]
 
-                    x_elec[uid].append(x_append1)
+                    x_elec[uid].append(x_append1 + x_append2)
                     # print("x_pred for elec: ", x_append1 + x_append2)
                     y_elec[uid].append([y])
 
@@ -939,136 +892,173 @@ class Predictor(DataLoader):
             # starting from t=0, need a loop to cycle time
             # say at hour=t, check if the action of c/h is clipped
             # if so, directly calculate h/c load and continue this loop
-            if self.timestep % 24 == 0:
-                for time in range(24):
-                    now_state = self.state_buffer.get(-2)
-                    now_c_soc = now_state["soc_c"][time][uid]
-                    now_h_soc = now_state["soc_h"][time][uid]
-                    now_b_soc = now_state["soc_b"][time][uid]
-                    now_t_out = now_state["t_out"][time][uid]
-                    now_solar = now_state["solar_gen"][time][uid]
-                    now_elec_dem = now_state["elec_dem"][time][uid]
-                    cop_c = self.cop_cal(now_t_out)  # cop at t
-                    now_action = self.action_buffer.get(-2)
-                    now_action_c = now_action["action_C"][time][uid]
-                    now_action_h = now_action["action_H"][time][uid]
-                    now_action_b = now_action["action_bat"][time][uid]
+            for time in range(24):
+                now_state = self.state_buffer.get(-2)
+                now_c_soc = now_state["soc_c"][time][uid]
+                now_h_soc = now_state["soc_h"][time][uid]
+                now_b_soc = now_state["soc_b"][time][uid]
+                now_t_out = now_state["t_out"][time][uid]
+                now_solar = now_state["solar_gen"][time][uid]
+                now_elec_dem = now_state["elec_dem"][time][uid]
+                cop_c = self.cop_cal(now_t_out)  # cop at t
+                now_action = self.action_buffer.get(-2)
+                now_action_c = now_action["action_C"][time][uid]
+                now_action_h = now_action["action_H"][time][uid]
+                now_action_b = now_action["action_bat"][time][uid]
 
-                    if time != 0:
-                        prev_state = now_state
-                        prev_t_out = prev_state["t_out"][time - 1][
-                            uid
-                        ]  # when time=0, time-1=-1
-                    else:
-                        prev_state = self.state_buffer.get(-3)
-                        prev_t_out = prev_state["t_out"][-1][uid]
+                if time != 0:
+                    prev_state = now_state
+                    prev_t_out = prev_state["t_out"][time - 1][
+                        uid
+                    ]  # when time=0, time-1=-1
+                else:
+                    prev_state = self.state_buffer.get(-3)
+                    prev_t_out = prev_state["t_out"][-1][uid]
 
-                    if time != 23:
-                        next_state = now_state
-                        next_c_soc = next_state["soc_c"][time + 1][uid]
-                        next_h_soc = next_state["soc_h"][time + 1][uid]
-                        next_b_soc = next_state["soc_b"][time + 1][uid]
-                        next_t_out = next_state["t_out"][time + 1][uid]
-                        next_elec_con = next_state["elec_cons"][time + 1][uid]
-                        y = (
-                            now_solar
-                            + next_elec_con
-                            - now_elec_dem
-                            - (self.C_qr_est[uid] / cop_c)
-                            * (next_c_soc - (1 - self.CF_C) * now_c_soc)
-                            * 0.9
-                            - (self.H_qr_est[uid] / effi_h)
-                            * (next_h_soc - (1 - self.CF_H) * now_h_soc)
-                            - (next_b_soc - (1 - self.CF_B) * now_b_soc)
-                            * self.capacity_b[uid]
-                            / 0.9
-                        )
-                    else:
-                        next_state = self.state_buffer.get(-1)
-                        next_c_soc = next_state["soc_c"][0][uid]
-                        next_h_soc = next_state["soc_h"][0][uid]
-                        next_b_soc = next_state["soc_b"][0][uid]
-                        next_t_out = next_state["t_out"][0][uid]
-                        next_elec_con = next_state["elec_cons"][0][uid]
-                        y = (
-                            now_solar
-                            + next_elec_con
-                            - now_elec_dem
-                            - (self.C_qr_est[uid] / cop_c)
-                            * (next_c_soc - (1 - self.CF_C) * now_c_soc)
-                            * 0.9
-                            - (self.H_qr_est[uid] / effi_h)
-                            * (next_h_soc - (1 - self.CF_H) * now_h_soc)
-                            - (next_b_soc - (1 - self.CF_B) * now_b_soc)
-                            * self.capacity_b[uid]
-                            / 0.9
-                        )
-
-                    a_clip_c = next_c_soc - (1 - self.CF_C) * now_c_soc
-                    a_clip_h = next_h_soc - (1 - self.CF_H) * now_h_soc
-
-
-                    if self.has_heating[uid] is False:
-                        c_load = max(0.1, y * cop_c)
-                        h_load = 0
-                        est_h_load[uid][time] = h_load
-                        est_c_load[uid][time] = c_load
-                        c_hasest[uid][time], h_hasest[uid][time] = -1, -1
-                    else:
-                        prev_t_cop = self.cop_cal(prev_t_out)
-                        now_t_cop = self.cop_cal(now_t_out)
-                        next_t_cop = self.cop_cal(next_t_out)
-                        # if (
-                        #     prev_t_cop != now_t_cop
-                        #     or prev_t_cop != next_t_cop
-                        #     or now_t_cop != next_t_cop
-                        # ):
-                        ## get results of slope in regr model
-                        c_load = max(0, y * cop_c)
-                        h_load = max(0, y * effi_h)
-                        c_hasest[uid][time], h_hasest[uid][time] = 1, 1
-                        # else:  # COP remaining the same (zero)
-                        #     h_load = self.avg_h_load[uid][time]
-                        #     c_load = self.avg_c_load[uid][time]
-                        #     c_hasest[uid][time], h_hasest[uid][time] = 2, 2
-                        # save load est to buffer
-                        est_h_load[uid][time] = np.round(h_load, 2)
-                        est_c_load[uid][time] = np.round(c_load, 2)
-
-            # ----------record average-------------
-                if prev_daytype in [7]:
-                    self.c_weekend1_avg[uid] = (
-                        self.c_weekend1_avg[uid] * 0.3 + est_c_load[uid] * 0.7
-                        if self.c_weekend1_avg[uid].all() != 0
-                        else est_c_load[uid]
-                    )
-                    self.h_weekend1_avg[uid] = (
-                        self.h_weekend1_avg[uid] * 0.3 + est_h_load[uid] * 0.7
-                        if self.h_weekend1_avg[uid].all() != 0
-                        else est_h_load[uid]
-                    )
-                elif prev_daytype in [1, 8]:
-                    self.c_weekend2_avg[uid] = (
-                        self.c_weekend2_avg[uid] * 0.3 + est_c_load[uid] * 0.7
-                        if self.c_weekend2_avg[uid].all() != 0
-                        else est_c_load[uid]
-                    )
-                    self.h_weekend2_avg[uid] = (
-                        self.h_weekend2_avg[uid] * 0.3 + est_h_load[uid] * 0.7
-                        if self.h_weekend2_avg[uid].all() != 0
-                        else est_h_load[uid]
+                if time != 23:
+                    next_state = now_state
+                    next_c_soc = next_state["soc_c"][time + 1][uid]
+                    next_h_soc = next_state["soc_h"][time + 1][uid]
+                    next_b_soc = next_state["soc_b"][time + 1][uid]
+                    next_t_out = next_state["t_out"][time + 1][uid]
+                    next_elec_con = next_state["elec_cons"][time + 1][uid]
+                    y = (
+                        now_solar
+                        + next_elec_con
+                        - now_elec_dem
+                        - (self.C_qr_est[uid] / cop_c)
+                        * (next_c_soc - (1 - self.CF_C) * now_c_soc)
+                        * 0.9
+                        - (self.H_qr_est[uid] / effi_h)
+                        * (next_h_soc - (1 - self.CF_H) * now_h_soc)
+                        - (next_b_soc - (1 - self.CF_B) * now_b_soc)
+                        * self.capacity_b[uid]
+                        / 0.9
                     )
                 else:
-                    self.c_weekday_avg[uid] = (
-                        self.c_weekday_avg[uid] * 0.5 + est_c_load[uid] * 0.5
-                        if self.c_weekday_avg[uid].all() != 0
-                        else est_c_load[uid]
+                    next_state = self.state_buffer.get(-1)
+                    next_c_soc = next_state["soc_c"][0][uid]
+                    next_h_soc = next_state["soc_h"][0][uid]
+                    next_b_soc = next_state["soc_b"][0][uid]
+                    next_t_out = next_state["t_out"][0][uid]
+                    next_elec_con = next_state["elec_cons"][0][uid]
+                    y = (
+                        now_solar
+                        + next_elec_con
+                        - now_elec_dem
+                        - (self.C_qr_est[uid] / cop_c)
+                        * (next_c_soc - (1 - self.CF_C) * now_c_soc)
+                        * 0.9
+                        - (self.H_qr_est[uid] / effi_h)
+                        * (next_h_soc - (1 - self.CF_H) * now_h_soc)
+                        - (next_b_soc - (1 - self.CF_B) * now_b_soc)
+                        * self.capacity_b[uid]
+                        / 0.9
                     )
-                    self.h_weekday_avg[uid] = (
-                        self.h_weekday_avg[uid] * 0.5 + est_h_load[uid] * 0.5
-                        if self.h_weekday_avg[uid].all() != 0
-                        else est_h_load[uid]
-                    )
+
+                a_clip_c = next_c_soc - (1 - self.CF_C) * now_c_soc
+                a_clip_h = next_h_soc - (1 - self.CF_H) * now_h_soc
+
+                # if (
+                #     repeat_times == 0
+                # ):  # can we calculate direct when now_action > 0?
+                #     if uid in [2, 3]:
+                #         c_load = max(0, y * cop_c)
+                #         h_load = 0
+                #         est_h_load[uid][time] = h_load
+                #         est_c_load[uid][time] = c_load
+                #         c_hasest[uid][time], h_hasest[uid][time] = -1, -1
+                #     else:
+                #         if (
+                #             abs(a_clip_c - now_action_c) > 0.001
+                #             and now_action_c < 0
+                #         ):  # cooling get clipped
+                #             c_load = abs(a_clip_c * self.true_val_c[uid])
+                #             if (
+                #                 abs(a_clip_h - now_action_h) > 0.001
+                #                 and now_action_h < 0
+                #             ):  # heating get clipped
+                #                 h_load = a_clip_h * self.true_val_h[uid]
+                #             else:  # heating not clipped
+                #                 h_load = (y - c_load / cop_c) * effi_h
+                #             est_h_load[uid][time] = h_load
+                #             est_c_load[uid][time] = c_load
+                #             c_hasest[uid][time], h_hasest[uid][time] = -1, -1
+                #         elif (
+                #             abs(a_clip_h > now_action_h) > 0.01 and a_clip_h < 0
+                #         ):  # h clipped but c not clipped
+                #             h_load = abs(a_clip_h * self.true_val_h[uid])
+                #             c_load = (y - h_load / effi_h) * cop_c
+                #             c_hasest[uid][time], h_hasest[uid][time] = -1, -1
+                #             est_h_load[uid][time] = h_load
+                #             est_c_load[uid][time] = c_load
+                if self.has_heating[uid] is False:
+                    c_load = max(0.1, y)
+                    h_load = 0
+                    est_h_load[uid][time] = h_load
+                    est_c_load[uid][time] = c_load
+                    c_hasest[uid][time], h_hasest[uid][time] = -1, -1
+                else:
+                    prev_t_cop = self.cop_cal(prev_t_out)
+                    now_t_cop = self.cop_cal(now_t_out)
+                    next_t_cop = self.cop_cal(next_t_out)
+                    # if (
+                    #     prev_t_cop != now_t_cop
+                    #     or prev_t_cop != next_t_cop
+                    #     or now_t_cop != next_t_cop
+                    # ):
+                    ## get results of slope in regr model
+                    c_load = h_load = max(1, y - (1 / now_t_cop + 1 / 0.9))
+                    c_hasest[uid][time], h_hasest[uid][time] = 1, 1
+                    # else:  # COP remaining the same (zero)
+                    #     h_load = self.avg_h_load[uid][time]
+                    #     c_load = self.avg_c_load[uid][time]
+                    #     c_hasest[uid][time], h_hasest[uid][time] = 2, 2
+                    # save load est to buffer
+                    est_h_load[uid][time] = np.round(h_load, 2)
+                    est_c_load[uid][time] = np.round(c_load, 2)
+                # if c_hasest[uid][time] not in [
+                #     0,
+                #     2,
+                # ]:  # meaning that avg can be updated
+
+        for uid in self.building_ids:
+            # if uid in [2, 3]:
+            #     print(uid)
+            # ----------record average-------------
+            if prev_daytype in [7]:
+                self.c_weekend1_avg[uid] = (
+                    self.c_weekend1_avg[uid] * 0.5 + est_c_load[uid] * 0.5
+                    if self.c_weekend1_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekend1_avg[uid] = (
+                    self.h_weekend1_avg[uid] * 0.5 + est_h_load[uid] * 0.5
+                    if self.h_weekend1_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
+            elif prev_daytype in [1, 8]:
+                self.c_weekend2_avg[uid] = (
+                    self.c_weekend2_avg[uid] * 0.5 + est_c_load[uid] * 0.5
+                    if self.c_weekend2_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekend2_avg[uid] = (
+                    self.h_weekend2_avg[uid] * 0.5 + est_h_load[uid] * 0.5
+                    if self.h_weekend2_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
+            else:
+                self.c_weekday_avg[uid] = (
+                    self.c_weekday_avg[uid] * 0.8 + est_c_load[uid] * 0.2
+                    if self.c_weekday_avg[uid].all() != 0
+                    else est_c_load[uid]
+                )
+                self.h_weekday_avg[uid] = (
+                    self.h_weekday_avg[uid] * 0.8 + est_h_load[uid] * 0.2
+                    if self.h_weekday_avg[uid].all() != 0
+                    else est_h_load[uid]
+                )
             # ------------use average-------------
             if daytype in [7]:
                 est_h_load[uid] = self.h_weekend1_avg[uid]
@@ -1091,6 +1081,11 @@ class Predictor(DataLoader):
 
             adaptive_h_load[uid] = est_h_load[uid][T - window :]
             adaptive_c_load[uid] = est_c_load[uid][T - window :]
+
+            # if timestep % 24 == 0:
+            #     print(prev_daytype, daytype, uid)
+            #     print(est_c_load[uid])
+            #     print(est_c_load[uid], "\n")
 
         return adaptive_h_load, adaptive_c_load
 
@@ -1915,74 +1910,3 @@ class Predictor(DataLoader):
             action_gen.append(action_now)
 
         return action_gen, cap_bat, effi, nominal_p, add_points
-
-
-# class DataLoader:
-#     """Main Class for loading and uplaoding data to buffer."""
-
-#     def __init__(
-#         self,
-#         is_oracle: bool,
-#         action_space: list,
-#         env: CityLearn = None,
-#     ) -> None:
-
-#         self.env = env
-#         if is_oracle:
-#             self.model = Oracle(env, action_space)
-#         else:
-#             self.model = Predictor(...)
-
-#         self.data = {} if is_oracle else None
-
-#     def upload_data(
-#         self,
-#         replay_buffer: ReplayBuffer,
-#         E_grid: list,
-#         action: list,
-#         reward: list,
-#         env: CityLearn = None,
-#         t_idx: int = -1,  # daystep (hour) of the simulation [0 - (4years-1)]
-#     ):
-#         """Upload to memory"""
-
-#         self.model.upload_data(replay_buffer, E_grid, action, reward, env, t_idx)
-
-#     def load_data(self):
-#         """Sample from Memory. NOTE: Optional"""
-#         self.model.load_data()
-
-
-# class Predictor:
-#     """@Zhiyao + @Mingyu - estimates parameters, loads data supplied to `Actor`"""
-
-#     def __init__(self):
-#         raise NotImplementedError("Predictor class not implemented")
-
-#     def upload_data(self, replay_buffer: ReplayBuffer):
-#         raise NotImplementedError("Functionality not implemented")
-
-#     def load_data(self, state, t):
-#         raise NotImplementedError("Functionality not implemented")
-
-#     # TODO: implement other methods here. Make sure `DataLoader.upload_data()` and `DataLoader.load_data()` are processed correctly
-#     def parse_data(self, data: dict, current_data: dict) -> list:
-#         """Parses `current_data` for optimization and loads into `data`"""
-#         assert (
-#             len(current_data) == 30  # includes actions + rewards + E_grid_collect
-#         ), "Invalid number of parameters. Can't run basic (root) agent optimization"
-
-#         for key, value in current_data.items():
-#             if key not in data:
-#                 data[key] = []  # [] x, 9 1, 9 -> x + 1, 9
-#             data[key].append(value)
-
-#         return data
-
-#     def convert_to_numpy(self, params: dict):
-#         """Converts dic[key] to nd.array"""
-#         for key in params:
-#             if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
-#                 params[key] = np.array(params[key][0])
-#             else:
-#                 params[key] = np.array(params[key])
