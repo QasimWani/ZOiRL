@@ -205,73 +205,42 @@ class DigitalTwin:
 
         # Getting state for current time step and 9 buildings
         
+        if time_step == 0:
         
-        
-#         self.E_NS = memory["E_ns"][time_step, :]
-#         print(np.shape(self.E_NS))
-#         self.solar_gen = memory["E_pv"][time_step, :]
-#         self.E_hpC_max = memory["E_hpC_max"][time_step, :]
-#         self.E_ehH_max = memory["E_ehH_max"][time_step, :]
-#         self.E_bat_max = memory["E_bat_max"][time_step, :]
-#         self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
-#         self.C_p_Csto = memory["C_p_Csto"][time_step, :]
-#         self.C_p_bat = memory["C_p_bat"][time_step, :]
-#         self.eta_bat = zeta["eta_bat"][time_step, :]
-#         self.E_pv = memory["E_pv"][time_step, :]
-#         self.H_bd = memory["H_bd"][time_step, :]
-#         self.C_bd = memory["C_bd"][time_step, :]
-#         self.COP_C = memory["COP_C"][time_step, :]
-          
-        
-        
-        
-#         self.E_NS = np.array(memory["E_ns"])
-#         self.solar_gen = np.array(memory["E_pv"])
-#         self.E_hpC_max = np.array(memory["E_hpC_max"])
-#         self.E_ehH_max = np.array(memory["E_ehH_max"])
-#         self.E_bat_max = np.array(memory["C_p_bat"])
-#         self.C_p_Hsto = np.array(memory["C_p_Hsto"])
-#         self.C_p_Csto = np.array(memory["C_p_Csto"])
-#         self.C_p_bat = np.array(memory["C_p_bat"])
-#         self.eta_bat = zeta["eta_bat"][time_step, :]
-#         self.E_pv = np.array(memory["E_pv"])
-#         self.H_bd = np.array(memory["H_bd"])
-#         self.C_bd = np.array(memory["C_bd"])
-#         self.COP_C = np.array(memory["COP_C"])
-        
-        
-        self.E_NS = np.mean(np.array(memory["E_ns"])[:time_step, :], axis = 0)
-        self.solar_gen = np.mean(memory["E_pv"][:time_step, :], axis = 0)
-        self.E_hpC_max = np.mean(memory["E_hpC_max"][:time_step, :], axis = 0)
-        self.E_ehH_max = np.mean(memory["E_ehH_max"][:time_step, :], axis = 0)
-        self.E_bat_max = np.mean(memory["E_bat_max"][:time_step, :], axis = 0)
-        self.C_p_Hsto = np.mean(memory["C_p_Hsto"][:time_step, :], axis = 0)
-        self.C_p_Csto = np.mean(memory["C_p_Csto"][:time_step, :], axis = 0)
-        self.C_p_bat = np.mean(memory["C_p_bat"][:time_step, :], axis = 0)
-        self.eta_bat = zeta["eta_bat"][time_step, :]
-        self.E_pv = np.mean(memory["E_pv"][:time_step, :], axis = 0)
-        self.H_bd = np.mean(memory["H_bd"][:time_step, :], axis = 0)
-        self.C_bd = np.mean(memory["C_bd"][:time_step, :], axis = 0)
-        self.COP_C = np.mean(memory["COP_C"][:time_step, :], axis = 0)
+            self.E_NS = memory["E_ns"][time_step, :]
+            self.solar_gen = memory["E_pv"][time_step, :]
+            self.E_hpC_max = memory["E_hpC_max"][time_step, :]
+            self.E_ehH_max = memory["E_ehH_max"][time_step, :]
+            self.E_bat_max = memory["E_bat_max"][time_step, :]
+            self.C_p_Hsto = memory["C_p_Hsto"][time_step, :]
+            self.C_p_Csto = memory["C_p_Csto"][time_step, :]
+            self.C_p_bat = memory["C_p_bat"][time_step, :]
+            self.eta_bat = zeta["eta_bat"][time_step, :]
+            self.E_pv = memory["E_pv"][time_step, :]
+            self.H_bd = memory["H_bd"][time_step, :]
+            self.C_bd = memory["C_bd"][time_step, :]
+            self.COP_C = memory["COP_C"][time_step, :]
+
+        else:
+            # Taking average of all the previous predictions to have a more robust estimate
+            self.E_NS = np.mean(memory["E_ns"][:time_step, :], axis = 0)
+            self.solar_gen = np.mean(memory["E_pv"][:time_step, :], axis = 0)
+            self.E_hpC_max = np.mean(memory["E_hpC_max"][:time_step, :], axis = 0)
+            self.E_ehH_max = np.mean(memory["E_ehH_max"][:time_step, :], axis = 0)
+            self.E_bat_max = np.mean(memory["E_bat_max"][:time_step, :], axis = 0)
+            self.C_p_Hsto = np.mean(memory["C_p_Hsto"][:time_step, :], axis = 0)
+            self.C_p_Csto = np.mean(memory["C_p_Csto"][:time_step, :], axis = 0)
+            self.C_p_bat = np.mean(memory["C_p_bat"][:time_step, :], axis = 0)
+            self.eta_bat = zeta["eta_bat"][time_step, :]
+            self.E_pv = np.mean(memory["E_pv"][:time_step, :], axis = 0)
+            self.H_bd = np.mean(memory["H_bd"][:time_step, :], axis = 0)
+            self.C_bd = np.mean(memory["C_bd"][:time_step, :], axis = 0)
+            self.COP_C = np.mean(memory["COP_C"][:time_step, :], axis = 0)
             
 
         self.SOC_Csto = states[:, 25] *self.C_p_Csto
         self.SOC_Hsto = states[:, 26]*self.C_p_Hsto
         self.SOC_bat = states[:, 27]*self.C_p_bat
-        # # Getting state for current time step and 9 buildings    # For testing purposes
-        # self.E_hpC_max = np.ones(9)
-        # self.E_ehH_max = np.ones(9)
-        # self.E_bat_max = np.ones(9)
-        # self.C_p_Csto = np.ones(9)
-        # self.C_p_Hsto = np.ones(9)
-        # self.C_p_bat = np.ones(9)
-        # self.eta_bat = np.ones(9)
-        # self.E_PV = np.ones(9)
-        # self.H_bd = np.ones(9)
-        # self.C_bd = np.ones(9)
-        # self.COP_C = np.ones(9)
-        # self.C_max = np.ones(9)
-        # self.H_max = np.ones(9)
 
         # Load all the 9 buildings with current states
         self.building_loader()

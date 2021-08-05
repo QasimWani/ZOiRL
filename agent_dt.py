@@ -60,7 +60,7 @@ class Agent(TD3):
 
 
         self.state_hist = []
-        self.E_grid_dt = []
+        self.E_grid_dt = []       # For debugging purposes
         # CEM Specific parameters
         self.N_samples = 10
         self.K = 5  # size of elite set
@@ -68,7 +68,7 @@ class Agent(TD3):
         self.k = 1  # Initial sample index
         self.flag = 0
         self.all_costs = []
-        self.DT_costs = []
+        self.DT_costs = []     
         self.sod = np.ones((9,30))
 
         self.p_ele_logger = []
@@ -136,9 +136,9 @@ class Agent(TD3):
         # Store state for duration of day for digital twin Zeta evaluation
         self.day_data = [None] * 24
 
-        # @Vanshaj, make sure you define this!
+        # 4 zetas defined to be evaluated in Digital TWin after each metaepisode 
         self.zeta_k_list = np.ones(
-            ((5, 1, 24, len(observation_space)))
+            ((4, 1, 24, len(observation_space)))
         )  # 4 different Zetas.
 
         self.zeta_k_list[1,:,0:13, :] = 0.2
@@ -152,7 +152,8 @@ class Agent(TD3):
         self.zeta_k_list[3,:,0:5, :] = 0.2
         self.zeta_k_list[3,:,11:17, :] = 2
         self.zeta_k_list[3,:,22:23, :] = 0.2
-
+        
+        # For debugging purposes
         self.dt_building_logger = []
         self.e_soc_logger = []
         self.h_soc_logger = []
@@ -163,7 +164,7 @@ class Agent(TD3):
         we will only have p_ele as the zeta parameter. This get_zeta function calls the set_EliteSet_EliteSetPrev
         to get the elite_set and then selects zeta from that. Elite set stores the best zetas."""
 
-        # Getting the elite_set and elite_set_prev
+        # Setting the elite_set and elite_set_prev
         elite_set_eliteset_prev = self.set_EliteSet_EliteSetPrev()
 
         if len(self.elite_set_prev) and self.k <= self.K_keep:
@@ -177,11 +178,6 @@ class Agent(TD3):
 
             # Initialising parameters for the rest of the day for 24 hrs for 9 buildings
             zeta_p_ele = np.zeros(((1, 24, self.buildings)))
-            #             zeta_eta_ehH = np.zeros(((1, 24, self.buildings)))
-            #             zeta_eta_bat = np.zeros(((1, 24, self.buildings)))
-            #             zeta_c_bat_end = np.zeros(((1, 24, self.buildings)))
-            #             zeta_eta_Hsto = np.zeros(((1, 24, self.buildings)))
-            #             zeta_eta_Csto = np.zeros(((1, 24, self.buildings)))
 
             mean_sigma_range = (
                 self.get_mean_sigma_range()
@@ -204,8 +200,6 @@ class Agent(TD3):
                 self.zeta = zeta_p_ele
 
 #         self.elite_set.append(self.zeta)
-        
-
         return self.zeta
 
     def get_mean_sigma_range(self):
@@ -218,14 +212,12 @@ class Agent(TD3):
         return mean_sigma_range
     
     def get_cem_daily_cost(self, E_grid_data: np.ndarray):
-        """Computes cost from E_grid_data for 9 buildings. Instead of using get_cost_day_end"""
+        """Computes cost ratios of zeta and rbc from E_grid_data for 9 buildings. Instead of using get_cost_day_end()"""
         
         if isinstance(E_grid_data, list):
             E_grid_data = np.array(E_grid_data)
-            
-#         print('CEM Egrid shape = ', np.shape(E_grid_data))
-        E_grid_data = E_grid_data[1:22,:]
-#         print('zeta Egrid = ', E_grid_data)
+
+        
         ramping_cost = []
         peak_electricity_cost = []
 
@@ -243,10 +235,10 @@ class Agent(TD3):
         
         E_grid_rbc_data = []
 
-        # get RBC cost for doing rbc actions for one day
+        # get RBC cost for doing rbc actions for one day to take ratios with the total cost observed above
         cs = deepcopy(self.sod)
         
-        for t in range(23):
+        for t in range(24):
             next_state = self.Digital_Twin.transition(
                 cs,
                 self.agent_rbc.select_action(t),
@@ -264,7 +256,6 @@ class Agent(TD3):
         if isinstance(E_grid_rbc_data, list):
             E_grid_rbc_data = np.array(E_grid_rbc_data)
         
-        E_grid_rbc_data = E_grid_rbc_data[1:22,:]
 #         print('rbc Egrid = ', E_grid_rbc_data)
         ramping_cost_rbc = []
         peak_electricity_cost_rbc = []
@@ -282,54 +273,10 @@ class Agent(TD3):
         rbc_cost = np.reshape(rbc_cost, (1, self.buildings))
         
         
-        cost = np.divide(total_cost, rbc_cost) 
+        cost = np.divide(total_cost, rbc_cost)   # Size 9
 
         return cost
-
-#     def get_cost_day_end(self):
-#         """This function calculates the cost at the end of each day after using certain zeta.
-#         This function is called at the end of each day. Cost is calculated using the recorded
-#         outputs/states from the environment in the past 24 hours using a certain value of zeta- p_ele."""
-
-#         # outputs act as the next_state that we get after taking actions
-#         #  outputs = {'E_netelectric_hist': E_netelectric_hist, 'E_NS_hist': E_NS_hist, 'C_bd_hist': C_bd_hist, 'H_bd_hist': H_bd_hist}
-#         # outputs includes the history of all observed states during the day
-
-#         cost = np.zeros((1, self.buildings))
-#         self.outputs["E_netelectric_hist"] = np.array(
-#             self.outputs["E_netelectric_hist"]
-#         )  # size 24*9
-#         self.outputs["E_NS_hist"] = np.array(self.outputs["E_NS_hist"])  # size 2*9
-#         self.outputs["eta_ehH_hist"] = np.array(
-#             self.outputs["eta_ehH_hist"]
-#         )  # size 9*24
-
-#         self.C_bd_hist = np.vstack(self.C_bd_hist)
-#         self.H_bd_hist = np.vstack(self.H_bd_hist)
-#         self.COP_C_hist = np.vstack(self.COP_C_hist)
-
-#         self.outputs["C_bd_hist"] = np.array(self.outputs["C_bd_hist"])
-#         self.outputs["H_bd_hist"] = np.array(self.outputs["H_bd_hist"])
-#         self.outputs["COP_C_hist"] = np.array(self.outputs["COP_C_hist"])
-
-#         for i in range(self.buildings):
-#             num = np.max(self.outputs["E_netelectric_hist"][:, i])
-
-#             C_bd_div_COP_C = np.divide(
-#                 self.outputs["C_bd_hist"][:, i], self.outputs["COP_C_hist"][:, i]
-#             )
-
-#             H_bd_div_eta_ehH = self.outputs["H_bd_hist"][:, i] / self.zeta_eta_ehH
-
-#             den = np.max(
-#                 self.outputs["E_NS_hist"][1, i] * np.ones((24, 1))
-#                 + C_bd_div_COP_C
-#                 + H_bd_div_eta_ehH
-#             )
-
-#             cost[:, i] = num / den
-
-#         return cost
+    
 
     def set_EliteSet_EliteSetPrev(self):
         """This function is called by get_zeta() - see first line in get_zeta(). After this function is called inside
@@ -426,23 +373,8 @@ class Agent(TD3):
 
         # Appending the current states to the day history list of states
         self.E_netelectric_hist.append(E_observed)  # List of 24 lists each list size 9
-#         self.E_NS_hist.append(E_NS_t)  # List of 24 lists each list of size 9
-#         self.C_bd_hist.append(C_bd_hist)
-#         self.H_bd_hist.append(H_bd_hist)
-#         self.COP_C_hist.append(COP_C_hist)
 
         if self.total_it % 24 == 0:  # Calculate cost at the end of the day
-
-#             self.outputs = {
-#                 "E_netelectric_hist": self.E_netelectric_hist,
-#                 "E_NS_hist": self.E_NS_hist,
-#                 "C_bd_hist": self.C_bd_hist,
-#                 "H_bd_hist": self.H_bd_hist,
-#                 "COP_C_hist": self.COP_C_hist,
-#                 "eta_ehH_hist": self.eta_ehH_hist,
-#             }  # List for observed states for the last 24 hours for the 9 buildings
-
-#             cost = self.get_cost_day_end()  # Calculating cost at the end of the day
 
             cost = self.get_cem_daily_cost(self.E_netelectric_hist)
     
@@ -455,19 +387,9 @@ class Agent(TD3):
             
             self.p_ele_logger.append(self.zeta)
             
-            
-
             self.k = self.k + 1
 
-#             self.C_bd_hist = []
-
             self.E_netelectric_hist = []
-
-#             self.H_bd_hist = []
-
-#             self.COP_C_hist = []
-
-#             self.E_NS_hist = []
 
         self.mean_elite_set.append(self.mean_p_ele)
 
@@ -489,26 +411,33 @@ class Agent(TD3):
                     self.zeta_c_bat_end,
                 )
                 self.actor.set_zeta(zeta_tuple, i)   # Setting zeta for all the buildings
+                
 
     def select_action(self, state, day_ahead: bool = False):
         """Overrides from `TD3`. Utilizes CEM and Digital Twin computations"""
         # update zeta
         self.set_zeta()
+        
         # run forward pass
         actions, parameters = super().select_action(state, day_ahead)
+        
+        # For updating sod inside get_cem_daily_cost() as it is also using the dt to get the cost ratios
+        self.cem_cost_debug(state, parameters)
+        
         # evaluate agent
         self.evaluate_cost(state)
         
-#         digital twin 
-        if self.total_it%24 >= self.rbc_threshold:
-            items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
-                     "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
-            data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
-            for item in items:
-                parameters[item] = np.zeros((24, 9))
+#         digital twin oracle testing for debugging
+#         if self.total_it%24 >= self.rbc_threshold:
+#             items = ["E_hpC_max", "E_ehH_max", "E_bat_max", "C_p_Hsto", "C_p_bat", "C_p_Csto", "E_pv", "H_bd", "C_bd",
+#                      "COP_C", "C_max", "H_max", "E_ns", "E_pv"]
+#             data_orc = self.oracle.get_current_data_oracle(self.env, self.total_it, None, None)  # Use this instead of params
+#             for item in items:
+#                 parameters[item] = np.zeros((24, 9))
 
-                parameters[item][self.total_it % 24, :] = np.array(data_orc[item])
-  
+#                 parameters[item][self.total_it % 24, :] = np.array(data_orc[item]) 
+                
+        # digital twin
         self.digital_twin_interface(state, parameters)
     
         return actions
@@ -569,7 +498,7 @@ class Agent(TD3):
 
                 # self.E_grid_dt.append(
                 #     next_state[:, 28]
-                # )  # Apeending Electricity demand to the E_grid_data
+                # )  # Appending Electricity demand to the E_grid_data
                 self.dt_building_logger.append(self.Digital_Twin.buildings)
                 self.c_soc_logger.append(cs[:, 25])
                 self.h_soc_logger.append(cs[:, 26])
@@ -591,44 +520,67 @@ class Agent(TD3):
 
         self.total_it += 1
 
-
-        return actions
+        return actions         
+    
     # --------------------------- METHODS FOR DIGITAL TWIN ------------------------------------------------------------ #
     def update_hour_of_day_data(self, parameters: dict, t: int):
         """Updates state to start of day state. Function called only when start of day. Handled within `digital_twin_interface`"""
         self.day_data[t] = parameters
         
-
+        
     def get_cost(self, E_grid_data: np.ndarray):
-        """Computes cost from E_grid_data for 9 buildings"""
+            """Computes cost from E_grid_data for 9 buildings for Digital Twin"""
+            if isinstance(E_grid_data, list):
+                E_grid_data = np.array(E_grid_data)
+
+#             E_grid_data = E_grid_data[1:23,:]
+    #         print(E_grid_data)
+            ramping_cost = []
+            peak_electricity_cost = []
+
+            for bid in range(9):
+                ramping_cost_t = []
+                peak_electricity_cost_t = []
+                E_grid_t = E_grid_data[:, bid]  #  24*1
+
+                ramping_cost.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))  # Size 9
+                peak_electricity_cost.append(np.max(E_grid_t))  # Size 9
+
+
+            total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
+
+
+            cost = total_cost          # Array of size 9
+            
+#             print('zeta_cost = ', cost)
+
+            return cost
+
+        
+    
+    def get_dt_cost(self, E_grid_data: np.ndarray):
+        """This function is for debugging the DT using the data_oracle. It gives the
+        aggregate ramping and peak electric costs for all the buildings combined. Not used for
+        the CEM agent implementation"""
         if isinstance(E_grid_data, list):
             E_grid_data = np.array(E_grid_data)
         
-        E_grid_data = E_grid_data[1:23,:]
-#         print(E_grid_data)
-        ramping_cost = []
-        peak_electricity_cost = []
-
-        for bid in range(9):
-            ramping_cost_t = []
-            peak_electricity_cost_t = []
-            E_grid_t = E_grid_data[:, bid]  #  24*1
-            
-            ramping_cost.append(np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1])))  # Size 9
-            peak_electricity_cost.append(np.max(E_grid_t))  # Size 9
-            
-#         print(ramping_cost)
-#         print(peak_electricity_cost)
+        E_grid_t = np.sum(E_grid_data,
+        axis=1,
+    )
         
-        total_cost = np.array(ramping_cost) + np.array(peak_electricity_cost)  # Size 9
+        ramping_cost = np.sum(np.abs(E_grid_t[1:] - E_grid_t[:-1]))
+        peak_electricity_cost = np.max(E_grid_t)
         
+#         print('dt ramping cost = ', ramping_cost)
+#         print('dt peak_electricity_cost =  ', peak_electricity_cost)
 
-        cost = total_cost          # Array of size 9
-
-        return cost
+        return ramping_cost, peak_electricity_cost
+    
 
     def evaluate_zeta(self, current_state):
-        """Main function to evaluate different values of Zeta for."""
+        """Main function to evaluate different values of Zeta for after the meta-episode is 
+        complete"""
 
         E_grid_rbc_data = []
 
@@ -645,65 +597,248 @@ class Agent(TD3):
 
             E_grid_rbc_data.append(
                 next_state[:, 28]
-            )  # Apeending Electricity demand to the E_grid_data
+            )  # Appending Electricity demand to the E_grid_data
 
             cs = next_state
-        
-        
+            
+#         self.E_grid_dt.append(E_grid_zeta_data)        # For debugging
         rbc_cost = self.get_cost(E_grid_rbc_data)
 
+#         rbc_ramping_cost, rbc_peak_electricity_cost = self.get_dt_cost(E_grid_rbc_data)  # For debugging purposes
+        
+
         # keep track of Optim/RBC ratios
-        ratios = []
-        E_grid_zeta_data = []
+        ratios = []       # Stroing ratios of zeta/RBC costs
+#         ratios_dt = []    # For debugging
+        
         all_zeta_costs = []
         
-        # Evaluating for the current zeta as well
-        self.zeta_k_list[4,:,:, :] = self.zeta
+#         Evaluation of 4 different defined zetas using the DT costs which are the total_zeta_cost/RBC_cost
+#         for zeta in self.zeta_k_list:
+        ######################################################
+        # Zeta 1
+        E_grid_zeta_data = []
+        # aggregate data for 24 hour and store in E_grid_zeta_data
+        cs = deepcopy(current_state)
+
+        for t in range(24):
+            self.set_zeta(self.zeta_k_list[0,:,:,:])
+
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        t,
+                        self.day_data[t],  # next_state
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
+
+            next_state = self.Digital_Twin.transition(
+                cs,
+                actions,
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
+
+            E_grid_zeta_data.append(
+                next_state[:, 28]
+            )  # Appending Electricity demand to the E_grid_data
+
+            cs = next_state
+
+#             print('zeta E_grid shape = ', np.shape(E_grid_zeta_data))
+        zeta_cost = self.get_cost(E_grid_zeta_data)
+
+        all_zeta_costs.append(zeta_cost)
+
+        ratios.append(np.divide(zeta_cost, rbc_cost))     # Appending the ratio of costs for 9 buildings
         
-        for zeta in self.zeta_k_list:
-            
-            # aggregate data for 24 hour and store in E_grid_zeta_data
-            cs = deepcopy(current_state)
+        # Zeta 2
+        E_grid_zeta_data = []
+        # aggregate data for 24 hour and store in E_grid_zeta_data
+        cs = deepcopy(current_state)
 
-            for t in range(24):
-                
-                self.set_zeta(zeta)
-                actions, optim_values, _ = zip(
-                    *[
-                        self.actor_digital_twin.forward(
-                            t,
-                            self.day_data[t],  # next_state
-                            id,
-                            dispatch=False,
-                        )
-                        for id in range(self.buildings)
-                    ]
-                )
-                
-                next_state = self.Digital_Twin.transition(
-                    cs,
-                    actions,
-                    self.total_it - 24 + t,
-                    self.day_data[t],
-                    self.actor_digital_twin.zeta,
-                )
+        for t in range(24):
+            self.set_zeta(self.zeta_k_list[1,:,:,:])
 
-                E_grid_zeta_data.append(
-                    next_state[:, 28]
-                )  # Appending Electricity demand to the E_grid_data
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        t,
+                        self.day_data[t],  # next_state
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
 
-                cs = next_state
-            
-            
-            zeta_cost = self.get_cost(E_grid_zeta_data)
-            
-            all_zeta_costs.append(zeta_cost)
+            next_state = self.Digital_Twin.transition(
+                cs,
+                actions,
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
 
-            ratios.append(np.divide(zeta_cost, rbc_cost))     # Appending the ratio of costs for 9 buildings
+            E_grid_zeta_data.append(
+                next_state[:, 28]
+            )  # Appending Electricity demand to the E_grid_data
+
+            cs = next_state
+
+#             print('zeta E_grid shape = ', np.shape(E_grid_zeta_data))
+        zeta_cost = self.get_cost(E_grid_zeta_data)
+
+        all_zeta_costs.append(zeta_cost)
+
+        ratios.append(np.divide(zeta_cost, rbc_cost))
+                                
+        # Zeta 3                        
+        E_grid_zeta_data = []
+        # aggregate data for 24 hour and store in E_grid_zeta_data
+        cs = deepcopy(current_state)
+
+        for t in range(24):
+            self.set_zeta(self.zeta_k_list[2,:,:,:])
+
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        t,
+                        self.day_data[t],  # next_state
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
+
+            next_state = self.Digital_Twin.transition(
+                cs,
+                actions,
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
+
+            E_grid_zeta_data.append(
+                next_state[:, 28]
+            )  # Appending Electricity demand to the E_grid_data
+
+            cs = next_state
+
+#             print('zeta E_grid shape = ', np.shape(E_grid_zeta_data))
+        zeta_cost = self.get_cost(E_grid_zeta_data)
+
+        all_zeta_costs.append(zeta_cost)
+
+        ratios.append(np.divide(zeta_cost, rbc_cost))
+        
+        # Zeta 4
+        E_grid_zeta_data = []
+        # aggregate data for 24 hour and store in E_grid_zeta_data
+        cs = deepcopy(current_state)
+
+        for t in range(24):
+            self.set_zeta(self.zeta_k_list[3,:,:,:])
+
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        t,
+                        self.day_data[t],  # next_state
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
+
+            next_state = self.Digital_Twin.transition(
+                cs,
+                actions,
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
+
+            E_grid_zeta_data.append(
+                next_state[:, 28]
+            )  # Appending Electricity demand to the E_grid_data
+
+            cs = next_state
+
+#             print('zeta E_grid shape = ', np.shape(E_grid_zeta_data))
+        zeta_cost = self.get_cost(E_grid_zeta_data)
+
+        all_zeta_costs.append(zeta_cost)
+
+        ratios.append(np.divide(zeta_cost, rbc_cost))
+        
+        
+        
+        ########################################################## 4 zetas evaluation done
             
-            E_grid_zeta_data = []  # To store E_grids for the new zeta
+        # Evaluating for the current zeta i.e. self.zeta
+        
+        E_grid_zeta_data = []
+        # aggregate data for 24 hour and store in E_grid_zeta_data
+        cs = deepcopy(current_state)
+
+        for t in range(24):
+            self.set_zeta(self.zeta)
+
+            actions, optim_values, _ = zip(
+                *[
+                    self.actor_digital_twin.forward(
+                        t,
+                        self.day_data[t],  # next_state
+                        id,
+                        dispatch=False,
+                    )
+                    for id in range(self.buildings)
+                ]
+            )
+
+            next_state = self.Digital_Twin.transition(
+                cs,
+                actions,
+                self.total_it - 24 + t,
+                self.day_data[t],
+                self.actor_digital_twin.zeta,
+            )
+
+            E_grid_zeta_data.append(
+                next_state[:, 28]
+            )  # Appending Electricity demand to the E_grid_data
+
+            cs = next_state
             
-        self.DT_costs.append(ratios[-1])
+#         self.E_grid_dt.append(E_grid_zeta_data)        # For debugging
+        
+#         zeta_ramping_cost, zeta_peak_electricity_cost = self.get_dt_cost(E_grid_zeta_data)
+
+#         ratios_dt.append(
+#             0.5
+#             * (
+#                 zeta_peak_electricity_cost / rbc_peak_electricity_cost
+#                 + zeta_ramping_cost/ rbc_ramping_cost
+#             )
+#         )
+        
+#         self.DT_costs.append(ratios_dt)       # Getting DT costs for comparison with the costs from the true environment
+        
+        zeta_cost = self.get_cost(E_grid_zeta_data)
+
+        all_zeta_costs.append(zeta_cost)
+
+        ratios.append(np.divide(zeta_cost, rbc_cost))     # Appending the ratio of costs for 9 buildings
+
         
         ratios = np.array(ratios)
         
@@ -722,9 +857,17 @@ class Agent(TD3):
             
             cost_ratios[i] = np.min(ratios[:,i])
             
-        
-        
         return zeta, cost_ratios
+    
+    def cem_cost_debug(self, current_state, parameters):
+        '''To debug the Nonetype object error encountered and defining sod when using dt
+        to get cem daily costs'''
+        if self.total_it <= self.rbc_threshold:
+            return
+
+        # if self.total_it % 24 == 1:  # start of day
+        self.update_hour_of_day_data(parameters, (self.total_it - 1) % 24)
+        
     
     def digital_twin_interface(self, current_state, parameters):
         """Main interface for utilizing Digital Twin"""
@@ -733,15 +876,13 @@ class Agent(TD3):
 
         # if self.total_it % 24 == 1:  # start of day
         self.update_hour_of_day_data(parameters, (self.total_it - 1) % 24)
-        if self.total_it % 24 == 0:  # end of 5 days
+        if self.total_it % 120 == 0:  # Change this on the basis of meta episode selected
             zeta, cost = self.evaluate_zeta(current_state)  
             
             for i in range(self.buildings):
                 
                 if cost[i] < self.all_costs[-1].squeeze(0)[i]:  # update zeta
-                    self.zeta[:,:,i] = zeta[:,:,i] 
-                    
-                    # all_costs, costs
+                    self.zeta[:,:,i] = zeta[:,:,i]    
             
             self.set_zeta(self.zeta)
 
