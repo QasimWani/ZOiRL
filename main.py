@@ -15,7 +15,7 @@ params = {
     "carbon_intensity": "carbon_intensity.csv",
     "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
     "buildings_states_actions": "buildings_state_action_space.json",
-    "simulation_period": (0, 8760 * 4 - 1),
+    "simulation_period": (0, 8760),
     "cost_function": [
         "ramping",
         "1-load_factor",
@@ -67,6 +67,5 @@ while not done:
     state = next_state
     action = action_next
 
-    print(f"\r {env.time_step}", end="")
 
 env.cost()

@@ -1,7 +1,7 @@
 # Run this again after editing submodules so Colab uses the updated versions
 from citylearn import CityLearn
 from pathlib import Path
-from agent import Agent
+from agent_final import Agent
 from copy import deepcopy
 import sys
 import warnings
@@ -30,7 +30,7 @@ params = {
     "carbon_intensity": "carbon_intensity.csv",
     "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
     "buildings_states_actions": "buildings_state_action_space.json",
-    "simulation_period": (0, 8760 * 4 - 1),
+    "simulation_period": (0, 8760),
     "cost_function": [
         "ramping",
         "1-load_factor",
@@ -50,12 +50,11 @@ observations_spaces, actions_spaces = env.get_state_action_spaces()
 # Provides information on Building type, Climate Zone, Annual DHW demand, Annual Cooling Demand, Annual Electricity Demand, Solar Capacity, and correllations among buildings
 building_info = env.get_building_information()
 
-
 params_agent = {
     "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
     "buildings_states_actions": "buildings_state_action_space.json",
     "building_info": building_info,
-    "observation_space": observations_spaces,
+    "observation_spaces": observations_spaces,
     "action_spaces": actions_spaces,
 }
 
@@ -72,12 +71,13 @@ RBC_THRESHOLD = 24 * 14
 state = env.reset()
 done = False
 
-action = agents.select_action(state, False)
+action, coordination_vars = agents.select_action(state)
+
 costs_peak_net_ele = []
 
 t_idx = 0
 # run for a month - NOTE: THIS WILL TAKE ~2 HOURS TO RUN. reduce `end_time` for quicker results.
-end_time = RBC_THRESHOLD + 24 * 90  # 1 year
+end_time = RBC_THRESHOLD + 24 * 365  # 1 year
 
 start_time = time.time()
 
@@ -91,14 +91,21 @@ E_grid_true = []  # see comments below for more info.
 while not done and env.time_step < end_time:
 
     next_state, reward, done, _ = env.step(action)
-    action_next = agents.select_action(
-        next_state, False
-    )  # passing in environment for Oracle agent.
+    action_next, coordination_vars_next = agents.select_action(next_state)
+    agents.add_to_buffer(
+        state,
+        action,
+        reward,
+        next_state,
+        done,
+        coordination_vars,
+        coordination_vars_next,
+    )
 
-    #     agents.add_to_buffer_oracle(state, env, action, reward, next_state)
-    agents.add_to_buffer(state, action, reward, next_state, done)
     ## add env E-grid
     E_grid_true.append([x[28] for x in state])
+
+    coordination_vars = coordination_vars_next
     state = next_state
     action = action_next
 
