@@ -1,7 +1,7 @@
 # Run this again after editing submodules so Colab uses the updated versions
 from citylearn import CityLearn
 from pathlib import Path
-from agent import Agent
+from agent_final import Agent
 from copy import deepcopy
 import sys
 import warnings
@@ -31,17 +31,18 @@ class Logger(object):
         self.log.write(message)
 
     def flush(self):
-        #this flush method is needed for python 3 compatibility.
-        #this handles the flush command by doing nothing.
-        #you might want to specify some extra behavior here.
+        # this flush method is needed for python 3 compatibility.
+        # this handles the flush command by doing nothing.
+        # you might want to specify some extra behavior here.
         pass
+
 
 sys.stdout = Logger()
 
 # Load environment
 climate_zone = 5
 params = {
-    "data_path": Path("data/Climate_Zone_" + str(climate_zone)+"_org"),
+    "data_path": Path("data/Climate_Zone_" + str(climate_zone) + "_org"),
     "building_attributes": "building_attributes.json",
     "weather_file": "weather_data.csv",
     "solar_profile": "solar_generation_1kW.csv",
@@ -73,7 +74,7 @@ params_agent = {
     "building_ids": ["Building_" + str(i) for i in [1, 2, 3, 4, 5, 6, 7, 8, 9]],
     "buildings_states_actions": "buildings_state_action_space.json",
     "building_info": building_info,
-    "observation_space": observations_spaces,
+    "observation_spaces": observations_spaces,
     "action_spaces": actions_spaces,
 }
 
@@ -95,7 +96,7 @@ costs_peak_net_ele = []
 
 t_idx = 0
 # run for a month - NOTE: THIS WILL TAKE ~2 HOURS TO RUN. reduce `end_time` for quicker results.
-end_time = RBC_THRESHOLD+24*365#8760 * 4 - 1
+end_time = RBC_THRESHOLD + 24 * 365
 
 start_time = time.time()
 
@@ -110,7 +111,7 @@ while not done and env.time_step < end_time:
 
     next_state, reward, done, _ = env.step(action)
     action_next = agents.select_action(
-        next_state, False
+        next_state
     )  # passing in environment for Oracle agent.
 
     #     agents.add_to_buffer_oracle(state, env, action, reward, next_state)
@@ -201,7 +202,11 @@ for i in range(end_time - start_time):
             check_params[key][bid].append(optim_param[key][i % 24, bid])
 
 for key in debug_item:
-    np.savetxt(f"images/{key}_data.csv", np.array([check_data[key][bid] for bid in range(9)]).T, delimiter=",")
+    np.savetxt(
+        f"images/{key}_data.csv",
+        np.array([check_data[key][bid] for bid in range(9)]).T,
+        delimiter=",",
+    )
 
 for i in range(num_days):
 
@@ -219,12 +224,20 @@ for key in debug_params2:
     for bid in range(9):
         check_params[key][bid] = np.array(check_params[key][bid])
 
-    np.savetxt(f"images/{key}_param.csv", np.array([check_params[key][bid] for bid in range(9)]).T, delimiter=",")
+    np.savetxt(
+        f"images/{key}_param.csv",
+        np.array([check_params[key][bid] for bid in range(9)]).T,
+        delimiter=",",
+    )
 
 for key in debug_params1:
     for bid in range(9):
         check_params[key][bid] = np.array(check_params[key][bid])
-    np.savetxt(f"images/{key}_param.csv", np.array([check_params[key][bid] for bid in range(9)]).T, delimiter=",")
+    np.savetxt(
+        f"images/{key}_param.csv",
+        np.array([check_params[key][bid] for bid in range(9)]).T,
+        delimiter=",",
+    )
 
 E_grid_pkhist_true = [[] for _ in range(9)]
 E_grid_true_arr = np.array(E_grid_true)
@@ -360,7 +373,9 @@ for key_i in range(len(env_comp_item)):
                 axs[i, j].set_ylabel(env_comp_item[key_i])
             if i == 0:
                 axs[i, j].set_xlabel("Hour")
-    np.savetxt(f"images/{env_comp_item[key_i]}_soc.csv", np.array(data_all).T, delimiter=",")
+    np.savetxt(
+        f"images/{env_comp_item[key_i]}_soc.csv", np.array(data_all).T, delimiter=","
+    )
 
     plt.legend()
     fig.savefig(f"images/{env_comp_item[key_i]}_optim_env_SOC.pdf", bbox_inches="tight")
@@ -413,7 +428,11 @@ for key_i in range(len(env_comp_item)):
     fig.savefig(
         f"images/{env_comp_item[key_i]}_optim_env_normalized.pdf", bbox_inches="tight"
     )
-    np.savetxt(f"images/{env_comp_item[key_i]}_soc_norm.csv", np.array(data_all).T, delimiter=",")
+    np.savetxt(
+        f"images/{env_comp_item[key_i]}_soc_norm.csv",
+        np.array(data_all).T,
+        delimiter=",",
+    )
 
 # debug: capacity
 env_comp_item = ["electrical_storage", "cooling_storage", "dhw_storage"]
@@ -529,13 +548,14 @@ for key_i in range(len(env_comp_item)):
                 axs[i, j].set_ylabel(env_comp_item[key_i])
             if i == 0:
                 axs[i, j].set_xlabel("Hour")
-            np.savetxt(f"images/{env_comp_item[key_i]}_B{bid}.csv", np.array(data_all).T, delimiter=",")
+            np.savetxt(
+                f"images/{env_comp_item[key_i]}_B{bid}.csv",
+                np.array(data_all).T,
+                delimiter=",",
+            )
 
     plt.legend()
     fig.savefig(f"images/{env_comp_item[key_i]}_optim_env.pdf", bbox_inches="tight")
-
-
-
 
 
 ### Testing for action clipping
@@ -549,24 +569,43 @@ for key_i in range(len(env_comp_item)):
             data_all = []
             bid = i * 3 + j
             optim_data_soc = check_data[data_comp_item[key_i]][bid]
-            data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),
-                                        "energy_balance")) / getattr(
-                getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]), "capacity")
+            data_env = np.array(
+                getattr(
+                    getattr(
+                        env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
+                    ),
+                    "energy_balance",
+                )
+            ) / getattr(
+                getattr(
+                    env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]
+                ),
+                "capacity",
+            )
             data_all.append(data_env[RBC_THRESHOLD:end_time])
             data_all.append(optim_data_soc[: (end_time - RBC_THRESHOLD)])
             axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
-            axs[i, j].plot(data_env[RBC_THRESHOLD:end_time] - optim_data_soc[: (end_time - RBC_THRESHOLD)],
-                           label="true action - planned action")
+            axs[i, j].plot(
+                data_env[RBC_THRESHOLD:end_time]
+                - optim_data_soc[: (end_time - RBC_THRESHOLD)],
+                label="true action - planned action",
+            )
 
             axs[i, j].grid()
             if j == 0:
                 axs[i, j].set_ylabel(env_comp_item[key_i])
             if i == 0:
                 axs[i, j].set_xlabel("Hour")
-            np.savetxt(f"images/{env_comp_item[key_i]}_B{bid}_diff_action.csv", np.array(data_all).T, delimiter=",")
+            np.savetxt(
+                f"images/{env_comp_item[key_i]}_B{bid}_diff_action.csv",
+                np.array(data_all).T,
+                delimiter=",",
+            )
 
     plt.legend()
-    fig.savefig(f"images/{env_comp_item[key_i]}_diff_action_optim_env.pdf", bbox_inches="tight")
+    fig.savefig(
+        f"images/{env_comp_item[key_i]}_diff_action_optim_env.pdf", bbox_inches="tight"
+    )
 
 ## Plot evaluations
 
@@ -772,8 +811,13 @@ for k in range(len(item_cost)):
                 axs[i, j].set_ylabel("Cost")
             if i == 0:
                 axs[i, j].set_xlabel("Day")
-            print(f'Mean {item_cost[k]} ratio for building {bid+1}')
-            print(np.mean(np.array(CEM_cost[item_cost[k]][bid, :])/np.array(RBC_cost[item_cost[k]][bid, :])))
+            print(f"Mean {item_cost[k]} ratio for building {bid+1}")
+            print(
+                np.mean(
+                    np.array(CEM_cost[item_cost[k]][bid, :])
+                    / np.array(RBC_cost[item_cost[k]][bid, :])
+                )
+            )
     plt.legend()
     fig.savefig(f"images/{item_cost[k]}_compare.pdf", bbox_inches="tight")
 
@@ -835,11 +879,11 @@ ax1.set_xlabel("Day")
 plt.legend()
 fig.savefig(f"images/cost_ratio_aggregate.pdf", bbox_inches="tight")
 
-print('SCS counts')
+print("SCS counts")
 print(agents.actor.scs_cnt)
-print('Total fail counts')
+print("Total fail counts")
 print(agents.actor.fail_cnt)
-print('Mean cost')
+print("Mean cost")
 print(np.mean(np.array(tot_cost_ratio_agg)))
 # This is the case without c_bat_end
 # cost coefficients are 1e1
