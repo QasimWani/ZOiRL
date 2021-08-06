@@ -156,6 +156,7 @@ class TD3(object):
         pass
 
 
+# @jinming: Agent file is incorperated here. `select_action` returns actions and coooordination variables
 class Agent(TD3):
     """CEM Agent - inherits TD3 as agent"""
 
@@ -171,14 +172,20 @@ class Agent(TD3):
         observation_space = kwargs["observation_spaces"]
 
         self.state_hist = []
-        self.E_grid_dt = []
+        self.E_grid_dt = []  # For debugging purposes
         # CEM Specific parameters
         self.N_samples = 10
         self.K = 5  # size of elite set
         self.K_keep = 3
         self.k = 1  # Initial sample index
         self.flag = 0
-        self.all_costs = []
+
+        self.candidate_ind = 0
+        self.best_p_ele = [[] for _ in range(self.buildings)]
+        self.all_costs = [[[] for _ in range(4)] for bid in range(9)]
+        self.per_period = 7
+        # self.DT_costs = []
+        self.sod = np.ones((self.buildings, 30))
 
         self.p_ele_logger = []
         self.mean_elite_set = []
@@ -205,19 +212,30 @@ class Agent(TD3):
             "COP_C_hist": self.COP_C_hist,
         }  # List for observed states for the last 24 hours
 
-        self.zeta = []  # zeta for all buidling for 24 hours (24x9)
+        self.zeta = []  # zeta for all buidling for 24 hours (1*24x9)
 
         self.zeta_eta_bat = np.ones(((1, 24, self.buildings)))
         self.zeta_eta_Hsto = np.ones(((1, 24, self.buildings)))
         self.zeta_eta_Csto = np.ones(((1, 24, self.buildings)))
         self.zeta_eta_ehH = 0.9
-        self.zeta_c_bat_end = 0.1
+        self.zeta_c_bat_end = 0.4
+        self.zeta_c_csto_end = 0.3
+        self.p_ele_step = 0.01
+        self.cum_hourly_net_ele = np.zeros((self.buildings, 24))
+        self.cum_hourly_net_ele_record = [[] for _ in range(self.buildings)]
+        self.cum_hourly_net_ele_tot = np.zeros(24)
+        self.cum_hourly_net_ele_tot_record = []
 
+        self.high_ind_buildings_record = [[] for _ in range(self.buildings)]
+        self.high_ind_all_record = []
+
+        self.high_ind_buildings = [np.zeros(24) for _ in range(self.buildings)]
+        self.high_ind_all = np.zeros(24)
         self.mean_p_ele = [
             np.ones(24)
         ] * self.buildings  # Having mean and range for each of the hour
-        self.std_p_ele = [0.2 * np.ones(24)] * self.buildings
-        self.range_p_ele = [0.1, 5]
+        self.std_p_ele = [0.001 * np.ones(24)] * self.buildings
+        self.range_p_ele = [0.5, 2]
 
         # Initialising the elite sets
         self.elite_set = (
@@ -228,271 +246,186 @@ class Agent(TD3):
         # Initialising the list of costs after using certain params zetas
         self.costs = []
 
-        self.zeta_k_list = np.ones(
-            ((4, 1, 24, len(observation_space)))
-        )  # 4 different Zetas.
+        # Store state for duration of day for digital twin Zeta evaluation
+        self.day_data = [None] * 24
 
-        self.zeta_k_list[1, :, 0:13, :] = 0.2
-        self.zeta_k_list[1, :, 13:19, :] = 5
-        self.zeta_k_list[1, :, 19:23, :] = 0.2
+        # 4 zetas defined to be evaluated in Digital TWin after each metaepisode
+        self.zeta_k_list = np.ones(((4, 24, self.buildings)))  # 4 different Zetas.
+        # self.zeta_k_list[1, :, 0:13, :] = 0.2
+        # self.zeta_k_list[1, :, 13:19, :] = 5
+        # self.zeta_k_list[1, :, 19:23, :] = 0.2
+        #
+        # self.zeta_k_list[2, :, 0:6, :] = 0.2
+        # self.zeta_k_list[2, :, 7:19, :] = 5
+        # self.zeta_k_list[2, :, 20:23, :] = 0.2
+        #
+        # self.zeta_k_list[3, :, 0:5, :] = 0.2
+        # self.zeta_k_list[3, :, 11:17, :] = 2
+        # self.zeta_k_list[3, :, 22:23, :] = 0.2
 
-        self.zeta_k_list[2, :, 0:6, :] = 0.2
-        self.zeta_k_list[2, :, 7:19, :] = 5
-        self.zeta_k_list[2, :, 20:23, :] = 0.2
-
-        self.zeta_k_list[3, :, 0:5, :] = 0.2
-        self.zeta_k_list[3, :, 11:17, :] = 2
-        self.zeta_k_list[3, :, 22:23, :] = 0.2
-
+        # For debugging purposes
         self.dt_building_logger = []
         self.e_soc_logger = []
         self.h_soc_logger = []
         self.c_soc_logger = []
 
-    def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
-        """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
-        we will only have p_ele as the zeta parameter. This get_zeta function calls the set_EliteSet_EliteSetPrev
-        to get the elite_set and then selects zeta from that. Elite set stores the best zetas."""
-
-        # Getting the elite_set and elite_set_prev
-        elite_set_eliteset_prev = self.set_EliteSet_EliteSetPrev()
-
-        if len(self.elite_set_prev) and self.k <= self.K_keep:
-
-            # k-th best from elite_set_prev - zeta for all buildings
-            self.zeta = self.elite_set_prev[-1]
-
-            zeta_k = self.zeta  # zeta for 9 buildings for 24 hours
-
-        else:
-
-            # Initialising parameters for the rest of the day for 24 hrs for 9 buildings
-            zeta_p_ele = np.zeros(((1, 24, self.buildings)))
-
-            mean_sigma_range = (
-                self.get_mean_sigma_range()
-            )  # Getting a list of lists for mean, std and ranges
-
-            for i in range(self.buildings):
-                for t in range(24):
-
-                    zeta_p_ele[:, t, i] = np.clip(
-                        np.random.normal(
-                            mean_sigma_range[0][i][t], mean_sigma_range[1][i][t], 1
-                        ),
-                        mean_sigma_range[2][0],
-                        mean_sigma_range[2][1],
-                    )
-
-            self.zeta = zeta_p_ele
-
-            zeta_k = self.zeta  # will set this zeta for the rest of the day
-
-        self.p_ele_logger.append(zeta_k)
-        self.elite_set.append(zeta_k)
-
-        return zeta_k
-
     def get_mean_sigma_range(self):
         """This function is called to get the current mean, standard deviation and allowed range for the
         parameter p_ele. We can access these 3 quantities by calling this function."""
-        return [self.mean_p_ele, self.std_p_ele, self.range_p_ele]
 
-    def get_cost_day_end(self):
-        """This function calculates the cost at the end of each day after using certain zeta.
-        This function is called at the end of each day. Cost is calculated using the recorded
-        outputs/states from the environment in the past 24 hours using a certain value of zeta- p_ele."""
+        # ADD ALL PARAMS
+        mean_sigma_range = [self.mean_p_ele, self.std_p_ele, self.range_p_ele]
 
-        # outputs act as the next_state that we get after taking actions
-        #  outputs = {'E_netelectric_hist': E_netelectric_hist, 'E_NS_hist': E_NS_hist, 'C_bd_hist': C_bd_hist, 'H_bd_hist': H_bd_hist}
-        # outputs includes the history of all observed states during the day
+        return mean_sigma_range
 
-        cost = np.zeros((1, self.buildings))
-        self.outputs["E_netelectric_hist"] = np.array(
-            self.outputs["E_netelectric_hist"]
-        )  # size 24*9
-        self.outputs["E_NS_hist"] = np.array(self.outputs["E_NS_hist"])  # size 2*9
-        self.outputs["eta_ehH_hist"] = np.array(
-            self.outputs["eta_ehH_hist"]
-        )  # size 9*24
+    def get_cem_daily_cost(self, E_grid_data: np.ndarray):
+        """Computes cost ratios of zeta and rbc from E_grid_data for 9 buildings. Instead of using get_cost_day_end()"""
 
-        self.C_bd_hist = np.vstack(self.C_bd_hist)
-        self.H_bd_hist = np.vstack(self.H_bd_hist)
-        self.COP_C_hist = np.vstack(self.COP_C_hist)
+        if isinstance(E_grid_data, list):
+            E_grid_data = np.array(E_grid_data)
 
-        self.outputs["C_bd_hist"] = np.array(self.outputs["C_bd_hist"])
-        self.outputs["H_bd_hist"] = np.array(self.outputs["H_bd_hist"])
-        self.outputs["COP_C_hist"] = np.array(self.outputs["COP_C_hist"])
+        # ramping_cost = []
+        peak_electricity_cost = []
 
-        for i in range(self.buildings):
-            num = np.max(self.outputs["E_netelectric_hist"][:, i])
+        for bid in range(9):
+            ramping_cost_t = []
+            peak_electricity_cost_t = []
+            E_grid_t = E_grid_data[:, bid]  # 24*1
 
-            C_bd_div_COP_C = np.divide(
-                self.outputs["C_bd_hist"][:, i], self.outputs["COP_C_hist"][:, i]
-            )
+            peak_electricity_cost.append((max(0, np.max(E_grid_t)) ** 2))  # Size 9
 
-            H_bd_div_eta_ehH = self.outputs["H_bd_hist"][:, i] / self.zeta_eta_ehH
+        return np.array(peak_electricity_cost)
 
-            den = np.max(
-                self.outputs["E_NS_hist"][1, i] * np.ones((24, 1))
-                + C_bd_div_COP_C
-                + H_bd_div_eta_ehH
-            )
-
-            cost[:, i] = num / den
-
-        return cost
-
-    def set_EliteSet_EliteSetPrev(self):
-        """This function is called by get_zeta() - see first line in get_zeta(). After this function is called inside
-        get_zeta, it updates the self.elite_set according to the value of self.k. Once the elite_set is updated inside this
-        function, get_zeta can use self.elite_set to get the zeta- p_ele to be passed through the actor."""
-
-        if self.k == 1:
-
-            self.elite_set_prev = self.elite_set
-            self.elite_set = []
-
-        if self.k > self.N_samples:  # Enough samples of zeta collected
-
-            # Finding best k samples according to cost y_k
-            self.costs = np.array(
-                self.costs
-            )  # Converting self.costs to np.array   dimensions = k*1*9
-            #             print(np.shape(self.costs))
-            best_zeta_args = np.zeros(
-                (self.k - 1, self.buildings)
-            )  # Will store the arguments of the sort
-
-            elite_set_dummy = self.elite_set
-
-            for i in range(self.buildings):
-                best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
-                    -1
-                )  # Arranging costs for the i-th building
-
-                # Finding the best K samples from the elite set
-                for Kbest in range(self.K):
-                    a = best_zeta_args[:, i][Kbest].astype(np.int32)
-                    self.elite_set[Kbest][:, :, i] = elite_set_dummy[a][:, :, i]
-
-            self.elite_set = self.elite_set[0 : self.K]
-
-            self.mean_p_ele = [[]] * self.buildings
-            self.std_p_ele = [[]] * self.buildings
-
-            A = np.vstack(self.elite_set)
-
-            for i in range(self.buildings):
-                self.mean_p_ele[i] = np.mean(A[:, :, i], axis=0)
-                self.std_p_ele[i] = np.std(A[:, :, i], axis=0)
-
-            self.elite_set_prev = self.elite_set
-            self.elite_set = []
-
-            self.k = 1  # Reset the sample index
-
-            self.costs = []
-
-        elite_set = self.elite_set
-        elite_set_prev = self.elite_set_prev
-
-        eliteSet_eliteSetPrev = [elite_set, elite_set_prev]
-
-        return eliteSet_eliteSetPrev
-
-    def evaluate_cost(self, state):
+    def evaluate_and_update(self, state):
         """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
         if self.total_it <= self.rbc_threshold:
             return
 
-        E_observed = state[:, 28]  # For all buildings
-
-        E_NS_t = state[:, 23]  # For all buildings
-
-        data_output = self.memory.get(-1)
-
-        C_bd_hist = data_output["C_bd"][
-            self.total_it % 24, :
-        ]  # For 9 buildings and current hour - np.array size - 1*9
-
-        H_bd_hist = data_output["H_bd"][
-            self.total_it % 24, :
-        ]  # For 9 buildings and 24 hours - np.array size - 1*9
-
-        COP_C_hist = data_output["COP_C"][
-            self.total_it % 24, :
-        ]  # For 9 buildings and 24 hours - np.array size - 1*9
-
-        self.eta_ehH_hist = [
-            0.9
-        ] * self.buildings  # For 9 buildings and 24 hours - list of 9 lists of size 24
+        E_observed = state[:, 28]  # Storing E_grid for all buildings
 
         # Appending the current states to the day history list of states
         self.E_netelectric_hist.append(E_observed)  # List of 24 lists each list size 9
-        self.E_NS_hist.append(E_NS_t)  # List of 24 lists each list of size 9
-        self.C_bd_hist.append(C_bd_hist)
-        self.H_bd_hist.append(H_bd_hist)
-        self.COP_C_hist.append(COP_C_hist)
 
         if self.total_it % 24 == 0:  # Calculate cost at the end of the day
 
-            self.outputs = {
-                "E_netelectric_hist": self.E_netelectric_hist,
-                "E_NS_hist": self.E_NS_hist,
-                "C_bd_hist": self.C_bd_hist,
-                "H_bd_hist": self.H_bd_hist,
-                "COP_C_hist": self.COP_C_hist,
-                "eta_ehH_hist": self.eta_ehH_hist,
-            }  # List for observed states for the last 24 hours for the 9 buildings
+            costs = self.get_cem_daily_cost(self.E_netelectric_hist)
+            cum_hourly_net_ele_tot_t = np.zeros(24)
+            for bid in range(self.buildings):
+                self.all_costs[bid][self.candidate_ind].append(costs[bid])
+                self.cum_hourly_net_ele[bid] = (
+                    self.cum_hourly_net_ele[bid]
+                    + (np.array(self.E_netelectric_hist)[:, bid]) ** 2
+                )
+                cum_hourly_net_ele_tot_t = cum_hourly_net_ele_tot_t + (
+                    np.array(self.E_netelectric_hist)[:, bid]
+                )
+                self.cum_hourly_net_ele_record[bid].append(
+                    np.array(self.E_netelectric_hist)[:, bid]
+                )
+                high_ind_t = np.argsort(-np.array(self.E_netelectric_hist)[:, bid])
+                self.high_ind_buildings[bid][high_ind_t[:3]] = (
+                    self.high_ind_buildings[bid][high_ind_t[:3]] + 1
+                )
+                self.high_ind_buildings_record[bid].append(self.high_ind_buildings[bid])
 
-            cost = self.get_cost_day_end()  # Calculating cost at the end of the day
-
-            self.costs.append(cost)
-
-            self.all_costs.append(cost)
-
-            self.k = self.k + 1
-
-            self.C_bd_hist = []
+            #             print('Elite set shape = ', np.shape(self.elite_set))
+            self.cum_hourly_net_ele_tot = (
+                self.cum_hourly_net_ele_tot + cum_hourly_net_ele_tot_t ** 2
+            )
+            self.cum_hourly_net_ele_tot_record.append(cum_hourly_net_ele_tot_t)
+            high_ind_t = np.argsort(-cum_hourly_net_ele_tot_t)
+            self.high_ind_all[high_ind_t[:3]] = self.high_ind_all[high_ind_t[:3]] + 1
+            self.high_ind_all_record.append(self.high_ind_all)
 
             self.E_netelectric_hist = []
 
-            self.H_bd_hist = []
+            if len(self.all_costs[0][self.candidate_ind]) >= self.per_period:
+                self.candidate_ind = (self.candidate_ind + 1) % 4
 
-            self.COP_C_hist = []
+                if (
+                    self.candidate_ind == 0
+                ):  # we need to calculate the best base candidate for the next iterate
+                    high_ind_t = np.argsort(-self.cum_hourly_net_ele_tot)
+                    self.high_ind_all[high_ind_t[:3]] = (
+                        self.high_ind_all[high_ind_t[:3]] + self.per_period
+                    )
+                    high_ind_total = np.argsort(-self.high_ind_all)
+                    for bid in range(9):
 
-            self.E_NS_hist = []
+                        all_cost = np.array(
+                            [
+                                np.mean(np.array(self.all_costs[bid][i]))
+                                for i in range(4)
+                            ]
+                        )
+                        best_ind = np.argsort(all_cost)
+                        best_zeta_avg = 0.5 * np.squeeze(
+                            self.zeta_k_list[best_ind[0], :, bid]
+                            + self.zeta_k_list[best_ind[1], :, bid]
+                        )
 
-        self.mean_elite_set.append(self.mean_p_ele)
+                        self.best_p_ele[bid].append(best_zeta_avg)
+                        self.zeta_k_list[1, :, bid] = best_zeta_avg
+
+                        high_ind_t = np.argsort(-self.cum_hourly_net_ele[bid])
+
+                        self.high_ind_buildings[bid][high_ind_t[:3]] = (
+                            self.high_ind_buildings[bid][high_ind_t[:3]]
+                            + self.per_period
+                        )
+                        high_ind = np.argsort(-self.high_ind_buildings[bid])
+
+                        adj_zeta_avg = np.zeros(24)
+                        adj_zeta_avg[
+                            np.intersect1d(high_ind[:2], high_ind_total[:3])
+                        ] = self.p_ele_step
+                        adj_zeta_avg = adj_zeta_avg - np.mean(adj_zeta_avg)
+                        self.zeta_k_list[2, :, bid] = best_zeta_avg + adj_zeta_avg
+
+                        adj_zeta_avg = np.zeros(24)
+                        adj_zeta_avg[
+                            np.intersect1d(high_ind[:3], high_ind_total[:3])
+                        ] = self.p_ele_step
+                        adj_zeta_avg = adj_zeta_avg - np.mean(adj_zeta_avg)
+                        self.zeta_k_list[3, :, bid] = best_zeta_avg + adj_zeta_avg
+
+                    self.cum_hourly_net_ele = np.zeros((self.buildings, 24))
+                    self.high_ind_buildings = [
+                        np.zeros(24) for _ in range(self.buildings)
+                    ]
+                    self.high_ind_all = np.zeros(24)
+
+                self.set_zeta(self.zeta_k_list[self.candidate_ind, :, :])
+
+        # self.mean_elite_set.append(self.mean_p_ele)
 
     def set_zeta(self, zeta=None):
         """Update zeta which will be supplied to `select_action`"""
-        if zeta is None:
-            zeta = self.get_zeta()  # put into actor
+        for i in range(self.buildings):
+            zeta_tuple = (
+                zeta[:, i],
+                self.zeta_eta_bat[:, :, i],
+                self.zeta_eta_Hsto[:, :, i],
+                self.zeta_eta_Csto[:, :, i],
+                self.zeta_eta_ehH,
+                self.zeta_c_bat_end,
+                self.zeta_c_csto_end,
+            )
+            self.actor.set_zeta(zeta_tuple, i)  # Setting zeta for all the buildings
 
-        if self.total_it >= self.rbc_threshold and self.total_it % 24 == 0:
-            self.elite_set.append(zeta)
-            for i in range(self.buildings):
-                zeta_tuple = (
-                    zeta[0, :, i],
-                    self.zeta_eta_bat[:, :, i],
-                    self.zeta_eta_Hsto[:, :, i],
-                    self.zeta_eta_Csto[:, :, i],
-                    self.zeta_eta_ehH,
-                    self.zeta_c_bat_end,
-                )
-                self.actor.set_zeta(zeta_tuple, i)
-
-    def select_action(self, state):
+    def select_action(self, state, day_ahead: bool = False):
         """Overrides from `TD3`. Utilizes CEM and Digital Twin computations"""
-        # update zeta
-        # self.set_zeta()
+
         # run forward pass
-        actions, parameters = super().select_action(state, day_ahead=False)
+        actions, parameters = super().select_action(state, day_ahead)
+
+        # For updating sod inside get_cem_daily_cost() as it is also using the dt to get the cost ratios
+        # self.cem_cost_debug(state, parameters)
+
         # evaluate agent
-        # self.evaluate_cost(state)
-        return actions, None  # action, coordinate_vars
+        self.evaluate_and_update(state)
+
+        return actions, None
 
 
 class Actor:
