@@ -156,97 +156,7 @@ class TD3(object):
         pass
 
 
-# @jinming: Agent file is incorperated here. `select_action` returns actions and coooordination variables
-class Agent(TD3):
-    """CEM Agent - inherits TD3 as agent"""
-
-    def __init__(self, **kwargs):
-        """Initialize Agent"""
-        super().__init__(
-            num_actions=kwargs["action_spaces"],
-            num_buildings=len(kwargs["building_ids"]),
-            building_info=kwargs["building_info"],
-            rbc_threshold=336,
-        )
-
-        observation_space = kwargs["observation_spaces"]
-
-        self.state_hist = []
-        self.E_grid_dt = []  # For debugging purposes
-        # CEM Specific parameters
-        self.N_samples = 10
-        self.K = 5  # size of elite set
-        self.K_keep = 3
-        self.k = 1  # Initial sample index
-        self.flag = 0
-
-        self.candidate_ind = 0
-        self.best_p_ele = [[] for _ in range(self.buildings)]
-        self.all_costs = [[[] for _ in range(4)] for bid in range(9)]
-        self.per_period = 7
-        # self.DT_costs = []
-        self.sod = np.ones((self.buildings, 30))
-
-        self.p_ele_logger = []
-        self.mean_elite_set = []
-        self.loads = {
-            "E_ns": [],
-            "C_bd": [],
-            "H_bd": [],
-            "E_ns_dt": [],
-            "C_bd_dt": [],
-            "H_bd_dt": [],
-        }
-        # Observed states initialisation
-        self.E_netelectric_hist = []
-        self.E_NS_hist = []
-        self.C_bd_hist = []
-        self.H_bd_hist = []
-        self.eta_ehH_hist = []
-        self.COP_C_hist = []
-        self.outputs = {
-            "E_netelectric_hist": self.E_netelectric_hist,
-            "E_NS_hist": self.E_NS_hist,
-            "C_bd_hist": self.C_bd_hist,
-            "H_bd_hist": self.H_bd_hist,
-            "COP_C_hist": self.COP_C_hist,
-        }  # List for observed states for the last 24 hours
-
-        self.zeta = []  # zeta for all buidling for 24 hours (1*24x9)
-
-        self.zeta_eta_bat = np.ones(((1, 24, self.buildings)))
-        self.zeta_eta_Hsto = np.ones(((1, 24, self.buildings)))
-        self.zeta_eta_Csto = np.ones(((1, 24, self.buildings)))
-        self.zeta_eta_ehH = 0.9
-        self.zeta_c_bat_end = 0.4
-        self.zeta_c_csto_end = 0.3
-        self.p_ele_step = 0.01
-        self.cum_hourly_net_ele = np.zeros((self.buildings, 24))
-        self.cum_hourly_net_ele_record = [[] for _ in range(self.buildings)]
-        self.cum_hourly_net_ele_tot = np.zeros(24)
-        self.cum_hourly_net_ele_tot_record = []
-
-        self.high_ind_buildings_record = [[] for _ in range(self.buildings)]
-        self.high_ind_all_record = []
-
-        self.high_ind_buildings = [np.zeros(24) for _ in range(self.buildings)]
-        self.high_ind_all = np.zeros(24)
-        self.mean_p_ele = [
-            np.ones(24)
-        ] * self.buildings  # Having mean and range for each of the hour
-        self.std_p_ele = [0.001 * np.ones(24)] * self.buildings
-        self.range_p_ele = [0.5, 2]
-
-        # Initialising the elite sets
-        self.elite_set = (
-            []
-        )  # Storing best 5 zetas i.e. a list of 5 lists which are further a list of 24 lists of size 9
-        self.elite_set_prev = []  # Same format as elite_set
-
-        # Initialising the list of costs after using certain params zetas
-        self.costs = []
-
-
+# -------------------------------------------------------------------------------------------------
 class Agent(TD3):
     """CEM Agent - inherits TD3 as agent"""
 
@@ -584,6 +494,9 @@ class Agent(TD3):
         # evaluate agent
         # self.evaluate_cost(state)
         return actions, None  # action, coordinate_vars
+
+
+# -------------------------------------------------------------------------------------------------
 
 
 class Actor:
