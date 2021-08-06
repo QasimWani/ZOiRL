@@ -20,6 +20,24 @@ import numpy as np
 import pandas as pd
 import torch
 
+
+class Logger(object):
+    def __init__(self):
+        self.terminal = sys.stdout
+        self.log = open("images/logfile.log", "a")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+
+    def flush(self):
+        #this flush method is needed for python 3 compatibility.
+        #this handles the flush command by doing nothing.
+        #you might want to specify some extra behavior here.
+        pass
+
+sys.stdout = Logger()
+
 # Load environment
 climate_zone = 5
 params = {
@@ -77,7 +95,7 @@ costs_peak_net_ele = []
 
 t_idx = 0
 # run for a month - NOTE: THIS WILL TAKE ~2 HOURS TO RUN. reduce `end_time` for quicker results.
-end_time = RBC_THRESHOLD+24*200#8760 * 4 - 1
+end_time = RBC_THRESHOLD+24*365#8760 * 4 - 1
 
 start_time = time.time()
 
@@ -517,6 +535,39 @@ for key_i in range(len(env_comp_item)):
     fig.savefig(f"images/{env_comp_item[key_i]}_optim_env.pdf", bbox_inches="tight")
 
 
+
+
+
+### Testing for action clipping
+env_comp_item = ["electrical_storage", "cooling_storage", "dhw_storage"]
+data_comp_item = ["action_bat", "action_C", "action_H"]
+for key_i in range(len(env_comp_item)):
+
+    fig, axs = plt.subplots(3, 3, figsize=(15, 15))
+    for i in range(3):
+        for j in range(3):
+            data_all = []
+            bid = i * 3 + j
+            optim_data_soc = check_data[data_comp_item[key_i]][bid]
+            data_env = np.array(getattr(getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]),
+                                        "energy_balance")) / getattr(
+                getattr(env.buildings["Building_" + str(bid + 1)], env_comp_item[key_i]), "capacity")
+            data_all.append(data_env[RBC_THRESHOLD:end_time])
+            data_all.append(optim_data_soc[: (end_time - RBC_THRESHOLD)])
+            axs[i, j].set_title(f"Building {bid + 1}: {env_comp_item[key_i]}")
+            axs[i, j].plot(data_env[RBC_THRESHOLD:end_time] - optim_data_soc[: (end_time - RBC_THRESHOLD)],
+                           label="true action - planned action")
+
+            axs[i, j].grid()
+            if j == 0:
+                axs[i, j].set_ylabel(env_comp_item[key_i])
+            if i == 0:
+                axs[i, j].set_xlabel("Hour")
+            np.savetxt(f"images/{env_comp_item[key_i]}_B{bid}_diff_action.csv", np.array(data_all).T, delimiter=",")
+
+    plt.legend()
+    fig.savefig(f"images/{env_comp_item[key_i]}_diff_action_optim_env.pdf", bbox_inches="tight")
+
 ## Plot evaluations
 
 vars_RL = agents.logger
@@ -721,6 +772,8 @@ for k in range(len(item_cost)):
                 axs[i, j].set_ylabel("Cost")
             if i == 0:
                 axs[i, j].set_xlabel("Day")
+            print(f'Mean {item_cost[k]} ratio for building {bid+1}')
+            print(np.mean(np.array(CEM_cost[item_cost[k]][bid, :])/np.array(RBC_cost[item_cost[k]][bid, :])))
     plt.legend()
     fig.savefig(f"images/{item_cost[k]}_compare.pdf", bbox_inches="tight")
 

@@ -64,6 +64,7 @@ class Actor:
         eta_Hsto: float = 1.0,
         eta_Csto: float = 1.0,
         c_bat_end: float = 0.1,
+        c_Csto_end: float = 0.1,
     ):
         """
         Initialize differentiable parameters, zeta with default values.
@@ -79,6 +80,7 @@ class Actor:
 
         zeta["eta_ehH"] = np.full(9, eta_ehH)
         zeta["c_bat_end"] = np.full(9, c_bat_end)
+        zeta["c_Csto_end"] = np.full(9, c_Csto_end)
 
         return zeta
 
@@ -220,7 +222,9 @@ class Actor:
         soc_Csto_init = cp.Parameter(
             name="c_Csto_init", value=parameters["c_Csto_init"][t, building_id]
         )
-
+        soc_Csto_norm_end = cp.Parameter(
+            name="c_Csto_end", value=self.zeta["c_Csto_end"][building_id]
+        )
         ### --- Variables ---
 
         # relaxation variables - prevents numerical failures when solving optimization
@@ -404,6 +408,9 @@ class Actor:
                 * eta_Csto[i]
                 + SOC_Crelax[i]
             )
+        self.constraints.append(
+            SOC_C[-1] == soc_Csto_norm_end
+        )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
         self.constraints.append(SOC_C <= 1)  # battery SOC bounds
 
@@ -522,6 +529,7 @@ class Actor:
         problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][
             t, building_id
         ]
+        problem_parameters["c_Csto_end"].value = self.zeta["c_Csto_end"][building_id]
 
         ## Update Parameters
         for key, prob_val in problem_parameters.items():
@@ -623,6 +631,7 @@ class Actor:
             eta_Csto,
             eta_ehH,
             c_bat_end,
+            c_Csto_end,
         ) = zeta
 
         # dimensions: 24
@@ -634,6 +643,7 @@ class Actor:
         # dimensions: 1
         self.zeta["eta_ehH"][building_id] = eta_ehH
         self.zeta["c_bat_end"][building_id] = c_bat_end
+        self.zeta["c_Csto_end"][building_id] = c_Csto_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
