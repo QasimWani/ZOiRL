@@ -1224,7 +1224,7 @@ class CityLearn(gym.Env):
                 ] = self.carbon_emissions.sum()
 
                 if self.simulation_period[1] - self.simulation_period[0] > 8760:
-                    building_costs[building_id]["cost_last_yr"][
+                    building_costs[building_id]["cost_last_year"][
                         "carbon_emissions_last_yr"
                     ] = self.carbon_emissions[-8760:].sum()
 
@@ -1234,7 +1234,9 @@ class CityLearn(gym.Env):
                 ).sum()
 
                 if self.simulation_period[1] - self.simulation_period[0] > 8760:
-                    building_costs[building_id]["cost_last_yr"]["quadratic_last_yr"] = (
+                    building_costs[building_id]["cost_last_year"][
+                        "quadratic_last_yr"
+                    ] = (
                         building.net_electric_consumption[-8760:].clip(min=0) ** 2
                     ).sum()
 
@@ -1390,14 +1392,12 @@ class CityLearn(gym.Env):
                     ] = (
                         np.mean(
                             [
-                                building_costs.net_electric_consumption[-8760:][
+                                building.net_electric_consumption[-8760:][
                                     i : i + 24
                                 ].max()
                                 for i in range(
                                     0,
-                                    len(
-                                        building_costs.net_electric_consumption[-8760:]
-                                    ),
+                                    len(building.net_electric_consumption[-8760:]),
                                     24,
                                 )
                             ]
@@ -1444,7 +1444,7 @@ class CityLearn(gym.Env):
                     building_costs[id]["cost_last_year"][
                         "net_electricity_consumption_last_yr"
                     ] = (
-                        self.net_electric_consumption[-8760:].clip(min=0).sum()
+                        building.net_electric_consumption[-8760:].clip(min=0).sum()
                         / self.cost_rbc_detailed[id]["cost_last_year"][
                             "net_electricity_consumption_last_yr"
                         ]
@@ -1487,7 +1487,7 @@ class CityLearn(gym.Env):
                 # compute total cost
                 arr = []
                 for k, c in building_costs[id]["cost_last_year"].items():
-                    if k != "c_score":
+                    if k != "c_score_last_year":
                         arr.append(c)
                 building_costs[id]["cost_last_year"]["total_last_yr"] = np.mean(arr)
 
