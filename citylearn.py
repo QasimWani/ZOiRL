@@ -1304,7 +1304,7 @@ class CityLearn(gym.Env):
                     ).sum()
                     / self.cost_rbc_detailed[id]["cost_last_year"]["ramping_last_yr"]
                 )
-                building_costs[id]["cost_last_year"]["c_score_last_yr"] = [
+                building_costs[id]["cost_last_year"]["c_score_last_year"] = [
                     building_costs[id]["cost_last_year"]["ramping_last_yr"]
                 ]
 
