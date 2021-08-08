@@ -1338,7 +1338,7 @@ class CityLearn(gym.Env):
                 )
 
                 if self.simulation_period[1] - self.simulation_period[0] > 8760:
-                    building_costs[id]["1-load_factor_last_yr"] = (
+                    building_costs[id]["cost_last_year"]["1-load_factor_last_yr"] = (
                         np.mean(
                             [
                                 1
@@ -1445,7 +1445,7 @@ class CityLearn(gym.Env):
                         "net_electricity_consumption_last_yr"
                     ] = (
                         self.net_electric_consumption[-8760:].clip(min=0).sum()
-                        / self.cost_rbc_detailed[id]["cost"][
+                        / self.cost_rbc_detailed[id]["cost_last_year"][
                             "net_electricity_consumption_last_yr"
                         ]
                     )
@@ -1459,7 +1459,9 @@ class CityLearn(gym.Env):
                 if self.simulation_period[1] - self.simulation_period[0] > 8760:
                     building_costs[id]["cost_last_year"]["carbon_emissions_last_yr"] = (
                         self.carbon_emissions[-8760:].sum()
-                        / self.cost_rbc_detailed[id]["cost"]["carbon_emissions_last_yr"]
+                        / self.cost_rbc_detailed[id]["cost_last_year"][
+                            "carbon_emissions_last_yr"
+                        ]
                     )
 
             # compute total cost
