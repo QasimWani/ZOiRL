@@ -408,9 +408,7 @@ class Actor:
                 * eta_Csto[i]
                 + SOC_Crelax[i]
             )
-        self.constraints.append(
-            SOC_C[-1] == soc_Csto_norm_end
-        )
+        self.constraints.append(SOC_C[-1] == soc_Csto_norm_end)
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
         self.constraints.append(SOC_C <= 1)  # battery SOC bounds
 

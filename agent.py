@@ -1,31 +1,3 @@
-# ### Feel free to edit this file at will, but make sure it runs properly when we execute the main.py or main.ipynb file that is provided. You can't change the main file, only to the submission files.
-
-# '''Import any packages here'''
-# import json
-# import torch
-
-# class Agent:
-#     def __init__(self, building_ids, buildings_states_actions, building_info):
-#         with open(buildings_states_actions) as json_file:
-#             self.buildings_states_actions = json.load(json_file)
-
-#         '''Initialize the class and define any hyperparameters of the controller'''
-
-
-#     def select_action(self, states):
-
-#         '''Action selection algorithm. You can set coordination_vars = None if you do not want to use this variable '''
-
-#         return actions, coordination_vars
-
-
-#     def add_to_buffer(self, states, actions, rewards, next_states, done, coordination_vars=None, coordination_vars_next=None):
-
-#         '''Make any updates to your policy, you don't have to use all the variables above (you can leave the coordination
-#         variables empty if you wish, or use them to share information among your different agents). You can add a counter
-#         within this function to compute the time-step of the simulation, since it will be called once per time-step'''
-
-
 from copy import deepcopy
 from TD3 import TD3
 from digital_twin import DigitalTwin
@@ -46,15 +18,13 @@ class Agent(TD3):
     def __init__(self, **kwargs):
         """Initialize Agent"""
         super().__init__(
-            num_actions=kwargs["action_spaces"],
+            action_space=kwargs["action_spaces"],
             num_buildings=len(kwargs["building_ids"]),
+            building_info=kwargs["building_info"],
             rbc_threshold=336,
         )
 
         observation_space = kwargs["observation_space"]
-        #         self.env = kwargs["env"]
-
-        #         self.oracle = Oracle(self.env,kwargs["action_spaces"])
 
         self.state_hist = []
         self.E_grid_dt = []
