@@ -511,9 +511,13 @@ class CityLearn(gym.Env):
         central_agent=False,
         save_memory=True,
         verbose=0,
+        cost_analysis=2920,  # run cost analysis every x hours
     ):
         with open(buildings_states_actions) as json_file:
             self.buildings_states_actions = json.load(json_file)
+
+        self.costs_periodic = []  # measures cost overtime
+        self.cost_analysis = cost_analysis
 
         self.data_path = data_path
         self.buildings_states_actions_filename = buildings_states_actions
@@ -523,7 +527,10 @@ class CityLearn(gym.Env):
         self.carbon_intensity = carbon_intensity
         self.building_ids = building_ids
         self.cost_function = cost_function
+
         self.cost_rbc = None
+        self.cost_rbc_last_yr = None
+
         self.cost_rbc_detailed = None
         self.weather_file = weather_file
         self.central_agent = central_agent
@@ -963,6 +970,14 @@ class CityLearn(gym.Env):
         )
 
         terminal = self._terminal()
+        if (
+            self.time_step % self.cost_analysis == 0
+            and self.time_step > 0
+            and not terminal
+        ):  # run cost analysis
+            cost = self.force_cost_analysis()
+            self.costs_periodic.append(cost)
+
         return (self._get_ob(), rewards, terminal, {})
 
     def reset_baseline_cost(self):
@@ -1102,6 +1117,69 @@ class CityLearn(gym.Env):
                 print("Cumulated reward: " + str(self.cumulated_reward_episode))
 
         return is_terminal
+
+    def force_cost_analysis(self):
+        # convert to numpy arrays
+        self.convert_to_numpy()
+        # run cost analysis
+        simulation_period = self.simulation_period[0], self.time_step
+        if simulation_period[1] - simulation_period[0] > 8760:
+            cost, _ = self.cost(simulation_period)
+        else:
+            cost = self.cost(simulation_period)
+        # convert back to list
+        self.convert_to_list()
+        return cost
+
+    def convert_to_numpy(self):
+        self.carbon_emissions = np.array(self.carbon_emissions)
+        self.net_electric_consumption = np.array(self.net_electric_consumption)
+        self.net_electric_consumption_no_storage = np.array(
+            self.net_electric_consumption_no_storage
+        )
+        self.net_electric_consumption_no_pv_no_storage = np.array(
+            self.net_electric_consumption_no_pv_no_storage
+        )
+        self.electric_consumption_electric_storage = np.array(
+            self.electric_consumption_electric_storage
+        )
+        self.electric_consumption_dhw_storage = np.array(
+            self.electric_consumption_dhw_storage
+        )
+        self.electric_consumption_cooling_storage = np.array(
+            self.electric_consumption_cooling_storage
+        )
+        self.electric_consumption_dhw = np.array(self.electric_consumption_dhw)
+        self.electric_consumption_cooling = np.array(self.electric_consumption_cooling)
+        self.electric_consumption_appliances = np.array(
+            self.electric_consumption_appliances
+        )
+        self.electric_generation = np.array(self.electric_generation)
+
+    def convert_to_list(self):
+        self.carbon_emissions = list(self.carbon_emissions)
+        self.net_electric_consumption = list(self.net_electric_consumption)
+        self.net_electric_consumption_no_storage = list(
+            self.net_electric_consumption_no_storage
+        )
+        self.net_electric_consumption_no_pv_no_storage = list(
+            self.net_electric_consumption_no_pv_no_storage
+        )
+        self.electric_consumption_electric_storage = list(
+            self.electric_consumption_electric_storage
+        )
+        self.electric_consumption_dhw_storage = list(
+            self.electric_consumption_dhw_storage
+        )
+        self.electric_consumption_cooling_storage = list(
+            self.electric_consumption_cooling_storage
+        )
+        self.electric_consumption_dhw = list(self.electric_consumption_dhw)
+        self.electric_consumption_cooling = list(self.electric_consumption_cooling)
+        self.electric_consumption_appliances = list(
+            self.electric_consumption_appliances
+        )
+        self.electric_generation = list(self.electric_generation)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -1493,44 +1571,45 @@ class CityLearn(gym.Env):
 
         return building_costs
 
-    def cost(self):
+    def cost(self, simulation_period):
 
         # Running the reference rule-based controller to find the baseline cost
-        if self.cost_rbc is None:
-            env_rbc = CityLearn(
-                self.data_path,
-                self.building_attributes,
-                self.weather_file,
-                self.solar_profile,
-                self.building_ids,
-                carbon_intensity=self.carbon_intensity,
-                buildings_states_actions=self.buildings_states_actions_filename,
-                simulation_period=self.simulation_period,
-                cost_function=self.cost_function,
-                central_agent=False,
-            )
-            _, actions_spaces = env_rbc.get_state_action_spaces()
+        env_rbc = CityLearn(
+            self.data_path,
+            self.building_attributes,
+            self.weather_file,
+            self.solar_profile,
+            self.building_ids,
+            carbon_intensity=self.carbon_intensity,
+            buildings_states_actions=self.buildings_states_actions_filename,
+            simulation_period=simulation_period,
+            cost_function=self.cost_function,
+            central_agent=False,
+        )
+        _, actions_spaces = env_rbc.get_state_action_spaces()
 
-            # Instantiatiing the control agent(s)
-            agent_rbc = RBC_Agent(actions_spaces)
+        # Instantiatiing the control agent(s)
+        agent_rbc = RBC_Agent(actions_spaces)
 
-            state = env_rbc.reset()
-            done = False
-            while not done:
-                action = agent_rbc.select_action(
-                    [
-                        list(env_rbc.buildings.values())[0].sim_results["hour"][
-                            env_rbc.time_step
-                        ]
+        state = env_rbc.reset()
+        done = False
+        while not done:
+            action = agent_rbc.select_action(
+                [
+                    list(env_rbc.buildings.values())[0].sim_results["hour"][
+                        env_rbc.time_step
                     ]
-                )
-                next_state, rewards, done, _ = env_rbc.step(action)
-                state = next_state
+                ]
+            )
+            next_state, rewards, done, _ = env_rbc.step(action)
+            state = next_state
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
-                self.cost_rbc, self.cost_rbc_last_yr = env_rbc.get_baseline_cost()
-            else:
-                self.cost_rbc = env_rbc.get_baseline_cost()
+        if simulation_period[1] - simulation_period[0] > 8760:
+            self.cost_rbc, self.cost_rbc_last_yr = env_rbc.get_baseline_cost(
+                simulation_period
+            )
+        else:
+            self.cost_rbc = env_rbc.get_baseline_cost(simulation_period)
 
         # Compute the costs normalized by the baseline costs
         cost, cost_last_yr, c_score, c_score_last_yr = {}, {}, [], []
@@ -1546,7 +1625,7 @@ class CityLearn(gym.Env):
             )
             c_score.append(cost["ramping"])
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["ramping_last_yr"] = (
                     np.abs(
                         (
@@ -1575,7 +1654,7 @@ class CityLearn(gym.Env):
             )
             c_score.append(cost["1-load_factor"])
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["1-load_factor_last_yr"] = (
                     np.mean(
                         [
@@ -1614,7 +1693,7 @@ class CityLearn(gym.Env):
             )
             c_score.append(cost["average_daily_peak"])
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["average_daily_peak_last_yr"] = (
                     np.mean(
                         [
@@ -1635,7 +1714,7 @@ class CityLearn(gym.Env):
             )
             c_score.append(cost["peak_demand"])
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["peak_demand_last_yr"] = (
                     self.net_electric_consumption[-8760:].max()
                     / self.cost_rbc_last_yr["peak_demand_last_yr"]
@@ -1649,7 +1728,7 @@ class CityLearn(gym.Env):
                 / self.cost_rbc["net_electricity_consumption"]
             )
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["net_electricity_consumption_last_yr"] = (
                     self.net_electric_consumption[-8760:].clip(min=0).sum()
                     / self.cost_rbc_last_yr["net_electricity_consumption_last_yr"]
@@ -1660,7 +1739,7 @@ class CityLearn(gym.Env):
                 self.carbon_emissions.sum() / self.cost_rbc["carbon_emissions"]
             )
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["carbon_emissions_last_yr"] = (
                     self.carbon_emissions[-8760:].sum()
                     / self.cost_rbc_last_yr["carbon_emissions_last_yr"]
@@ -1673,7 +1752,7 @@ class CityLearn(gym.Env):
             ).sum() / self.cost_rbc["quadratic"]
             c_score.append(cost["quadratic"])
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["quadratic_last_yr"] = (
                     self.net_electric_consumption[-8760:].clip(min=0) ** 2
                 ).sum() / self.cost_rbc_last_yr["quadratic_last_yr"]
@@ -1687,13 +1766,13 @@ class CityLearn(gym.Env):
         if c_score_last_yr != []:
             cost_last_yr["coordination_score_last_yr"] = np.mean(c_score_last_yr)
 
-        if self.simulation_period[1] - self.simulation_period[0] > 8760:
+        if simulation_period[1] - simulation_period[0] > 8760:
             cost_last_yr["total_last_yr"] = np.mean([c for c in cost_last_yr.values()])
             return cost, cost_last_yr
 
-        return cost
+        return cost, env_rbc
 
-    def get_baseline_cost(self):
+    def get_baseline_cost(self, simulation_period):
 
         # Computes the costs for the Rule-based controller, which are used to normalized the actual costs.
         cost, cost_last_yr = {}, {}
@@ -1705,7 +1784,7 @@ class CityLearn(gym.Env):
                 )[1:]
             ).sum()
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["ramping_last_yr"] = np.abs(
                     (
                         self.net_electric_consumption[-8760:]
@@ -1725,7 +1804,7 @@ class CityLearn(gym.Env):
                 ]
             )
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["1-load_factor_last_yr"] = np.mean(
                     [
                         1
@@ -1755,7 +1834,7 @@ class CityLearn(gym.Env):
                 ]
             )
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["average_daily_peak_last_yr"] = np.mean(
                     [
                         self.net_electric_consumption[-8760:][i : i + 24].max()
@@ -1768,7 +1847,7 @@ class CityLearn(gym.Env):
         if "peak_demand" in self.cost_function:
             cost["peak_demand"] = self.net_electric_consumption.max()
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["peak_demand_last_yr"] = self.net_electric_consumption[
                     -8760:
                 ].max()
@@ -1778,7 +1857,7 @@ class CityLearn(gym.Env):
                 min=0
             ).sum()
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["net_electricity_consumption_last_yr"] = (
                     self.net_electric_consumption[-8760:].clip(min=0).sum()
                 )
@@ -1786,7 +1865,7 @@ class CityLearn(gym.Env):
         if "carbon_emissions" in self.cost_function:
             cost["carbon_emissions"] = self.carbon_emissions.sum()
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["carbon_emissions_last_yr"] = self.carbon_emissions[
                     -8760:
                 ].sum()
@@ -1794,12 +1873,12 @@ class CityLearn(gym.Env):
         if "quadratic" in self.cost_function:
             cost["quadratic"] = (self.net_electric_consumption.clip(min=0) ** 2).sum()
 
-            if self.simulation_period[1] - self.simulation_period[0] > 8760:
+            if simulation_period[1] - simulation_period[0] > 8760:
                 cost_last_yr["quadratic_last_yr"] = (
                     self.net_electric_consumption[-8760:].clip(min=0) ** 2
                 ).sum()
 
-        if self.simulation_period[1] - self.simulation_period[0] > 8760:
+        if simulation_period[1] - simulation_period[0] > 8760:
             return cost, cost_last_yr
 
         return cost

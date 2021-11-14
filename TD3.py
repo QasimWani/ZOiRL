@@ -4,7 +4,7 @@ import numpy as np
 
 from citylearn import CityLearn
 import time
-
+import sys, warnings
 from utils import ReplayBuffer, RBC
 
 ## local imports
@@ -15,57 +15,60 @@ from critic import Critic, Optim
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
+if not sys.warnoptions:
+    warnings.simplefilter("ignore")
+
 
 class TD3(object):
     """Base Agent class"""
 
     def __init__(
         self,
-        num_actions: list,
+        action_space: list,
         num_buildings: int,
-        rbc_threshold: int = 336,  # 2 weeks by default
+        building_info: dict,
+        rbc_threshold: int,
         meta_episode: int = 2,
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
-        self.num_actions = num_actions
+        self.action_space = action_space
         self.total_it = 0
         self.rbc_threshold = rbc_threshold
         self.meta_episode = meta_episode
-        self.agent_rbc = RBC(
-            num_actions
-        )  # runs for first 2 weeks (by default) to collect data
+
+        self.agent_rbc = RBC(action_space)
 
         self.actor = Actor(
-            num_actions, num_buildings, rbc_threshold + meta_episode * 24
+            action_space, num_buildings, rbc_threshold + meta_episode * 24
         )  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
         self.actor_norl = deepcopy(
             self.actor
         )  # NORL actor, i.e. actor whose parameters stay constant.
 
+        self.critic = [
+            Critic(num_buildings, action_space),
+            Critic(num_buildings, action_space),
+        ]  # 2 local critics
+        self.critic_target = deepcopy(self.critic)  # 2 target critics
+        self.critic_optim = Optim()
+
         ### --- log details ---
         self.logger = []
         self.norl_logger = []
         self.optim_param_logger = []
 
-        self.critic = [
-            Critic(num_buildings, num_actions),
-            Critic(num_buildings, num_actions),
-        ]  # 2 local critic's
-        self.critic_target = deepcopy(self.critic)  # 2 target critic's
-
-        self.critic_optim = Optim()
-
-        self.memory = ReplayBuffer()
+        self.memory: ReplayBuffer = ReplayBuffer()
+        self.reward_memory: ReplayBuffer = ReplayBuffer()
 
         ## initialize predictor for loading and synthesizing data passed into actor and critic
-        self.data_loader = DataLoader(num_actions)
+        self.data_loader = DataLoader(building_info, action_space)
 
         # day-ahead dispatch actions
         self.action_planned_day = None
-        self.E_grid_planned_day = np.zeros(shape=(num_buildings, 24))
-        self.init_updates = None
+        # self.E_grid_planned_day = np.zeros(shape=(num_buildings, 24))
+        # self.init_updates = None
 
     def select_action(
         self,
@@ -99,7 +102,7 @@ class TD3(object):
                 actions = self.agent_rbc.select_action(
                     state[0][self.agent_rbc.idx_hour]
                 )
-            self.optim_param_logger.append([])
+            self.optim_param_logger.append([None] * self.buildings)
 
         # upload action to memory
         self._add_to_buffer(None, actions)
@@ -151,20 +154,31 @@ class TD3(object):
 
         return action_planned_day, data_est
 
-    def critic_update(self, parameters_1: list, parameters_2: list):
+    def critic_update(self, params_1: list, params_2: list):
         """Master Critic update"""
         # pre-process each days information into numpy array and pass them to critic update
-        day_params_1, day_params_2 = [], []
-        for params_1, params_2 in zip(parameters_1, parameters_2):
+
+        parameters_1, rewards_1 = params_1
+        parameters_2, rewards_2 = params_2
+
+        day_params_1, day_params_2 = [], []  # parameters and rewards for each day
+        for params_1, r1, params_2, r2 in zip(
+            parameters_1, rewards_1, parameters_2, rewards_2
+        ):
             # deepcopy to prevent overriding issues
             params_1 = deepcopy(params_1)
             params_2 = deepcopy(params_2)
+            r1 = deepcopy(r1)
+            r2 = deepcopy(r2)
             # parse data for critic (in-place)
-            self.data_loader.model.convert_to_numpy(params_1)
-            self.data_loader.model.convert_to_numpy(params_2)
+            self.data_loader.convert_to_numpy(params_1)
+            self.data_loader.convert_to_numpy(params_2)
+            self.data_loader.convert_to_numpy(r1)
+            self.data_loader.convert_to_numpy(r2)
+
             # add processed day info
-            day_params_1.append(params_1)
-            day_params_2.append(params_2)
+            day_params_1.append([params_1, r1])
+            day_params_2.append([params_2, r2])
 
         # Local Critic Update
         for id in range(self.buildings):
@@ -186,9 +200,11 @@ class TD3(object):
         self.critic[0].prob = self.critic_target[0].prob
         # self.critic[1].prob = self.critic_target[1].prob
 
-    def actor_update(self, parameters: list):
+    def actor_update(self, params: list):
         """Master Actor update"""
         # pre-process each days information into numpy array and pass them to actor update
+        parameters, rewards = params  # extract parameters and rewards
+
         day_params = []
         for params in parameters:
             # deepcopy to prevent overriding issues
@@ -209,21 +225,44 @@ class TD3(object):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
 
         # gather data from memory for critic update
-        parameters_1 = self.memory.sample()  # critic 1 - sequential
-        parameters_2 = self.memory.sample(is_random=True)  # critic 2 - random
+        parameters_1, idx_1 = self.memory.sample()  # critic 1 - sequential
+        rewards_1 = self.reward_memory.sample(
+            sample_by_indices=idx_1
+        )  # critic 1 - rewards part
+
+        parameters_2, idx_2 = self.memory.sample(is_random=True)  # critic 2 - random
+        rewards_2 = self.reward_memory.sample(
+            sample_by_indices=idx_2
+        )  # critic 2 - rewards part
 
         # local + target critic update
-        self.critic_update(parameters_1, parameters_2)
+        self.critic_update((parameters_1, rewards_1), (parameters_2, rewards_2))
 
         # local + target actor update
-        self.actor_update(parameters_1)
+        self.actor_update((parameters_1, rewards_1))
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
-        pass
+        # add reward to memory
+        if len(self.memory) == 0:
+            return
+
+        r = self.data_loader.parse_data(
+            self.reward_memory.get_recent(), {"reward": reward}
+        )
+        # add to memory
+        self.reward_memory.add(r)
+
+        if self.total_it % (self.meta_episode * 24) == 0:
+            self.train()
 
 
-# TODO:
-# 1. Digital Twin using Oracle
-# 2. CEM debugging
-# 3. p_ele = 1. Test different load strategies, seasons, etc.
+class Agent(TD3):
+    def __init__(self, **kwargs):
+        """Initialize Agent"""
+        super().__init__(
+            action_space=kwargs["action_spaces"],
+            num_buildings=len(kwargs["building_ids"]),
+            building_info=kwargs["building_info"],
+            rbc_threshold=336,
+        )

@@ -1,7 +1,7 @@
 # Run this again after editing submodules so Colab uses the updated versions
 from citylearn import CityLearn
 from pathlib import Path
-from agent_final import Agent
+from TD3 import Agent
 import numpy as np
 import torch
 
@@ -49,23 +49,12 @@ agents = Agent(**params_agent)
 state = env.reset()
 done = False
 
-action, coordination_vars = agents.select_action(state)
 
 while not done:
+    action, _ = agents.select_action(state)
     next_state, reward, done, _ = env.step(action)
-    action_next, coordination_vars_next = agents.select_action(next_state)
-    agents.add_to_buffer(
-        state,
-        action,
-        reward,
-        next_state,
-        done,
-        coordination_vars,
-        coordination_vars_next,
-    )
-    coordination_vars = coordination_vars_next
+    agents.add_to_buffer(state, action, reward, next_state, done)
     state = next_state
-    action = action_next
 
     print(f"\r {env.time_step}", end="")
 

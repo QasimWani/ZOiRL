@@ -84,10 +84,13 @@ class ReplayBuffer:
             self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
         )
 
-    def sample(self, is_random: bool = False):
+    def sample(self, is_random: bool = False, sample_by_indices: list = None):
         """Picks all samples within the replay_buffer"""
         # critic 1 last n days - sequential
         # critic 2 last n days - random
+
+        if sample_by_indices is not None:  # sample by pre-specified indices
+            return [self.get(index) for index in sample_by_indices]
 
         if is_random:  # critic 2
             indices = np.random.choice(
@@ -99,7 +102,7 @@ class ReplayBuffer:
 
         days = [self.get(index) for index in indices]  # get all random experiences
         # combine all days together from DataLoader
-        return days
+        return days, indices
 
     def get(self, index: int):
         """Returns an element from deque specified by `index`"""

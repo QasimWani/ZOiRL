@@ -1,20 +1,1371 @@
-from utils import ReplayBuffer, DataLoader
-from collections import defaultdict
-from citylearn import CityLearn
+from collections import deque
 from copy import deepcopy
+import json
+import sys
+import warnings
 
 import numpy as np
 import pandas as pd
-import sys
+import cvxpy as cp
 
-from scipy import stats
-from sklearn import datasets, linear_model
-from sklearn.metrics import mean_squared_error, r2_score
+# from citylearn import CityLearn
+
 from sklearn.linear_model import LinearRegression
-import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
-# TODO: @Zhiyao - add in parameter/initialization for capacity as discussed.
+if not sys.warnoptions:
+    warnings.simplefilter("ignore")
+
+
+class TD3(object):
+    """Base Agent class"""
+
+    def __init__(
+        self,
+        action_space: list,
+        num_buildings: int,
+        building_info: dict,
+        rbc_threshold: int,
+        meta_episode: int = 2,
+    ) -> None:
+        """Initialize Actor + Critic for weekday and weekends"""
+        self.buildings = num_buildings
+        self.action_space = action_space
+        self.total_it = 0
+        self.rbc_threshold = rbc_threshold
+        self.meta_episode = meta_episode
+
+        self.agent_rbc = RBC(action_space)
+
+        self.actor = Actor(action_space, num_buildings)  # 1 local actor
+        self.actor_target = deepcopy(self.actor)  # 1 target actor
+        self.actor_norl = deepcopy(
+            self.actor
+        )  # NORL actor, i.e. actor whose parameters stay constant.
+
+        ### --- log details ---
+        self.logger = []
+        self.norl_logger = []
+        self.optim_param_logger = []
+
+        self.memory = ReplayBuffer()
+
+        ## initialize predictor for loading and synthesizing data passed into actor and critic
+        self.data_loader = Predictor(building_info, action_space)
+
+        # day-ahead dispatch actions
+        self.action_planned_day = None
+        self.E_grid_planned_day = np.zeros(shape=(num_buildings, 24))
+        self.init_updates = None
+
+    def select_action(
+        self,
+        state,
+        day_ahead: bool = False,
+        # env: CityLearn = None,  # use for Oracle
+    ):
+        """Returns action from RBC/Optimization"""
+        # 3 policies:
+        # 1. RBC (utils.py)
+        # 2. Online Exploration. (utils.py)
+        # 3. Optimization (actor.py)
+
+        # upload state to memory
+        self._add_to_buffer(state, None)
+
+        building_parameters = None
+        if self.total_it >= self.rbc_threshold:  # run Actor
+            if day_ahead:
+                actions, building_parameters = self.day_ahead_dispatch_pred()
+            else:
+                actions, building_parameters = self.adaptive_dispatch_pred()
+                self.optim_param_logger.append(building_parameters)
+        else:  # run RBC
+            if (
+                self.total_it % 24 in [22, 23, 0, 1, 2, 3, 4, 5, 6]
+                and self.total_it >= 1
+            ):
+                actions = self.data_loader.select_action(self.total_it)
+            else:
+                actions = self.agent_rbc.select_action(
+                    state[0][self.agent_rbc.idx_hour]
+                )
+            self.optim_param_logger.append([])
+
+        # upload action to memory
+        self._add_to_buffer(None, actions)
+        return actions, building_parameters
+
+    def _add_to_buffer(self, state, action):
+        """Internal function for adding state & action to state_buffer and action_buffer, respectively"""
+        if state is not None:
+            self.data_loader.upload_state(state)
+
+        if action is not None:
+            self.data_loader.upload_action(action)
+            self.total_it += 1
+
+    def day_ahead_dispatch_pred(self):
+        """Returns day-ahead dispatch"""
+        data_est = None
+        if self.total_it % 24 == 0:  # save actions for 24hours
+            data_est = self.data_loader.estimate_data(self.memory, self.total_it)
+            self.data_loader.convert_to_numpy(data_est)
+
+            self.action_planned_day, optim_values, _ = zip(
+                *[
+                    self.actor.forward(self.total_it % 24, data_est, id, dispatch=True)
+                    for id in range(self.buildings)
+                ]
+            )
+            # Shape: 9, 3, 24
+            self.action_planned_day = np.array(self.action_planned_day)
+            self.logger.append(optim_values)  # add all variables - Optimization
+
+        action_planned_day = self.action_planned_day[:, :, self.total_it % 24]
+        return action_planned_day, data_est
+
+    def adaptive_dispatch_pred(self):
+        """Returns adaptive dispatch for current hour"""
+        data_est = self.data_loader.estimate_data(
+            self.memory, self.total_it, is_adaptive=True
+        )
+        self.data_loader.convert_to_numpy(data_est)
+
+        action_planned_day, optim_values, _ = zip(
+            *[
+                self.actor.forward(self.total_it % 24, data_est, id, dispatch=False)
+                for id in range(self.buildings)
+            ]
+        )
+        self.logger.append(optim_values)  # add all variables - Optimization
+
+        return action_planned_day, data_est
+
+    def add_to_buffer(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        done,
+        coordination_vars,
+        coordination_vars_next,
+    ):
+        """Add to replay buffer"""
+        pass
+
+
+# -------------------------------------------------------------------------------------------------
+class Agent(TD3):
+    """CEM Agent - inherits TD3 as agent"""
+
+    def __init__(self, **kwargs):
+        """Initialize Agent"""
+        super().__init__(
+            action_space=kwargs["action_spaces"],
+            num_buildings=len(kwargs["building_ids"]),
+            building_info=kwargs["building_info"],
+            rbc_threshold=336,
+        )
+
+        observation_space = kwargs["observation_spaces"]
+
+        self.state_hist = []
+        self.E_grid_dt = []
+        # CEM Specific parameters
+        self.N_samples = 10
+        self.K = 5  # size of elite set
+        self.K_keep = 3
+        self.k = 1  # Initial sample index
+        self.flag = 0
+        self.all_costs = []
+
+        self.p_ele_logger = []
+        self.mean_elite_set = []
+        self.loads = {
+            "E_ns": [],
+            "C_bd": [],
+            "H_bd": [],
+            "E_ns_dt": [],
+            "C_bd_dt": [],
+            "H_bd_dt": [],
+        }
+        # Observed states initialisation
+        self.E_netelectric_hist = []
+        self.E_NS_hist = []
+        self.C_bd_hist = []
+        self.H_bd_hist = []
+        self.eta_ehH_hist = []
+        self.COP_C_hist = []
+        self.outputs = {
+            "E_netelectric_hist": self.E_netelectric_hist,
+            "E_NS_hist": self.E_NS_hist,
+            "C_bd_hist": self.C_bd_hist,
+            "H_bd_hist": self.H_bd_hist,
+            "COP_C_hist": self.COP_C_hist,
+        }  # List for observed states for the last 24 hours
+
+        self.zeta = []  # zeta for all buidling for 24 hours (24x9)
+
+        self.zeta_eta_bat = np.ones(((1, 24, self.buildings)))
+        self.zeta_eta_Hsto = np.ones(((1, 24, self.buildings)))
+        self.zeta_eta_Csto = np.ones(((1, 24, self.buildings)))
+        self.zeta_eta_ehH = 0.9
+        self.zeta_c_bat_end = 0.1
+
+        self.mean_p_ele = [
+            np.ones(24)
+        ] * self.buildings  # Having mean and range for each of the hour
+        self.std_p_ele = [0.2 * np.ones(24)] * self.buildings
+        self.range_p_ele = [0.1, 5]
+
+        # Initialising the elite sets
+        self.elite_set = (
+            []
+        )  # Storing best 5 zetas i.e. a list of 5 lists which are further a list of 24 lists of size 9
+        self.elite_set_prev = []  # Same format as elite_set
+
+        # Initialising the list of costs after using certain params zetas
+        self.costs = []
+
+        self.zeta_k_list = np.ones(
+            ((4, 1, 24, len(observation_space)))
+        )  # 4 different Zetas.
+
+        self.zeta_k_list[1, :, 0:13, :] = 0.2
+        self.zeta_k_list[1, :, 13:19, :] = 5
+        self.zeta_k_list[1, :, 19:23, :] = 0.2
+
+        self.zeta_k_list[2, :, 0:6, :] = 0.2
+        self.zeta_k_list[2, :, 7:19, :] = 5
+        self.zeta_k_list[2, :, 20:23, :] = 0.2
+
+        self.zeta_k_list[3, :, 0:5, :] = 0.2
+        self.zeta_k_list[3, :, 11:17, :] = 2
+        self.zeta_k_list[3, :, 22:23, :] = 0.2
+
+        self.dt_building_logger = []
+        self.e_soc_logger = []
+        self.h_soc_logger = []
+        self.c_soc_logger = []
+
+    def get_zeta(self):  # Getting zeta for the 9 buildings for 24 hours
+        """This function is used to get zeta for the actor. We set the zeta for the actor and do the forward pass to get actions. In our case
+        we will only have p_ele as the zeta parameter. This get_zeta function calls the set_EliteSet_EliteSetPrev
+        to get the elite_set and then selects zeta from that. Elite set stores the best zetas."""
+
+        # Getting the elite_set and elite_set_prev
+        elite_set_eliteset_prev = self.set_EliteSet_EliteSetPrev()
+
+        if len(self.elite_set_prev) and self.k <= self.K_keep:
+
+            # k-th best from elite_set_prev - zeta for all buildings
+            self.zeta = self.elite_set_prev[-1]
+
+            zeta_k = self.zeta  # zeta for 9 buildings for 24 hours
+
+        else:
+
+            # Initialising parameters for the rest of the day for 24 hrs for 9 buildings
+            zeta_p_ele = np.zeros(((1, 24, self.buildings)))
+
+            mean_sigma_range = (
+                self.get_mean_sigma_range()
+            )  # Getting a list of lists for mean, std and ranges
+
+            for i in range(self.buildings):
+                for t in range(24):
+
+                    zeta_p_ele[:, t, i] = np.clip(
+                        np.random.normal(
+                            mean_sigma_range[0][i][t], mean_sigma_range[1][i][t], 1
+                        ),
+                        mean_sigma_range[2][0],
+                        mean_sigma_range[2][1],
+                    )
+
+            self.zeta = zeta_p_ele
+
+            zeta_k = self.zeta  # will set this zeta for the rest of the day
+
+        self.p_ele_logger.append(zeta_k)
+        self.elite_set.append(zeta_k)
+
+        return zeta_k
+
+    def get_mean_sigma_range(self):
+        """This function is called to get the current mean, standard deviation and allowed range for the
+        parameter p_ele. We can access these 3 quantities by calling this function."""
+        return [self.mean_p_ele, self.std_p_ele, self.range_p_ele]
+
+    def get_cost_day_end(self):
+        """This function calculates the cost at the end of each day after using certain zeta.
+        This function is called at the end of each day. Cost is calculated using the recorded
+        outputs/states from the environment in the past 24 hours using a certain value of zeta- p_ele."""
+
+        # outputs act as the next_state that we get after taking actions
+        #  outputs = {'E_netelectric_hist': E_netelectric_hist, 'E_NS_hist': E_NS_hist, 'C_bd_hist': C_bd_hist, 'H_bd_hist': H_bd_hist}
+        # outputs includes the history of all observed states during the day
+
+        cost = np.zeros((1, self.buildings))
+        self.outputs["E_netelectric_hist"] = np.array(
+            self.outputs["E_netelectric_hist"]
+        )  # size 24*9
+        self.outputs["E_NS_hist"] = np.array(self.outputs["E_NS_hist"])  # size 2*9
+        self.outputs["eta_ehH_hist"] = np.array(
+            self.outputs["eta_ehH_hist"]
+        )  # size 9*24
+
+        self.C_bd_hist = np.vstack(self.C_bd_hist)
+        self.H_bd_hist = np.vstack(self.H_bd_hist)
+        self.COP_C_hist = np.vstack(self.COP_C_hist)
+
+        self.outputs["C_bd_hist"] = np.array(self.outputs["C_bd_hist"])
+        self.outputs["H_bd_hist"] = np.array(self.outputs["H_bd_hist"])
+        self.outputs["COP_C_hist"] = np.array(self.outputs["COP_C_hist"])
+
+        for i in range(self.buildings):
+            num = np.max(self.outputs["E_netelectric_hist"][:, i])
+
+            C_bd_div_COP_C = np.divide(
+                self.outputs["C_bd_hist"][:, i], self.outputs["COP_C_hist"][:, i]
+            )
+
+            H_bd_div_eta_ehH = self.outputs["H_bd_hist"][:, i] / self.zeta_eta_ehH
+
+            den = np.max(
+                self.outputs["E_NS_hist"][1, i] * np.ones((24, 1))
+                + C_bd_div_COP_C
+                + H_bd_div_eta_ehH
+            )
+
+            cost[:, i] = num / den
+
+        return cost
+
+    def set_EliteSet_EliteSetPrev(self):
+        """This function is called by get_zeta() - see first line in get_zeta(). After this function is called inside
+        get_zeta, it updates the self.elite_set according to the value of self.k. Once the elite_set is updated inside this
+        function, get_zeta can use self.elite_set to get the zeta- p_ele to be passed through the actor."""
+
+        if self.k == 1:
+
+            self.elite_set_prev = self.elite_set
+            self.elite_set = []
+
+        if self.k > self.N_samples:  # Enough samples of zeta collected
+
+            # Finding best k samples according to cost y_k
+            self.costs = np.array(
+                self.costs
+            )  # Converting self.costs to np.array   dimensions = k*1*9
+            #             print(np.shape(self.costs))
+            best_zeta_args = np.zeros(
+                (self.k - 1, self.buildings)
+            )  # Will store the arguments of the sort
+
+            elite_set_dummy = self.elite_set
+
+            for i in range(self.buildings):
+                best_zeta_args[:, i] = np.argsort(self.costs[:, :, i], axis=0).reshape(
+                    -1
+                )  # Arranging costs for the i-th building
+
+                # Finding the best K samples from the elite set
+                for Kbest in range(self.K):
+                    a = best_zeta_args[:, i][Kbest].astype(np.int32)
+                    self.elite_set[Kbest][:, :, i] = elite_set_dummy[a][:, :, i]
+
+            self.elite_set = self.elite_set[0 : self.K]
+
+            self.mean_p_ele = [[]] * self.buildings
+            self.std_p_ele = [[]] * self.buildings
+
+            A = np.vstack(self.elite_set)
+
+            for i in range(self.buildings):
+                self.mean_p_ele[i] = np.mean(A[:, :, i], axis=0)
+                self.std_p_ele[i] = np.std(A[:, :, i], axis=0)
+
+            self.elite_set_prev = self.elite_set
+            self.elite_set = []
+
+            self.k = 1  # Reset the sample index
+
+            self.costs = []
+
+        elite_set = self.elite_set
+        elite_set_prev = self.elite_set_prev
+
+        eliteSet_eliteSetPrev = [elite_set, elite_set_prev]
+
+        return eliteSet_eliteSetPrev
+
+    def evaluate_cost(self, state):
+        """Evaluate cost computed from current set of state and action using set of zetas previously supplied"""
+        if self.total_it <= self.rbc_threshold:
+            return
+
+        E_observed = state[:, 28]  # For all buildings
+
+        E_NS_t = state[:, 23]  # For all buildings
+
+        data_output = self.memory.get(-1)
+
+        C_bd_hist = data_output["C_bd"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and current hour - np.array size - 1*9
+
+        H_bd_hist = data_output["H_bd"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and 24 hours - np.array size - 1*9
+
+        COP_C_hist = data_output["COP_C"][
+            self.total_it % 24, :
+        ]  # For 9 buildings and 24 hours - np.array size - 1*9
+
+        self.eta_ehH_hist = [
+            0.9
+        ] * self.buildings  # For 9 buildings and 24 hours - list of 9 lists of size 24
+
+        # Appending the current states to the day history list of states
+        self.E_netelectric_hist.append(E_observed)  # List of 24 lists each list size 9
+        self.E_NS_hist.append(E_NS_t)  # List of 24 lists each list of size 9
+        self.C_bd_hist.append(C_bd_hist)
+        self.H_bd_hist.append(H_bd_hist)
+        self.COP_C_hist.append(COP_C_hist)
+
+        if self.total_it % 24 == 0:  # Calculate cost at the end of the day
+
+            self.outputs = {
+                "E_netelectric_hist": self.E_netelectric_hist,
+                "E_NS_hist": self.E_NS_hist,
+                "C_bd_hist": self.C_bd_hist,
+                "H_bd_hist": self.H_bd_hist,
+                "COP_C_hist": self.COP_C_hist,
+                "eta_ehH_hist": self.eta_ehH_hist,
+            }  # List for observed states for the last 24 hours for the 9 buildings
+
+            cost = self.get_cost_day_end()  # Calculating cost at the end of the day
+
+            self.costs.append(cost)
+
+            self.all_costs.append(cost)
+
+            self.k = self.k + 1
+
+            self.C_bd_hist = []
+
+            self.E_netelectric_hist = []
+
+            self.H_bd_hist = []
+
+            self.COP_C_hist = []
+
+            self.E_NS_hist = []
+
+        self.mean_elite_set.append(self.mean_p_ele)
+
+    def set_zeta(self, zeta=None):
+        """Update zeta which will be supplied to `select_action`"""
+        if zeta is None:
+            zeta = self.get_zeta()  # put into actor
+
+        if self.total_it >= self.rbc_threshold and self.total_it % 24 == 0:
+            self.elite_set.append(zeta)
+            for i in range(self.buildings):
+                zeta_tuple = (
+                    zeta[0, :, i],
+                    self.zeta_eta_bat[:, :, i],
+                    self.zeta_eta_Hsto[:, :, i],
+                    self.zeta_eta_Csto[:, :, i],
+                    self.zeta_eta_ehH,
+                    self.zeta_c_bat_end,
+                )
+                self.actor.set_zeta(zeta_tuple, i)
+
+    def select_action(self, state):
+        """Overrides from `TD3`. Utilizes CEM and Digital Twin computations"""
+        # update zeta
+        # self.set_zeta()
+        # run forward pass
+        actions, parameters = super().select_action(state, day_ahead=False)
+        # evaluate agent
+        # self.evaluate_cost(state)
+        return actions, None  # action, coordinate_vars
+
+
+# -------------------------------------------------------------------------------------------------
+
+
+class Actor:
+    def __init__(
+        self,
+        action_space: list,
+        num_buildings: int,
+        rho: float = 0.9,
+    ):
+        """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
+        self.action_space = action_space
+        self.num_buildings = num_buildings
+        self.rho = rho
+        # Optim specific
+        self.constraints = []
+        self.scs_cnt = [0 for _ in range(9)]
+        self.fail_cnt = [0 for _ in range(9)]
+
+        self.cost = None  # created at every call to `create_problem`. not used in DPP.
+        # list of parameter names for Zeta
+        zeta_keys = set(
+            [
+                "p_ele",
+                "eta_ehH",
+                "eta_bat",
+                "c_bat_end",
+                "eta_Hsto",
+                "eta_Csto",
+            ]
+        )
+
+        self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
+
+        # define problem - forward pass
+        self.prob = [None] * 24  # template for each hour
+
+        ### RBC deviation
+        a, b, c = RBC(action_space).load_day_actions()
+        # a, b, c = np.zeros((3, self.num_buildings, 24))
+        self.rbc_actions = {"action_C": a, "action_H": b, "action_bat": c}
+
+    def initialize_zeta(
+        self,
+        p_ele: float = 1.0,
+        eta_ehH: float = 0.9,
+        eta_bat: float = 1.0,
+        eta_Hsto: float = 1.0,
+        eta_Csto: float = 1.0,
+        c_bat_end: float = 0.1,
+        c_Csto_end: float = 0.1,
+    ):
+        """
+        Initialize differentiable parameters, zeta with default values.
+        Local assign makes sure no accidental calls are made. it won't, but Murphy's law!
+        """
+        zeta = {}  # 6 parameters learned via differentiation
+
+        zeta["p_ele"] = np.full((24, self.num_buildings), p_ele)
+
+        zeta["eta_bat"] = np.full((24, self.num_buildings), eta_bat)
+        zeta["eta_Hsto"] = np.full((24, self.num_buildings), eta_Hsto)
+        zeta["eta_Csto"] = np.full((24, self.num_buildings), eta_Csto)
+
+        zeta["eta_ehH"] = np.full(9, eta_ehH)
+        zeta["c_bat_end"] = np.full(9, c_bat_end)
+        zeta["c_Csto_end"] = np.full(9, c_Csto_end)
+
+        return zeta
+
+    def create_problem(self, t: int, parameters: dict, building_id: int):
+        """
+        @Param:
+        - `t` : hour to solve optimization for.
+        - `parameters` : data (dict) from r <= t <= T following `get_current_data` format.
+        - `building_id`: building index number (0-based)
+        - `action_spaces`: action space for agent in CL evn. Changes over time.
+        NOTE: right now, this is an integer, but will be checked programmatically.
+        Solves per building as specified by `building_id`. Note: 0 based.
+        """
+        T = 24
+        window = T - t
+        # Reset data
+        self.constraints = []
+        # self.cost = None ### reassign to NONE. not needed.
+        self.t = t
+
+        ### define constants
+        C_f_bat = 0.00001
+        C_f_Csto = 0.006
+        C_f_Hsto = 0.008
+
+        # -- define action space -- #
+        bounds_high, bounds_low = np.vstack(
+            [self.action_space[building_id].high, self.action_space[building_id].low]
+        )
+        if len(bounds_high) == 2:  # bug
+            bounds_high = {
+                "action_C": bounds_high[0],
+                "action_H": None,
+                "action_bat": bounds_high[1],
+            }
+            bounds_low = {
+                "action_C": bounds_low[0],
+                "action_H": None,
+                "action_bat": bounds_low[1],
+            }
+        else:
+            bounds_high = {
+                "action_C": bounds_high[0],
+                "action_H": bounds_high[1],
+                "action_bat": bounds_high[2],
+            }
+            bounds_low = {
+                "action_C": bounds_low[0],
+                "action_H": bounds_low[1],
+                "action_bat": bounds_low[2],
+            }
+
+        # -- define action space -- #
+
+        # define parameters and variables
+
+        ### --- Parameters ---
+        p_ele = cp.Parameter(
+            name="p_ele", shape=(window), value=self.zeta["p_ele"][t:, building_id]
+        )
+
+        E_grid_prevhour = cp.Parameter(
+            name="E_grid_prevhour", value=parameters["E_grid_prevhour"][t, building_id]
+        )
+
+        E_grid_pkhist = cp.Parameter(
+            name="E_grid_pkhist",
+            value=np.max([0, *parameters["E_grid"][:t, building_id]])
+            if t > 0
+            else max(E_grid_prevhour.value, 0),
+        )
+
+        # Loads
+        E_ns = cp.Parameter(
+            name="E_ns", shape=window, value=parameters["E_ns"][t:, building_id]
+        )
+        H_bd = cp.Parameter(
+            name="H_bd", shape=window, value=parameters["H_bd"][t:, building_id]
+        )
+        C_bd = cp.Parameter(
+            name="C_bd", shape=window, value=parameters["C_bd"][t:, building_id]
+        )
+
+        # PV generations
+        E_pv = cp.Parameter(
+            name="E_pv", shape=window, value=parameters["E_pv"][t:, building_id]
+        )
+
+        # Heat Pump
+        COP_C = cp.Parameter(
+            name="COP_C", shape=window, value=parameters["COP_C"][t:, building_id]
+        )
+        E_hpC_max = cp.Parameter(
+            name="E_hpC_max", value=parameters["E_hpC_max"][t, building_id]
+        )
+
+        # Electric Heater
+        eta_ehH = cp.Parameter(name="eta_ehH", value=self.zeta["eta_ehH"][building_id])
+        E_ehH_max = cp.Parameter(
+            name="E_ehH_max", value=parameters["E_ehH_max"][t, building_id]
+        )
+
+        # Battery
+        C_p_bat = cp.Parameter(
+            name="C_p_bat", value=parameters["C_p_bat"][t, building_id]
+        )
+        eta_bat = cp.Parameter(
+            name="eta_bat", shape=window, value=self.zeta["eta_bat"][t:, building_id]
+        )
+        soc_bat_init = cp.Parameter(
+            name="c_bat_init", value=parameters["c_bat_init"][t, building_id]
+        )
+        soc_bat_norm_end = cp.Parameter(
+            name="c_bat_end", value=self.zeta["c_bat_end"][building_id]
+        )
+
+        # Heat (Energy->dhw) Storage
+        C_p_Hsto = cp.Parameter(
+            name="C_p_Hsto", value=parameters["C_p_Hsto"][t, building_id]
+        )
+        eta_Hsto = cp.Parameter(
+            name="eta_Hsto",
+            shape=window,
+            value=self.zeta["eta_Hsto"][t:, building_id],
+        )
+        soc_Hsto_init = cp.Parameter(
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][t, building_id]
+        )
+
+        # Cooling (Energy->cooling) Storage
+        C_p_Csto = cp.Parameter(
+            name="C_p_Csto", value=parameters["C_p_Csto"][t, building_id]
+        )
+        eta_Csto = cp.Parameter(
+            name="eta_Csto",
+            shape=window,
+            value=self.zeta["eta_Csto"][t:, building_id],
+        )
+        soc_Csto_init = cp.Parameter(
+            name="c_Csto_init", value=parameters["c_Csto_init"][t, building_id]
+        )
+        soc_Csto_norm_end = cp.Parameter(
+            name="c_Csto_end", value=self.zeta["c_Csto_end"][building_id]
+        )
+        ### --- Variables ---
+
+        # relaxation variables - prevents numerical failures when solving optimization
+        E_bal_relax = cp.Variable(
+            name="E_bal_relax", shape=(window)
+        )  # electricity balance relaxation
+        H_bal_relax = cp.Variable(
+            name="H_bal_relax", shape=(window)
+        )  # heating balance relaxation
+        C_bal_relax = cp.Variable(
+            name="C_bal_relax", shape=(window)
+        )  # cooling balance relaxation
+
+        E_grid = cp.Variable(name="E_grid", shape=(window))  # net electricity grid
+        E_grid_sell = cp.Variable(
+            name="E_grid_sell", shape=(window)
+        )  # net electricity grid
+
+        E_hpC = cp.Variable(name="E_hpC", shape=(window))  # heat pump
+        E_ehH = cp.Variable(name="E_ehH", shape=(window))  # electric heater
+
+        SOC_bat = cp.Variable(name="SOC_bat", shape=(window))  # electric battery
+        SOC_Brelax = cp.Variable(
+            name="SOC_Brelax", shape=(window)
+        )  # electrical battery relaxation (prevents numerical infeasibilities)
+        action_bat = cp.Variable(name="action_bat", shape=(window))  # electric battery
+
+        SOC_H = cp.Variable(name="SOC_H", shape=(window))  # heat storage
+        SOC_Hrelax = cp.Variable(
+            name="SOC_Hrelax", shape=(window)
+        )  # heat storage relaxation (prevents numerical infeasibilities)
+        action_H = cp.Variable(name="action_H", shape=(window))  # heat storage
+
+        SOC_C = cp.Variable(name="SOC_C", shape=(window))  # cooling storage
+        SOC_Crelax = cp.Variable(
+            name="SOC_Crelax", shape=(window)
+        )  # cooling storage relaxation (prevents numerical infeasibilities)
+        action_C = cp.Variable(name="action_C", shape=(window))  # cooling storage
+
+        ### objective function
+        ramping_cost = cp.abs(E_grid[0] - E_grid_prevhour)
+        if window > 1:  # not at eod
+            ramping_cost += cp.sum(
+                cp.abs(E_grid[1:] - E_grid[:-1])
+            )  # E_grid_t+1 - E_grid_t
+
+        peak_net_electricity_cost = cp.max(
+            cp.atoms.affine.hstack.hstack([*E_grid, E_grid_pkhist])
+        )  # max(E_grid, E_gridpkhist)
+        electricity_cost = cp.sum(p_ele * E_grid)
+        selling_cost = -1e2 * cp.sum(
+            E_grid_sell
+        )  # not as severe as violating constraints
+
+        ### relaxation costs - L1 norm
+        # balance eq.
+        E_bal_relax_cost = cp.sum(cp.abs(E_bal_relax))
+        H_bal_relax_cost = cp.sum(cp.abs(H_bal_relax))
+        C_bal_relax_cost = cp.sum(cp.abs(C_bal_relax))
+        # soc eq.
+        SOC_Brelax_cost = cp.sum(cp.abs(SOC_Brelax))
+        SOC_Crelax_cost = cp.sum(cp.abs(SOC_Crelax))
+        SOC_Hrelax_cost = cp.sum(cp.abs(SOC_Hrelax))
+
+        self.cost = (
+            0.1 * ramping_cost
+            + 5 * peak_net_electricity_cost
+            + electricity_cost
+            + selling_cost
+            + E_bal_relax_cost * 1e4
+            + H_bal_relax_cost * 1e4
+            + C_bal_relax_cost * 1e4
+            + SOC_Brelax_cost * 1e4
+            + SOC_Crelax_cost * 1e4
+            + SOC_Hrelax_cost * 1e4
+            + cp.sum(cp.abs(action_bat)) * 1e1
+            + cp.sum(cp.abs(action_C)) * 1e1
+            + cp.sum(cp.abs(action_H)) * 1e1
+        )
+
+        ### constraints
+        self.constraints.append(E_grid >= 0)
+        self.constraints.append(E_grid_sell <= 0)
+
+        # energy balance constraints
+        self.constraints.append(
+            E_pv + E_grid + E_grid_sell + E_bal_relax
+            == E_ns
+            + E_hpC
+            + E_ehH
+            + (action_bat + self.rbc_actions["action_bat"][building_id, T - window :])
+            * C_p_bat
+        )  # electricity balance
+        self.constraints.append(
+            E_ehH * eta_ehH + H_bal_relax
+            == (action_H + self.rbc_actions["action_H"][building_id, T - window :])
+            * C_p_Hsto
+            + H_bd
+        )  # heat balance
+
+        self.constraints.append(
+            E_hpC * COP_C + C_bal_relax
+            == (action_C + self.rbc_actions["action_C"][building_id, T - window :])
+            * C_p_Csto
+            + C_bd
+        )  # cooling balance
+
+        # heat pump constraints
+        self.constraints.append(E_hpC <= E_hpC_max)  # maximum cooling
+        self.constraints.append(E_hpC >= 0)  # constraint minimum cooling to positive
+        # electric heater constraints
+        self.constraints.append(E_ehH >= 0)  # constraint to PD
+        self.constraints.append(E_ehH <= E_ehH_max)  # maximum limit
+
+        # electric battery constraints
+        self.constraints.append(
+            SOC_bat[0]
+            == (1 - C_f_bat) * soc_bat_init
+            + (action_bat[0] + self.rbc_actions["action_bat"][building_id, T - window])
+            * eta_bat[0]
+            + SOC_Brelax[0]
+        )  # initial SOC
+        # soc updates
+        for i in range(1, window):
+            self.constraints.append(
+                SOC_bat[i]
+                == (1 - C_f_bat) * SOC_bat[i - 1]
+                + (
+                    action_bat[i]
+                    + self.rbc_actions["action_bat"][building_id, T - window + i]
+                )
+                * eta_bat[i]
+                + SOC_Brelax[i]
+            )
+        self.constraints.append(
+            SOC_bat[-1] == soc_bat_norm_end
+        )  # soc terminal condition
+        self.constraints.append(SOC_bat >= 0)  # battery SOC bounds
+        self.constraints.append(SOC_bat <= 1)  # battery SOC bounds
+
+        # Heat Storage constraints
+        self.constraints.append(
+            SOC_H[0]
+            == (1 - C_f_Hsto) * soc_Hsto_init
+            + (action_H[0] + self.rbc_actions["action_H"][building_id, T - window])
+            * eta_Hsto[0]
+            + SOC_Hrelax[0]
+        )  # initial SOC
+        # soc updates
+        for i in range(1, window):
+            self.constraints.append(
+                SOC_H[i]
+                == (1 - C_f_Hsto) * SOC_H[i - 1]
+                + (
+                    action_H[i]
+                    + self.rbc_actions["action_H"][building_id, T - window + i]
+                )
+                * eta_Hsto[i]
+                + SOC_Hrelax[i]
+            )
+        self.constraints.append(SOC_H >= 0)  # battery SOC bounds
+        self.constraints.append(SOC_H <= 1)  # battery SOC bounds
+
+        # Cooling Storage constraints
+        self.constraints.append(
+            SOC_C[0]
+            == (1 - C_f_Csto) * soc_Csto_init
+            + (action_C[0] + self.rbc_actions["action_C"][building_id, T - window])
+            * eta_Csto[0]
+            + SOC_Crelax[0]
+        )  # initial SOC
+        # soc updates
+        for i in range(1, window):
+            self.constraints.append(
+                SOC_C[i]
+                == (1 - C_f_Csto) * SOC_C[i - 1]
+                + (
+                    action_C[i]
+                    + self.rbc_actions["action_C"][building_id, T - window + i]
+                )
+                * eta_Csto[i]
+                + SOC_Crelax[i]
+            )
+        self.constraints.append(SOC_C[-1] == soc_Csto_norm_end)
+        self.constraints.append(SOC_C >= 0)  # battery SOC bounds
+        self.constraints.append(SOC_C <= 1)  # battery SOC bounds
+
+        #### action constraints (limit to action-space)
+        assert (
+            len(bounds_high) == 3
+        ), "Invalid number of bounds for actions - see dict defined in `Optim`"
+
+        for high, low in zip(bounds_high.items(), bounds_low.items()):
+            key, h, l = [*high, low[1]]
+            if not (h and l):
+                continue
+
+            # heating action
+            if key == "action_C":
+                self.constraints.append(
+                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
+                    >= l
+                )
+            # cooling action
+            elif key == "action_H":
+                self.constraints.append(
+                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
+                    >= l
+                )
+            # Battery action
+            elif key == "action_bat":
+                self.constraints.append(
+                    action_bat
+                    + self.rbc_actions["action_bat"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_bat
+                    + self.rbc_actions["action_bat"][building_id, T - window :]
+                    >= l
+                )
+
+    def get_problem(self, t: int, parameters: dict, building_id: int):
+        """Returns raw problem"""
+        assert 0 <= t < 24, f"Invalid range for t. Found {t}, needs to be (0, 24]"
+        # Form objective.
+        if self.prob[t] is None:
+            self.create_problem(
+                t, parameters, building_id
+            )  # problem formulation for Actor optimizaiton
+            obj = cp.Minimize(self.cost)
+            # Form problem.
+            self.prob[t] = cp.Problem(obj, self.constraints)
+            assert self.prob[t].is_dpp()
+        else:  # DPP
+            self.inject_params(t, parameters, building_id)
+
+    def inject_params(self, t: int, parameters: dict, building_id: int):
+        """Sets parameter values for problem. DPP"""
+        assert (
+            self.prob[t] is not None
+        ), "Problem must be defined to be able to use DPP."
+        problem_parameters = self.prob[t].param_dict
+
+        ### --- Parameters ---
+        problem_parameters["p_ele"].value = self.zeta["p_ele"][t:, building_id]
+
+        problem_parameters["E_grid_prevhour"].value = parameters["E_grid_prevhour"][
+            t, building_id
+        ]
+
+        problem_parameters["E_grid_pkhist"].value = (
+            np.max([0, *parameters["E_grid"][:t, building_id]])
+            if t > 0
+            else max(0, parameters["E_grid_prevhour"][t, building_id])
+        )
+
+        # Loads
+        problem_parameters["E_ns"].value = parameters["E_ns"][t:, building_id]
+        problem_parameters["H_bd"].value = parameters["H_bd"][t:, building_id]
+        problem_parameters["C_bd"].value = parameters["C_bd"][t:, building_id]
+
+        # PV generations
+        problem_parameters["E_pv"].value = parameters["E_pv"][t:, building_id]
+
+        # Heat Pump
+        problem_parameters["COP_C"].value = parameters["COP_C"][t:, building_id]
+        problem_parameters["E_hpC_max"].value = parameters["E_hpC_max"][t, building_id]
+
+        # Electric Heater
+        problem_parameters["eta_ehH"].value = self.zeta["eta_ehH"][building_id]
+        problem_parameters["E_ehH_max"].value = parameters["E_ehH_max"][t, building_id]
+
+        # Battery
+        problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
+        problem_parameters["eta_bat"].value = self.zeta["eta_bat"][t:, building_id]
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][
+            t, building_id
+        ]
+        problem_parameters["c_bat_end"].value = self.zeta["c_bat_end"][building_id]
+
+        # Heat (Energy->dhw) Storage
+        problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
+        problem_parameters["eta_Hsto"].value = self.zeta["eta_Hsto"][t:, building_id]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][
+            t, building_id
+        ]
+
+        # Cooling (Energy->cooling) Storage
+        problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
+        problem_parameters["eta_Csto"].value = self.zeta["eta_Csto"][t:, building_id]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][
+            t, building_id
+        ]
+        problem_parameters["c_Csto_end"].value = self.zeta["c_Csto_end"][building_id]
+
+        ## Update Parameters
+        for key, prob_val in problem_parameters.items():
+            self.prob[t].param_dict[key].value = prob_val.value
+
+    def get_constraints(self):
+        """Returns constraints for problem"""
+        return self.constraints
+
+    def forward(
+        self,
+        t: int,
+        parameters: dict,
+        building_id: int,
+        debug=False,
+        dispatch=False,
+    ):
+
+        """Actor Optimization"""
+        self.get_problem(t, parameters, building_id)  # Form problem using DPP
+
+        actions = {}
+
+        try:
+            status = self.prob[t].solve(
+                verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+        except:  # try another solver
+            status = self.prob[t].solve(
+                solver="SCS", verbose=debug, max_iters=1000
+            )  # Returns the optimal value.
+            self.scs_cnt[building_id] += 1
+
+        if float("-inf") < status < float("inf"):
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = np.array(var.value) + offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = np.array(var.value)[0] + offset
+        else:
+            self.fail_cnt[building_id] += 1
+            print(f"\nDefault solution at t = {t} for building {building_id}")
+            for var in self.prob[t].variables():
+                if dispatch:
+                    offset = np.zeros(len(var.value))
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][
+                            building_id, 24 - t % 24 :
+                        ]
+                    actions[var.name()] = offset
+                else:
+                    offset = 0
+                    if "action" in str(var.name()):
+                        offset = self.rbc_actions[var.name()][building_id, t % 24]
+                    actions[var.name()] = offset
+
+        if self.action_space[building_id].shape[0] == 2:
+            return (
+                [
+                    actions["action_H"],
+                    actions["action_bat"],
+                ],
+                actions,  # debug
+                actions["E_grid"] + actions["E_grid_sell"],
+            )
+        return (
+            [
+                actions["action_C"],
+                actions["action_H"],
+                actions["action_bat"],
+            ],
+            actions,  # debug
+            actions["E_grid"] + actions["E_grid_sell"],
+        )
+
+    def get_zeta(self):
+        """Returns set of differentiable parameters, zeta"""
+        return self.zeta
+
+    def set_zeta(
+        self,
+        zeta: tuple,
+        building_id: int,
+    ):
+        """Sets values for zeta"""
+        # get Zeta
+        (
+            p_ele,
+            eta_bat,
+            eta_Hsto,
+            eta_Csto,
+            eta_ehH,
+            c_bat_end,
+            c_Csto_end,
+        ) = zeta
+
+        # dimensions: 24
+        self.zeta["p_ele"][:, building_id] = p_ele
+        self.zeta["eta_bat"][:, building_id] = eta_bat
+        self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
+        self.zeta["eta_Csto"][:, building_id] = eta_Csto
+
+        # dimensions: 1
+        self.zeta["eta_ehH"][building_id] = eta_ehH
+        self.zeta["c_bat_end"][building_id] = c_bat_end
+        self.zeta["c_Csto_end"][building_id] = c_Csto_end
+
+
+class ReplayBuffer:
+    """
+    Implementation of a fixed size replay buffer.
+    The goal of a replay buffer is to unserialize relationships between sequential experiences, gaining a better temporal understanding.
+    """
+
+    META_EPISODE = 7  # number of days in a meta-episode
+    MINI_BATCH = 2  # number of days to sample
+
+    def __init__(self, buffer_size=META_EPISODE, batch_size=MINI_BATCH):
+        """
+        Initializes the buffer.
+        @Param:
+        1. action_size: env.action_space.shape[0]
+        2. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories.
+        3. batch_size: size of mini-batch to train on.
+        """
+        self.replay_memory = deque(
+            maxlen=buffer_size
+        )  # Experience replay memory object
+        self.batch_size = batch_size
+
+        self.total_it = 0
+        self.max_it = buffer_size * 24
+
+    def add(self, data: dict, full_day: bool = False):
+        """Adds an experience to existing memory - Oracle"""
+        if self.total_it % 24 == 0:
+            self.replay_memory.append({})
+        self.replay_memory[-1] = data
+
+        if full_day:
+            self.total_it += 24
+        else:
+            self.total_it += 1
+
+    def get_recent(self):
+        """Returns most recent data from memory"""
+        return (
+            self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
+        )
+
+    def sample(self, is_random: bool = False):
+        """Picks all samples within the replay_buffer"""
+        # critic 1 last n days - sequential
+        # critic 2 last n days - random
+
+        if is_random:  # critic 2
+            indices = np.random.choice(
+                np.arange(len(self)), size=self.batch_size, replace=False
+            )
+
+        else:  # critic 1
+            indices = np.arange(len(self) - self.batch_size, len(self))
+
+        days = [self.get(index) for index in indices]  # get all random experiences
+        # combine all days together from DataLoader
+        return days
+
+    def get(self, index: int):
+        """Returns an element from deque specified by `index`"""
+        try:
+            return self.replay_memory[index]
+        except IndexError:
+            print("Trying to access invalid index in replay buffer!")
+            return None
+
+    def set(self, index: int, data: dict):
+        """Sets an element of replay buffer w/ dictionary"""
+        try:
+            self.replay_memory[index] = data
+        except:
+            print(
+                "Trying to set replay buffer w/ either invalid index or unable to set data!"
+            )
+            return None
+
+    def __len__(self):  # override default __len__ operator
+        """Return the current size of internal memory."""
+        return len(self.replay_memory)
+
+
+class RBC:
+    def __init__(self, actions_spaces: list):
+        """Rule based controller. Source: https://github.com/QasimWani/CityLearn/blob/master/agents/rbc.py"""
+        self.actions_spaces = actions_spaces
+        self.idx_hour = self.get_idx_hour()
+
+    def select_action(self, states: float):
+        hour_day = states
+        multiplier = 0.4
+        # Daytime: release stored energy  2*0.08 + 0.1*7 + 0.09
+        a = [
+            [0.0 for _ in range(len(self.actions_spaces[i].sample()))]
+            for i in range(len(self.actions_spaces))
+        ]
+        if hour_day >= 7 and hour_day <= 11:
+            a = [
+                [
+                    -0.05 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 12 and hour_day <= 15:
+            a = [
+                [
+                    -0.05 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 16 and hour_day <= 18:
+            a = [
+                [
+                    -0.11 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 19 and hour_day <= 22:
+            a = [
+                [
+                    -0.06 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+
+        # Early nightime: store DHW and/or cooling energy
+        if hour_day >= 23 and hour_day <= 24:
+            a = [
+                [
+                    0.085 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+        elif hour_day >= 1 and hour_day <= 6:
+            a = [
+                [
+                    0.1383 * multiplier
+                    for _ in range(len(self.actions_spaces[i].sample()))
+                ]
+                for i in range(len(self.actions_spaces))
+            ]
+
+        return np.array(a, dtype="object")
+
+    # def get_rbc_data(
+    #     self,
+    #     surrogate_env: CityLearn,
+    #     state: np.ndarray,
+    #     run_timesteps: int,
+    # ):
+    #     """Runs RBC for x number of timesteps"""
+    #     ## --- RBC generation ---
+    #     E_grid = []
+    #     for _ in range(run_timesteps):
+    #         hour_state = state[0][self.idx_hour]
+    #         action = self.select_action(
+    #             hour_state
+    #         )  # using RBC to select next action given current sate
+    #         next_state, rewards, done, _ = surrogate_env.step(action)
+    #         state = next_state
+    #         E_grid.append([x[28] for x in state])
+    #     return E_grid
+
+    def load_day_actions(self):
+        """Generate template of actions for RBC for a day"""
+        return np.array([self.select_action(hour) for hour in range(24)]).transpose(
+            [2, 1, 0]
+        )
+
+    def get_idx_hour(self):
+        # Finding which state
+        with open("buildings_state_action_space.json") as file:
+            actions_ = json.load(file)
+
+        indx_hour = -1
+        for obs_name, selected in list(actions_.values())[0]["states"].items():
+            indx_hour += 1
+            if obs_name == "hour":
+                break
+            assert (
+                indx_hour < len(list(actions_.values())[0]["states"].items()) - 1
+            ), "Please, select hour as a state for Building_1 to run the RBC"
+        return indx_hour
+
+
+class DataLoader:
+    """Base Class"""
+
+    def __init__(self, action_space: list) -> None:
+        self.action_space = action_space
+
+    def upload_data(self) -> None:
+        """Upload to memory"""
+        raise NotImplementedError
+
+    def load_data(self):
+        """Optional: not directly called. Should be called within `upload_data` if used."""
+        raise NotImplementedError
+
+    def parse_data(self, data: dict, current_data: dict):
+        """Parses `current_data` for optimization and loads into `data`"""
+        for key, value in current_data.items():
+            if key not in data:
+                data[key] = []
+            data[key].append(value)
+        return data
+
+    def convert_to_numpy(self, params: dict):
+        """Converts dic[key] to nd.array"""
+        for key in params:
+            # if key == "c_bat_init" or key == "c_Csto_init" or key == "c_Hsto_init":
+            #     params[key] = np.array(params[key][0])
+            # else:
+            params[key] = np.array(params[key])
+
+    def get_dimensions(self, data: dict):
+        """Prints shape of each param"""
+        for key in data.keys():
+            print(key, data[key].shape)
+
+    def get_building(self, data: dict, building_id: int):
+        """Loads data (dict) from a particular building. 1-based indexing for building"""
+        assert building_id > 0, "building_id is 1-based indexing."
+        building_data = {}
+        for key in data.keys():
+            building_data[key] = np.array(data[key])[:, building_id - 1]
+        return building_data
+
+    def create_random_data(self, data: dict):
+        """Synthetic data (Gaussian) generation"""
+        for key in data:
+            data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
+        return data
+
+
 class Predictor(DataLoader):
     """
     we have following functions:

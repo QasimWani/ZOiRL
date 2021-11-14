@@ -574,6 +574,7 @@ class Critic:  # decentralized version
         self,
         t: int,
         parameters: dict,
+        rewards: dict,
         zeta_target: dict,
         building_id: int,
         debug=False,
@@ -581,7 +582,7 @@ class Critic:  # decentralized version
         """Uses result of RWL to compute for clipped Q values"""
 
         Gt_tn = 0.0
-        rewards = parameters["reward"][:, building_id]
+        rewards = rewards["reward"][:, building_id]
 
         for n in range(1, 24 - t):
             # first check if we need to compute it at all. --> Saves computation
@@ -637,14 +638,19 @@ class Optim:
         critic_target_2: Critic,
         t: int,
         parameters: dict,
+        rewards: dict,
         zeta_target: dict,
         building_id: int,
         debug: bool = False,
     ):
         """Computes min Q"""
         # shared zeta-target across both target critic
-        Q1 = critic_target_1.forward(t, parameters, zeta_target, building_id, debug)
-        Q2 = critic_target_2.forward(t, parameters, zeta_target, building_id, debug)
+        Q1 = critic_target_1.forward(
+            t, parameters, rewards, zeta_target, building_id, debug
+        )
+        Q2 = critic_target_2.forward(
+            t, parameters, rewards, zeta_target, building_id, debug
+        )
         return min(Q1, Q2)  # y_r
 
     # TODO
@@ -669,7 +675,7 @@ class Optim:
         clipped_values = []  # length will be MINI_BATCH * 24. reshapes it to per day
         data = defaultdict(list)  # E_grid, E_gridpkhist, E_grid_prevhour over #days
 
-        for day_params in parameters:
+        for day_params, day_rewards in zip(*parameters):
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
 
@@ -683,6 +689,7 @@ class Optim:
                     critic_target_2,
                     r,
                     day_params,
+                    day_rewards,
                     zeta_target,
                     building_id,
                     debug,
@@ -821,10 +828,10 @@ class Optim:
         critic_local_1, critic_local_2 = critic_local
         # Compute L1 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
         local_1_solution = self.least_absolute_optimization(
-            batch_parameters_1, zeta_target, building_id, critic_target
+            batch_parameters_1, zeta_target, building_id, critic_target, debug
         )
         local_2_solution = self.least_absolute_optimization(
-            batch_parameters_2, zeta_target, building_id, critic_target
+            batch_parameters_2, zeta_target, building_id, critic_target, debug
         )
         # update alphas for local
         critic_local_1.alpha_ramp[building_id] = local_1_solution["ramp"]
