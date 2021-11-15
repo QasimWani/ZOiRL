@@ -84,12 +84,12 @@ class ReplayBuffer:
             self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
         )
 
-    def sample(self, is_random: bool = False, sample_by_indices: list = None):
+    def sample(self, is_random: bool = False, sample_by_indices: list = []):
         """Picks all samples within the replay_buffer"""
         # critic 1 last n days - sequential
         # critic 2 last n days - random
 
-        if sample_by_indices is not None:  # sample by pre-specified indices
+        if len(sample_by_indices) > 0:  # sample by pre-specified indices
             return [self.get(index) for index in sample_by_indices]
 
         if is_random:  # critic 2
