@@ -196,8 +196,8 @@ class TD3(object):
             self.critic_target[i].target_update(self.critic[i].get_alphas())
 
         # copy problem into critic local -- for use in actor backward
-        self.critic[0].prob = self.critic_target[0].prob
-        # self.critic[1].prob = self.critic_target[1].prob
+        self.critic[0].prob = deepcopy(self.critic_target[0].prob)
+        self.critic[1].prob = deepcopy(self.critic_target[1].prob)
 
     def actor_update(self, parameters: list):
         """Master Actor update"""
