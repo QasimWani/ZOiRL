@@ -16,7 +16,7 @@ class Actor:
         num_actions: list,
         num_buildings: int,
         offset: int,
-        rho: float = 0.9,
+        rho: float = 0.95,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
@@ -690,7 +690,7 @@ class Actor:
     def E2E_grad(self, t: int, parameters: dict, critic: Critic, building_id: int):
         """Utilizes Critic Optimization and forward (RWL) for a single hour and returns gradient for each param \in zeta"""
         # problem formulation using Critic optimizaiton, i.e. setting current action as constant
-        
+
         prob = critic.get_problem(
             t, parameters, self.zeta, building_id, return_prob=True
         )  # mu(s_t, a_t, zeta)
@@ -716,7 +716,15 @@ class Actor:
         )
 
         zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(zeta_plus_params)
-        E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
+
+        try:
+            E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
+        except:
+            print("Solver error!")
+            E_grid, *_ = mu(
+                *zeta_plus_params_tensor_dict.values(),
+                solver_args={"verbose": True, "max_iters": 10_000},
+            )
 
         # Reward Warping function, Critic forward pass - Step 2
         alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(
