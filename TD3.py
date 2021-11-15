@@ -28,7 +28,7 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 2,
+        meta_episode: int = 7,  # after how many days to train Actor-Critic
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
@@ -175,7 +175,6 @@ class TD3(object):
             self.data_loader.convert_to_numpy(params_2)
             self.data_loader.convert_to_numpy(r1)
             self.data_loader.convert_to_numpy(r2)
-
             # add processed day info
             day_params_1.append([params_1, r1])
             day_params_2.append([params_2, r2])
@@ -200,17 +199,16 @@ class TD3(object):
         self.critic[0].prob = self.critic_target[0].prob
         # self.critic[1].prob = self.critic_target[1].prob
 
-    def actor_update(self, params: list):
+    def actor_update(self, parameters: list):
         """Master Actor update"""
         # pre-process each days information into numpy array and pass them to actor update
-        parameters, rewards = params  # extract parameters and rewards
 
         day_params = []
         for params in parameters:
             # deepcopy to prevent overriding issues
             params = deepcopy(params)
             # parse data for actor (in-place)
-            self.data_loader.model.convert_to_numpy(params)
+            self.data_loader.convert_to_numpy(params)
             # add processed day info
             day_params.append(params)
 
@@ -239,7 +237,7 @@ class TD3(object):
         self.critic_update((parameters_1, rewards_1), (parameters_2, rewards_2))
 
         # local + target actor update
-        self.actor_update((parameters_1, rewards_1))
+        self.actor_update(parameters_1)
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
@@ -253,8 +251,14 @@ class TD3(object):
         # add to memory
         self.reward_memory.add(r)
 
-        if self.total_it % (self.meta_episode * 24) == 0:
+        if (
+            self.total_it % (self.meta_episode * 24) == 0
+            and self.total_it >= self.rbc_threshold + self.meta_episode * 24
+        ):
+            start = time.time()
             self.train()
+            end = time.time()
+            print(f"Time taken for training: {end - start}")
 
 
 class Agent(TD3):

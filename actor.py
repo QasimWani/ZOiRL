@@ -64,7 +64,7 @@ class Actor:
         eta_Hsto: float = 1.0,
         eta_Csto: float = 1.0,
         c_bat_end: float = 0.1,
-        c_Csto_end: float = 0.1,
+        c_Csto_end: float = 0.1,  # constant
     ):
         """
         Initialize differentiable parameters, zeta with default values.
@@ -629,7 +629,6 @@ class Actor:
             eta_Csto,
             eta_ehH,
             c_bat_end,
-            c_Csto_end,
         ) = zeta
 
         # dimensions: 24
@@ -641,7 +640,6 @@ class Actor:
         # dimensions: 1
         self.zeta["eta_ehH"][building_id] = eta_ehH
         self.zeta["c_bat_end"][building_id] = c_bat_end
-        self.zeta["c_Csto_end"][building_id] = c_Csto_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
@@ -691,8 +689,8 @@ class Actor:
 
     def E2E_grad(self, t: int, parameters: dict, critic: Critic, building_id: int):
         """Utilizes Critic Optimization and forward (RWL) for a single hour and returns gradient for each param \in zeta"""
-
         # problem formulation using Critic optimizaiton, i.e. setting current action as constant
+        
         prob = critic.get_problem(
             t, parameters, self.zeta, building_id, return_prob=True
         )  # mu(s_t, a_t, zeta)
@@ -853,6 +851,7 @@ class Actor:
 
         ### Update Parameter using Adam
         NUM_HOURS = len(batch_parameters) * 24
+
         p_ele = self.optim[building_id]["p_ele"].update(
             (t - self.adam_offset) // NUM_HOURS,
             self.zeta["p_ele"][:, building_id],

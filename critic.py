@@ -149,7 +149,7 @@ class Critic:  # decentralized version
             name="eta_bat", shape=window, value=zeta_target["eta_bat"][t:, building_id]
         )
         soc_bat_init = cp.Parameter(
-            name="c_bat_init", value=parameters["c_bat_init"][building_id]
+            name="c_bat_init", value=parameters["c_bat_init"][t, building_id]
         )
         soc_bat_norm_end = cp.Parameter(
             name="c_bat_end", value=zeta_target["c_bat_end"][building_id]
@@ -165,7 +165,7 @@ class Critic:  # decentralized version
             value=zeta_target["eta_Hsto"][t:, building_id],
         )
         soc_Hsto_init = cp.Parameter(
-            name="c_Hsto_init", value=parameters["c_Hsto_init"][building_id]
+            name="c_Hsto_init", value=parameters["c_Hsto_init"][t, building_id]
         )
 
         # Cooling (Energy->cooling) Storage
@@ -178,7 +178,7 @@ class Critic:  # decentralized version
             value=zeta_target["eta_Csto"][t:, building_id],
         )
         soc_Csto_init = cp.Parameter(
-            name="c_Csto_init", value=parameters["c_Csto_init"][building_id]
+            name="c_Csto_init", value=parameters["c_Csto_init"][t, building_id]
         )
 
         ### current actions
@@ -455,18 +455,24 @@ class Critic:  # decentralized version
         # Battery
         problem_parameters["C_p_bat"].value = parameters["C_p_bat"][t, building_id]
         problem_parameters["eta_bat"].value = zeta_target["eta_bat"][t:, building_id]
-        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][building_id]
+        problem_parameters["c_bat_init"].value = parameters["c_bat_init"][
+            t, building_id
+        ]
         problem_parameters["c_bat_end"].value = zeta_target["c_bat_end"][building_id]
 
         # Heat (Energy->dhw) Storage
         problem_parameters["C_p_Hsto"].value = parameters["C_p_Hsto"][t, building_id]
         problem_parameters["eta_Hsto"].value = zeta_target["eta_Hsto"][t:, building_id]
-        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][building_id]
+        problem_parameters["c_Hsto_init"].value = parameters["c_Hsto_init"][
+            t, building_id
+        ]
 
         # Cooling (Energy->cooling) Storage
         problem_parameters["C_p_Csto"].value = parameters["C_p_Csto"][t, building_id]
         problem_parameters["eta_Csto"].value = zeta_target["eta_Csto"][t:, building_id]
-        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][building_id]
+        problem_parameters["c_Csto_init"].value = parameters["c_Csto_init"][
+            t, building_id
+        ]
 
         ### current actions
 
@@ -653,10 +659,9 @@ class Optim:
         )
         return min(Q1, Q2)  # y_r
 
-    # TODO
     def least_absolute_optimization(
         self,
-        parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates
+        parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates (contains params + rewards)
         zeta_target: dict,
         building_id: int,
         critic_target: list,
@@ -675,7 +680,7 @@ class Optim:
         clipped_values = []  # length will be MINI_BATCH * 24. reshapes it to per day
         data = defaultdict(list)  # E_grid, E_gridpkhist, E_grid_prevhour over #days
 
-        for day_params, day_rewards in zip(*parameters):
+        for day_params, day_rewards in parameters:
             # append daily data
             data["E_grid"].append(day_params["E_grid"][:, building_id])
 
