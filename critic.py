@@ -13,7 +13,7 @@ class Critic:  # decentralized version
         num_buildings: int,
         num_actions: list,
         lambda_: float = 0.9,
-        rho: float = 0.01,
+        rho: float = 0.9,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
@@ -636,7 +636,7 @@ class Optim:
     """Performs Critic Update"""
 
     def __init__(self) -> None:
-        pass
+        self.l1_scores = defaultdict(list)  # list of l1 scores over iterations
 
     def obtain_target_Q(
         self,
@@ -730,8 +730,6 @@ class Optim:
             clipped_values.shape
         )
 
-        self.debug_data = data
-
         ### parameters
         E_grid = cp.Parameter(
             name="E_grid", shape=(clipped_values.shape), value=data["E_grid"]
@@ -753,57 +751,73 @@ class Optim:
             value=clipped_values,
         )
 
-        #### cost
+        #### cost & constraints
         cost = []
+        constraints = []
+
         for i in range(NUM_DAYS):
             ramping_cost = cp.abs(E_grid[i][0] - E_grid_prevhour[i]) + cp.sum(
                 cp.abs(E_grid[i][1:] - E_grid[i][:-1])
             )  # E_grid_t+1 - E_grid_t
-
-            peak_net_electricity_cost = cp.max(
-                cp.atoms.affine.hstack.hstack([*E_grid[i], *E_grid_pkhist[i]])
-            )  # max(E_grid, E_gridpkhist)
+            peak_net_electricity_cost = cp.atoms.elementwise.maximum.maximum(
+                E_grid[i], E_grid_pkhist[i]
+            )  # element-wise max(E_grid, E_gridpkhist)
 
             # L1 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
             cost.append(
                 cp.sum(
                     cp.abs(
-                        alpha_ramp * ramping_cost
-                        + alpha_peak1 * peak_net_electricity_cost
-                        + alpha_peak2 * cp.square(peak_net_electricity_cost)
+                        -alpha_ramp * ramping_cost
+                        - alpha_peak1 * peak_net_electricity_cost
+                        - alpha_peak2 * cp.square(peak_net_electricity_cost)
                         - y_t[i]
                     )
                 )
             )
 
-        #### constraints
-        constraints = []
+            for j in range(24):
+                rwl = (
+                    -alpha_ramp * ramping_cost[j]
+                    - alpha_peak1 * peak_net_electricity_cost[j]
+                    - alpha_peak2 * cp.square(peak_net_electricity_cost[j])
+                )
+                constraints.append(rwl <= 0.0)
 
-        # alpha-peak
-        constraints.append(alpha_ramp <= 2)
-        constraints.append(alpha_ramp >= 0.1)
+            # check eigen values of A.T @ T. condition number is bounded. if Q value is not large enough, rank defficient. cannot invert.
+            self.peak = list(peak_net_electricity_cost.value)
+            self.ramping = list(ramping_cost.value)
+            self.y = y_t[i].value
 
-        # alpha-peak
-        constraints.append(alpha_peak1 <= 2)
-        constraints.append(alpha_peak1 >= 0.1)
+        # alpha-ramp
+        # low = -250
+        # high = 10
 
-        # alpha-peak
-        constraints.append(alpha_peak2 <= 2)
-        constraints.append(alpha_peak2 >= 0.1)
+        # constraints.append(alpha_ramp <= high)
+        # constraints.append(alpha_ramp >= low)
+
+        # # alpha-peak
+        # constraints.append(alpha_peak1 <= high)
+        # constraints.append(alpha_peak1 >= low)
+
+        # # alpha-peak
+        # constraints.append(alpha_peak2 <= high)
+        # constraints.append(alpha_peak2 >= low)
 
         # Form objective.
         obj = cp.Minimize(cp.sum(cost))
         # Form and solve problem.
         prob = cp.Problem(obj, constraints)
 
-        self.debug_l1 = prob
+        self.problem = prob
 
         try:
             optim_solution = prob.solve(
                 verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
         except:  # try another solver
-            print(f"\nSolving L1 optimization using SCS for building {building_id}")
+            print(
+                f"\nSolving L1 optimization using SCS solver for building {building_id}"
+            )
             optim_solution = prob.solve(
                 solver="SCS", verbose=debug, max_iters=10_000
             )  # Returns the optimal value.
@@ -811,6 +825,8 @@ class Optim:
         assert (
             float("-inf") < optim_solution < float("inf")
         ), "Unbounded solution/primal infeasable"
+
+        self.l1_scores[building_id].append(optim_solution)
 
         solution = {}
         for var in prob.variables():
@@ -835,6 +851,7 @@ class Optim:
         local_1_solution = self.least_absolute_optimization(
             batch_parameters_1, zeta_target, building_id, critic_target, debug
         )
+
         local_2_solution = self.least_absolute_optimization(
             batch_parameters_2, zeta_target, building_id, critic_target, debug
         )

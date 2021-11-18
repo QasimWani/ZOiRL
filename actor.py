@@ -16,7 +16,7 @@ class Actor:
         num_actions: list,
         num_buildings: int,
         offset: int,
-        rho: float = 0.95,
+        rho: float = 0.9,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
@@ -720,7 +720,7 @@ class Actor:
         try:
             E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
         except:
-            print("Solver error!")
+            print(f"Solver error! Building: {building_id}, Timestep: {t}")
             E_grid, *_ = mu(
                 *zeta_plus_params_tensor_dict.values(),
                 solver_args={"verbose": True, "max_iters": 10_000},
