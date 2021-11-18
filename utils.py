@@ -37,7 +37,9 @@ class Adam:
         v_dw_corr = self.v_dw / (1 - self.beta2 ** t)
 
         ## update weights and biases
-        w = w - self.eta * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
+        w = w + self.eta * (
+            m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon)
+        )  # gradient descent update
         return w
 
 
