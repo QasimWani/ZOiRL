@@ -28,7 +28,7 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 7,  # after how many days to train Actor-Critic
+        meta_episode: int = 4,  # after how many days to train Actor-Critic
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
@@ -67,8 +67,6 @@ class TD3(object):
 
         # day-ahead dispatch actions
         self.action_planned_day = None
-        # self.E_grid_planned_day = np.zeros(shape=(num_buildings, 24))
-        # self.init_updates = None
 
     def select_action(
         self,
