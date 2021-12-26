@@ -28,7 +28,7 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 4,  # after how many days to train Actor-Critic
+        meta_episode: int = 7,  # after how many days to train Actor-Critic
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
@@ -59,14 +59,11 @@ class TD3(object):
         self.norl_logger = []
         self.optim_param_logger = []
 
-        self.memory: ReplayBuffer = ReplayBuffer()
-        self.reward_memory: ReplayBuffer = ReplayBuffer()
+        self.memory: ReplayBuffer = ReplayBuffer(buffer_size=meta_episode)
+        self.reward_memory: ReplayBuffer = ReplayBuffer(buffer_size=meta_episode)
 
         ## initialize predictor for loading and synthesizing data passed into actor and critic
         self.data_loader = DataLoader(building_info, action_space)
-
-        # day-ahead dispatch actions
-        self.action_planned_day = None
 
     def select_action(
         self,

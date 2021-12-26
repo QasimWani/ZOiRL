@@ -788,10 +788,9 @@ class Optim:
             self.ramping = list(ramping_cost.value)
             self.y = y_t[i].value
 
-        # alpha-ramp
         # low = -250
         # high = 10
-
+        # # alpha-ramp
         # constraints.append(alpha_ramp <= high)
         # constraints.append(alpha_ramp >= low)
 
