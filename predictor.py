@@ -188,6 +188,7 @@ class Predictor(DataLoader):
                 self.get_day_data(replay_buffer, timestep),
                 24 - timestep % 24,
             )
+
             replay_buffer.add(data)
         else:
             data = self.full_parse_data(
@@ -229,7 +230,13 @@ class Predictor(DataLoader):
                         (previous_data[key][: 24 - window], value), axis=0
                     )
                 else:
-                    data[key] = np.pad(value, ((24 - window, 0), (0, 0)))
+                    data[key] = np.pad(value, ((window, 0), (0, 0)))
+
+            assert data[key].shape == (
+                24,
+                9,
+            ), f"Incorrect dimensions for {key}: {data[key].shape}"
+
         return data
 
     # TODO: @Zhiyao - needs fixing -- done
