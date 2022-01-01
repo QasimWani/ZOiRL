@@ -1,5 +1,5 @@
+from collections import defaultdict
 from copy import deepcopy
-from energy_models import Building
 import numpy as np
 
 from citylearn import CityLearn
@@ -28,7 +28,11 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 7,  # after how many days to train Actor-Critic
+        meta_episode: int = 4,  # after how many days to train Actor-Critic
+        agent_checkpoint: int = float(
+            "inf"
+        ),  # after how many hours to checkpoint model for true cost analysis
+        _eval: bool = False,  # set agent in evaluation mode
     ) -> None:
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
@@ -36,6 +40,8 @@ class TD3(object):
         self.total_it = 0
         self.rbc_threshold = rbc_threshold
         self.meta_episode = meta_episode
+        self.agent_checkpoint = agent_checkpoint
+        self._eval = _eval  # set agent in evaluation mode
 
         self.agent_rbc = RBC(action_space)
 
@@ -43,9 +49,6 @@ class TD3(object):
             action_space, num_buildings, rbc_threshold + meta_episode * 24
         )  # 1 local actor
         self.actor_target = deepcopy(self.actor)  # 1 target actor
-        self.actor_norl = deepcopy(
-            self.actor
-        )  # NORL actor, i.e. actor whose parameters stay constant.
 
         self.critic = [
             Critic(num_buildings, action_space),
@@ -55,12 +58,14 @@ class TD3(object):
         self.critic_optim = Optim()
 
         ### --- log details ---
+        self._agent_checkpoint = []
         self.logger = []
-        self.norl_logger = []
         self.optim_param_logger = []
+        self._critic_alphas_parameters = defaultdict(list)
+        self._actor_zetas = defaultdict(list)
 
-        self.memory: ReplayBuffer = ReplayBuffer(buffer_size=meta_episode)
-        self.reward_memory: ReplayBuffer = ReplayBuffer(buffer_size=meta_episode)
+        self.memory: ReplayBuffer = ReplayBuffer()
+        self.reward_memory: ReplayBuffer = ReplayBuffer()
 
         ## initialize predictor for loading and synthesizing data passed into actor and critic
         self.data_loader = DataLoader(building_info, action_space)
@@ -151,8 +156,16 @@ class TD3(object):
 
     def critic_update(self, params_1: list, params_2: list):
         """Master Critic update"""
-        # pre-process each days information into numpy array and pass them to critic update
+        # Log critic parameters
+        self._critic_alphas_parameters["1_peak"].append(
+            self.critic_target[0].alpha_peak1
+        )
+        self._critic_alphas_parameters["2_peak"].append(
+            self.critic_target[0].alpha_peak2
+        )
+        self._critic_alphas_parameters["ramp"].append(self.critic_target[0].alpha_ramp)
 
+        # pre-process each days information into numpy array and pass them to critic update
         parameters_1, rewards_1 = params_1
         parameters_2, rewards_2 = params_2
 
@@ -192,12 +205,17 @@ class TD3(object):
 
         # copy problem into critic local -- for use in actor backward
         self.critic[0].prob = deepcopy(self.critic_target[0].prob)
-        # self.critic[1].prob = deepcopy(self.critic_target[1].prob)
+        self.critic[1].prob = deepcopy(self.critic_target[1].prob)
 
     def actor_update(self, parameters: list):
         """Master Actor update"""
-        # pre-process each days information into numpy array and pass them to actor update
+        # Log actor parameters
+        for k, v in self.actor.zeta.items():
+            self._actor_zetas[k + "_local"].append(v)
+        for k, v in self.actor_target.zeta.items():
+            self._actor_zetas[k + "_target"].append(v)
 
+        # pre-process each days information into numpy array and pass them to actor update
         day_params = []
         for params in parameters:
             # deepcopy to prevent overriding issues
@@ -236,6 +254,14 @@ class TD3(object):
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
+        # Add checkpoint for cost analysis
+        if (
+            self.total_it % self.agent_checkpoint == 0
+            and self.total_it >= 0
+            and not self._eval
+        ):
+            self._agent_checkpoint.append(deepcopy(self))
+
         # add reward to memory
         if len(self.memory) == 0:
             return
@@ -249,6 +275,7 @@ class TD3(object):
         if (
             self.total_it % (self.meta_episode * 24) == 0
             and self.total_it >= self.rbc_threshold + self.meta_episode * 24
+            and not self._eval
         ):
             start = time.time()
             self.train()
@@ -264,4 +291,5 @@ class Agent(TD3):
             num_buildings=len(kwargs["building_ids"]),
             building_info=kwargs["building_info"],
             rbc_threshold=336,
+            agent_checkpoint=kwargs["agent_checkpoint"],
         )
