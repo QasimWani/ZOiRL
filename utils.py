@@ -1,18 +1,13 @@
 import numpy as np
 import json
 
-from collections import deque, namedtuple
+from collections import deque
 from citylearn import CityLearn  # for RBC
-import torch
-
-
-# Set to cuda (gpu) instance if compute available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
 # > w_0 = adam.update(t,w=w_0, dw=dw)
 class Adam:
-    def __init__(self, eta=0.01, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def __init__(self, eta=0.05, beta1=0.9, beta2=0.999, epsilon=1e-8):
         self.m_dw, self.v_dw = 0, 0
         self.beta1 = beta1
         self.beta2 = beta2
@@ -20,10 +15,8 @@ class Adam:
         self.eta = eta
 
     def update(self, t, w, dw):
-        ## dw, db are from current minibatch
-        t += 1  # 0 based
-        # t = max(t, 1)  # prevent zero division
-
+        t = max(t, 1)  # ensure no division by 1
+        ## dw from current minibatch
         ## momentum beta 1
         # *** weights *** #
         self.m_dw = self.beta1 * self.m_dw + (1 - self.beta1) * dw
@@ -37,13 +30,11 @@ class Adam:
         v_dw_corr = self.v_dw / (1 - self.beta2 ** t)
 
         ## update weights and biases
-        w = w + self.eta * (
-            m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon)
-        )  # gradient descent update
+        w = w - self.eta * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
         return w
 
 
-META_EPISODE = 7  # number of days in a meta-episode
+BUFFER_SIZE = 7  # number of days in a meta-episode
 MINI_BATCH = 2  # number of days to sample
 
 
@@ -53,7 +44,7 @@ class ReplayBuffer:
     The goal of a replay buffer is to unserialize relationships between sequential experiences, gaining a better temporal understanding.
     """
 
-    def __init__(self, buffer_size=META_EPISODE, batch_size=MINI_BATCH):
+    def __init__(self, buffer_size=BUFFER_SIZE, batch_size=MINI_BATCH):
         """
         Initializes the buffer.
         @Param:
@@ -113,6 +104,13 @@ class ReplayBuffer:
         except IndexError:
             print("Trying to access invalid index in replay buffer!")
             return None
+
+    def clear(self):
+        """Clear replay memory"""
+        try:
+            self.replay_memory.clear()
+        except Exception as e:
+            raise BufferError(f"Unable to clear replay buffer: {e}")
 
     def set(self, index: int, data: dict):
         """Sets an element of replay buffer w/ dictionary"""
