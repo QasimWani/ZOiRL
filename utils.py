@@ -1,7 +1,8 @@
 import numpy as np
 import json
+from tqdm import tqdm
 
-from collections import deque
+from collections import defaultdict, deque
 from citylearn import CityLearn  # for RBC
 
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
@@ -283,3 +284,21 @@ class DataLoader:
         for key in data:
             data[key] = np.clip(np.random.random(size=data[key].shape), 0, 1)
         return data
+
+
+def agent_checkpoint_cost(agents: list, env: CityLearn):
+    """Runs cost analysis on a list of agents"""
+    costs = defaultdict(list)
+    for agent in tqdm(agents):
+        state = env.reset()
+        done = False
+        while not done:
+            action, _ = agent.select_action(state)
+            next_state, reward, done, _ = env.step(action)
+            agent.add_to_buffer(state, action, reward, next_state, done)
+            state = next_state
+        cost, _ = env.cost(env.simulation_period)
+        # log costs
+        for k, v in cost.items():
+            costs[k].append(v)
+    return costs

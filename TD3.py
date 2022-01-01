@@ -37,6 +37,7 @@ class TD3(object):
         """Initialize Actor + Critic for weekday and weekends"""
         self.buildings = num_buildings
         self.action_space = action_space
+        self.building_info = building_info
         self.total_it = 0
         self.rbc_threshold = rbc_threshold
         self.meta_episode = meta_episode
@@ -260,7 +261,7 @@ class TD3(object):
             and self.total_it >= 0
             and not self._eval
         ):
-            self._agent_checkpoint.append(deepcopy(self))
+            self._agent_checkpoint.append(PurifiedAgent(self))
 
         # add reward to memory
         if len(self.memory) == 0:
@@ -282,6 +283,17 @@ class TD3(object):
             end = time.time()
             print(f"Time taken for training: {end - start}")
 
+    def reset(self):
+        """Checkpoint agent by resetting buffer values and counters."""
+        agent = deepcopy(self)
+        agent.reward_memory.clear()
+        agent.memory.clear()
+        agent.data_loader = DataLoader(self.building_info, self.action_space)
+        agent._eval = True
+        agent._actor_zetas.clear()
+        agent._agent_checkpoint.clear()
+        agent._
+
 
 class Agent(TD3):
     def __init__(self, **kwargs):
@@ -293,3 +305,30 @@ class Agent(TD3):
             rbc_threshold=336,
             agent_checkpoint=kwargs["agent_checkpoint"],
         )
+
+
+class PurifiedAgent(TD3):
+    """Agent used for Checkpoint"""
+
+    def __init__(
+        self,
+        agent: TD3,
+    ) -> None:
+        super().__init__(
+            agent.action_space,
+            agent.buildings,
+            agent.building_info,
+            agent.rbc_threshold,
+            meta_episode=agent.meta_episode,
+            agent_checkpoint=agent.agent_checkpoint,
+            _eval=True,
+        )
+        # set actors
+        self.actor.zeta = deepcopy(agent.actor.zeta)
+        self.actor_target.zeta = deepcopy(agent.actor_target.zeta)
+
+        # set critics
+        self.critic[0].set_alphas(*agent.critic[0].get_alphas())  # Local
+        self.critic[1].set_alphas(*agent.critic[1].get_alphas())  # Local
+        self.critic_target[0].set_alphas(*agent.critic_target[0].get_alphas())  # Target
+        self.critic_target[1].set_alphas(*agent.critic_target[1].get_alphas())  # Target
