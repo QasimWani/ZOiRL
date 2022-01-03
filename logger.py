@@ -12,5 +12,5 @@ def LOG(data: str, pprint: bool = True, file: str = "log.txt"):
 
     if pprint:
         print("\r" + data, end="")
-        clear_output(wait=True)
+        # clear_output(wait=True)
         clear()
