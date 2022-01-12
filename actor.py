@@ -1,6 +1,7 @@
 from collections import defaultdict
-from copy import deepcopy
+from copy import Error, deepcopy
 from critic import Critic
+from logger import LOG
 
 from utils import Adam, RBC
 import numpy as np
@@ -16,7 +17,7 @@ class Actor:
         num_actions: list,
         num_buildings: int,
         offset: int,
-        rho: float = 0.5,
+        rho: float = 0.75,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
@@ -32,19 +33,20 @@ class Actor:
         zeta_keys = set(
             [
                 "p_ele",
-                "eta_ehH",
-                "eta_bat",
-                "c_bat_end",
-                "eta_Hsto",
-                "eta_Csto",
+                # "eta_ehH",
+                # "eta_bat",
+                # "c_bat_end",
+                # "eta_Hsto",
+                # "eta_Csto",
             ]
         )
 
         self.zeta = self.initialize_zeta()  # initialize zeta w/ default values
 
-        self.optim = [
-            {key: Adam() for key in zeta_keys}
-        ] * num_buildings  # per building per parameter 9 x 6
+        self.optim = []
+
+        for _ in range(num_buildings):
+            self.optim.append({key: Adam() for key in zeta_keys})
 
         self.adam_offset = offset  # (t - offset + 1) see Adam.update
 
@@ -55,6 +57,10 @@ class Actor:
         a, b, c = RBC(num_actions).load_day_actions()
         # a, b, c = np.zeros((3, self.num_buildings, 24))
         self.rbc_actions = {"action_C": a, "action_H": b, "action_bat": c}
+        # Logger
+        self._grads = [
+            defaultdict(list) for _ in range(self.num_buildings)
+        ]  # zeta grads over time
 
     def initialize_zeta(
         self,
@@ -66,10 +72,7 @@ class Actor:
         c_bat_end: float = 0.1,
         c_Csto_end: float = 0.1,  # constant
     ):
-        """
-        Initialize differentiable parameters, zeta with default values.
-        Local assign makes sure no accidental calls are made. it won't, but Murphy's law!
-        """
+        """Initialize differentiable parameters, zeta with default values"""
         zeta = {}  # 6 parameters learned via differentiation
 
         zeta["p_ele"] = np.full((24, self.num_buildings), p_ele)
@@ -553,11 +556,14 @@ class Actor:
 
         try:
             status = self.prob[t].solve(
-                verbose=debug, max_iters=1000
+                verbose=debug,  # max_iters=100_000
             )  # Returns the optimal value.
+            assert float("-inf") < status < float("inf"), "Solver failed"
+
         except:  # try another solver
             status = self.prob[t].solve(
-                solver="SCS", verbose=debug, max_iters=1000
+                solver="SCS",
+                verbose=debug,  # max_iters=100_000
             )  # Returns the optimal value.
             self.scs_cnt[building_id] += 1
 
@@ -577,7 +583,8 @@ class Actor:
                     actions[var.name()] = np.array(var.value)[0] + offset
         else:
             self.fail_cnt[building_id] += 1
-            print(f"\nDefault solution at t = {t} for building {building_id}")
+            LOG(f"\nDefault solution at t = {t} for building {building_id}")
+
             for var in self.prob[t].variables():
                 if dispatch:
                     offset = np.zeros(len(var.value))
@@ -622,24 +629,18 @@ class Actor:
     ):
         """Sets values for zeta"""
         # get Zeta
-        (
-            p_ele,
-            eta_bat,
-            eta_Hsto,
-            eta_Csto,
-            eta_ehH,
-            c_bat_end,
-        ) = zeta
+        # (p_ele, eta_bat, eta_Hsto, eta_Csto, eta_ehH, c_bat_end) = zeta
+        p_ele = zeta[0]
 
         # dimensions: 24
         self.zeta["p_ele"][:, building_id] = p_ele
-        self.zeta["eta_bat"][:, building_id] = eta_bat
-        self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
-        self.zeta["eta_Csto"][:, building_id] = eta_Csto
+        # self.zeta["eta_bat"][:, building_id] = eta_bat
+        # self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
+        # self.zeta["eta_Csto"][:, building_id] = eta_Csto
 
-        # dimensions: 1
-        self.zeta["eta_ehH"][building_id] = eta_ehH
-        self.zeta["c_bat_end"][building_id] = c_bat_end
+        # # dimensions: 1
+        # self.zeta["eta_ehH"][building_id] = eta_ehH
+        # self.zeta["c_bat_end"][building_id] = c_bat_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
@@ -692,11 +693,13 @@ class Actor:
         """Computes dQ/da, where a is the set of actions for building `building_id` at timestep `t`"""
 
         # set all params except for actions as constants (zeroes)
-        for k, v in parameters.items():
-            if "action" not in k:
-                parameters[k] = np.full(v.shape, fill_value=0)
+        # for k, v in parameters.items():
+        #     if "action" in k:
+        #         parameters[k] += np.random.normal(0, 0.1)
 
-        self.debug = parameters
+        # set zeta's to constant
+        # zeta = self.initialize_zeta(*[0] * len(self.zeta))
+
         # fetch params in loss calculation
         E_grid_prevhour = parameters["E_grid_prevhour"][t, building_id]
         E_grid_pkhist = (
@@ -710,7 +713,11 @@ class Actor:
             t, parameters, self.zeta, building_id, return_prob=True
         )  # mu(s_t, a_t, zeta)
 
-        self.dq_da_problem = prob
+        # ––––––––– TEMP –––––––––
+        # self.get_problem(t, parameters, building_id)  # mu(s_t, a_t, zeta)
+        # assert self.prob[t].is_dpp(), "Problem must be DPP to compute dA/dzeta"
+        # prob = self.prob[t]
+        # ––––––––– TEMP –––––––––
 
         (zeta_plus_params, variables_actor,) = (
             prob.param_dict,
@@ -726,19 +733,26 @@ class Actor:
             variables=list(variables_actor.values()),
         )
 
+        self.debug = [mu, zeta_plus_params_tensor_dict]  # TEMP
         try:
             E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
         except:
-            print(f"dQ/da Solver error! Building: {building_id}, Timestep: {t}")
+            LOG(f"dQ/da Solver error! Building: {building_id}, Timestep: {t}")
+
             E_grid, *_ = mu(
                 *zeta_plus_params_tensor_dict.values(),
-                solver_args={"verbose": True, "max_iters": 10_000},
+                solver_args={
+                    # "verbose": True,
+                    "max_iters": 10_000_000,
+                    "solve_method": "SCS",
+                },
             )
 
         # Reward Warping function, Critic forward pass - Step 2
-        alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(
-            critic.get_alphas()
-        ).float()
+        r, p, e = critic.get_alphas()
+        alpha_ramp = torch.from_numpy(r).float()
+        alpha_peak1 = torch.from_numpy(p).float()
+        alpha_elec = torch.from_numpy(e).float()
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour)
         if len(E_grid) > 1:  # not at eod
@@ -754,8 +768,9 @@ class Actor:
         reward_warping_loss = (
             -alpha_ramp[building_id] * ramping_cost
             - alpha_peak1[building_id] * peak_net_electricity_cost
-            - alpha_peak2[building_id] * torch.square(peak_net_electricity_cost)
+            - torch.sum(alpha_elec[building_id][t:] * E_grid)
         )
+        # add virtual electricity cost
 
         # Gradient w.r.t parameters (math: \zeta) - Step 3
         reward_warping_loss.backward()
@@ -805,7 +820,7 @@ class Actor:
         dq_da["eta_ehH_grad"] = eta_ehH_grad
         dq_da["c_bat_end_grad"] = c_bat_end_grad
 
-        return dq_da, zeta_plus_params_tensor_dict
+        return dq_da
 
     def gradient_zeta(self, t: int, parameters: dict, building_id: int):
         """
@@ -815,154 +830,66 @@ class Actor:
         da_dzeta = defaultdict()
 
         # set all params except for zetas as constants
-        zeta_params = deepcopy(parameters)
-        for k, v in zeta_params.items():
-            if k not in self.zeta.keys():
-                zeta_params[k] = np.full(v.shape, fill_value=0)
+        # zeta_params = parameters
+        # for k, v in zeta_params.items():
+        #     if k not in self.zeta.keys():
+        #         zeta_params[k] = np.full(v.shape, fill_value=0)
 
-        self.get_problem(t, zeta_params, building_id)
+        self.get_problem(t, parameters, building_id)
 
         assert self.prob[t].is_dpp(), "Problem must be DPP to compute dA/dzeta"
 
         # actor optimization, i.e., forward pass.
-        self.prob[t].solve(requires_grad=True)
+        self.grad_debug = [self.prob[t], parameters]
+
+        try:
+            status = self.prob[t].solve(requires_grad=True)
+            if status == float("inf") or status == float("-inf"):
+                raise Error("infeasible solution found. Trying SCS...")
+        except:  # try another solver
+            status = self.prob[t].solve(
+                requires_grad=True, solver="SCS", max_iters=1_000_000
+            )  # Returns the optimal value.
+
+        assert (
+            float("-inf") < status < float("inf")
+        ), "E2E dA/dzeta returned unbounded solution."
+
         self.prob[t].backward()  # compute gradient
 
         for key in self.zeta.keys():
-            da_dzeta[key + "_grad"] = self.prob[t].param_dict[key].gradient
+            grad = self.prob[t].param_dict[key].gradient
+            if len(grad.shape) == 0:
+                da_dzeta[key + "_grad"] = grad
+            else:
+                da_dzeta[key + "_grad"] = np.pad(grad, (t, 0), constant_values=np.nan)
 
         return da_dzeta
 
-    def chain_rule(
+    def E2E_grad(
         self, t: int, parameters: dict, critic: Critic, building_id: int
     ) -> dict:
         """
         Computes chain rule for: dQ/dzeta = dQ/da * da/dzeta
         • dQ/da -> set all params except for actions as constants.
-        • da/dzeta -> backward pass of actor optimization (forward pass).
+        • da/dzeta -> actor optimization (forward pass).
         """
-        dq_da, _grads = self.gradient_actions(
-            t, deepcopy(parameters), critic, building_id
-        )
+        dq_da = self.gradient_actions(t, deepcopy(parameters), critic, building_id)
+        return dq_da.values()
+
         da_dzeta = self.gradient_zeta(t, deepcopy(parameters), building_id)
 
-        return dq_da, da_dzeta, _grads
+        e2e = {}
+        for k in self.zeta.keys():
+            k += "_grad"
+            try:
+                e2e[k] = dq_da[k] * da_dzeta[k]
+            except KeyError as k:
+                pass
+            except Exception as e:
+                LOG(f"Timestep: {t}\nError message: {e}\nKey: {k}")
 
-    def E2E_grad(self, t: int, parameters: dict, critic: Critic, building_id: int):
-        """Utilizes Critic Optimization and forward (RWL) for a single hour and returns gradient for each param \in zeta"""
-        # problem formulation using Critic optimizaiton, i.e. setting current action as constant
-        prob = critic.get_problem(
-            t, parameters, self.zeta, building_id, return_prob=True
-        )  # mu(s_t, a_t, zeta)
-
-        (zeta_plus_params, variables_actor,) = (
-            prob.param_dict,
-            prob.var_dict,
-        )
-
-        # Critic forward pass - Step 1
-        mu = CvxpyLayer(
-            prob,
-            parameters=list(zeta_plus_params.values()),
-            variables=list(variables_actor.values()),
-        )
-
-        # fetch params in loss calculation
-        E_grid_prevhour = parameters["E_grid_prevhour"][t, building_id]
-        E_grid_pkhist = (
-            max(0, parameters["E_grid_prevhour"][t, building_id])
-            if t == 0
-            else np.max([0, *parameters["E_grid"][: (t + 1), building_id]])
-        )
-
-        zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(zeta_plus_params)
-
-        try:
-            E_grid, *_ = mu(
-                *zeta_plus_params_tensor_dict.values(),
-                solver_args={"max_iters": 10_000},
-            )
-        except:
-            print(f"E2E Solver error! Building: {building_id}, Timestep: {t}")
-            E_grid, *_ = mu(
-                *zeta_plus_params_tensor_dict.values(),
-                solver_args={
-                    "verbose": True,
-                    "max_iters": 10_000,
-                    "solve_method": "SCS",
-                },
-            )
-
-        # Reward Warping function, Critic forward pass - Step 2
-        alpha_ramp, alpha_peak1, alpha_peak2 = torch.from_numpy(
-            critic.get_alphas()
-        ).float()
-
-        ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour)
-        if len(E_grid) > 1:  # not at eod
-            ramping_cost += torch.sum(
-                torch.abs(E_grid[1:] - E_grid[:-1])
-            )  # E_grid_t+1 - E_grid_t
-
-        peak_net_electricity_cost = torch.max(
-            torch.tensor(E_grid.max()),
-            torch.tensor(E_grid_pkhist),
-        )
-
-        reward_warping_loss = (
-            -alpha_ramp[building_id] * ramping_cost
-            - alpha_peak1[building_id] * peak_net_electricity_cost
-            - alpha_peak2[building_id] * torch.square(peak_net_electricity_cost)
-        )
-
-        # Gradient w.r.t parameters (math: \zeta) - Step 3
-        reward_warping_loss.backward()
-
-        # dimensions: 24 - Pad zeta
-        p_ele_grad = np.pad(
-            zeta_plus_params_tensor_dict["p_ele"].grad.numpy(),
-            (t, 0),
-            constant_values=np.nan,
-        )
-        assert len(p_ele_grad) == 24, f"Invalid dimension. found {len(p_ele_grad)}"
-
-        eta_bat_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_bat"].grad.numpy(),
-            (t, 0),
-            constant_values=np.nan,
-        )
-        assert len(eta_bat_grad) == 24, f"Invalid dimension. found {len(eta_bat_grad)}"
-
-        eta_Hsto_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_Hsto"].grad.numpy(),
-            (t, 0),
-            constant_values=np.nan,
-        )
-        assert (
-            len(eta_Hsto_grad) == 24
-        ), f"Invalid dimension. found {len(eta_Hsto_grad)}"
-
-        eta_Csto_grad = np.pad(
-            zeta_plus_params_tensor_dict["eta_Csto"].grad.numpy(),
-            (t, 0),
-            constant_values=np.nan,
-        )
-        assert (
-            len(eta_Csto_grad) == 24
-        ), f"Invalid dimension. found {len(eta_Csto_grad)}"
-
-        # dimensions: 1
-        eta_ehH_grad = zeta_plus_params_tensor_dict["eta_ehH"].grad.item()
-        c_bat_end_grad = zeta_plus_params_tensor_dict["c_bat_end"].grad.item()
-
-        return (
-            p_ele_grad,
-            eta_bat_grad,
-            eta_Hsto_grad,
-            eta_Csto_grad,
-            eta_ehH_grad,
-            c_bat_end_grad,
-        )
+        return e2e.values()
 
     def backward(
         self,
@@ -985,6 +912,7 @@ class Actor:
 
         for day_param in batch_parameters:
             for r in range(24):
+                LOG(f"E2E\tBuilding: {building_id}, timestep {t}, r: {r}")
                 (
                     p_ele_grad,
                     eta_bat_grad,
@@ -994,13 +922,6 @@ class Actor:
                     c_bat_end_grad,
                 ) = self.E2E_grad(r, day_param, critic, building_id)
 
-                # dQ/dzeta = dQ/da * da/dzeta
-                # dQ/da -> set all params except for actions as constants.
-                # da/dzeta -> backward pass of actor optimization (forward pass).
-                # self.dq_da, self.da_dzeta, self.critic_forward_grads = self.chain_rule(
-                #     r, day_param, critic, building_id
-                # )
-
                 # store gradients
                 parameter_gradients["p_ele_grad"].append(p_ele_grad)
                 parameter_gradients["eta_bat_grad"].append(eta_bat_grad)
@@ -1009,10 +930,7 @@ class Actor:
                 parameter_gradients["eta_ehH_grad"].append(eta_ehH_grad)
                 parameter_gradients["c_bat_end_grad"].append(c_bat_end_grad)
 
-                # self.temp = parameter_gradients
-                # raise NotImplementedError("Good luck!")
-
-        # compute average gradient
+        # –––––––––– Compute Average Gradient ––––––––––
 
         # dimension : 24
         parameter_gradients["p_ele_grad"] = np.nanmean(
@@ -1044,7 +962,10 @@ class Actor:
             parameter_gradients["c_bat_end_grad"]
         ).mean()
 
-        self.temp = parameter_gradients
+        ### –––––––––––––––––––––––––––––– Log gradients ––––––––––––––––––––––––––––––
+        for k, v in parameter_gradients.items():
+            self._grads[building_id][k].append(v)
+        ### –––––––––––––––––––––––––––––– Log gradients ––––––––––––––––––––––––––––––
 
         ### Update Parameter using Adam
         NUM_HOURS = len(batch_parameters) * 24
@@ -1054,41 +975,41 @@ class Actor:
             self.zeta["p_ele"][:, building_id],
             parameter_gradients["p_ele_grad"],
         )
-        eta_bat = self.optim[building_id]["eta_bat"].update(
-            (t - self.adam_offset) // NUM_HOURS,
-            self.zeta["eta_bat"][:, building_id],
-            parameter_gradients["eta_bat_grad"],
-        )
-        eta_Hsto = self.optim[building_id]["eta_Hsto"].update(
-            (t - self.adam_offset) // NUM_HOURS,
-            self.zeta["eta_Hsto"][:, building_id],
-            parameter_gradients["eta_Hsto_grad"],
-        )
-        eta_Csto = self.optim[building_id]["eta_Csto"].update(
-            (t - self.adam_offset) // NUM_HOURS,
-            self.zeta["eta_Csto"][:, building_id],
-            parameter_gradients["eta_Csto_grad"],
-        )
-        eta_ehH = self.optim[building_id]["eta_ehH"].update(
-            (t - self.adam_offset) // NUM_HOURS,
-            self.zeta["eta_ehH"][building_id],
-            parameter_gradients["eta_ehH_grad"],
-        )
-        c_bat_end = self.optim[building_id]["c_bat_end"].update(
-            ((t - self.adam_offset) // NUM_HOURS),
-            self.zeta["c_bat_end"][building_id],
-            parameter_gradients["c_bat_end_grad"],
-        )
+        # eta_bat = self.optim[building_id]["eta_bat"].update(
+        #     (t - self.adam_offset) // NUM_HOURS,
+        #     self.zeta["eta_bat"][:, building_id],
+        #     parameter_gradients["eta_bat_grad"],
+        # )
+        # eta_Hsto = self.optim[building_id]["eta_Hsto"].update(
+        #     (t - self.adam_offset) // NUM_HOURS,
+        #     self.zeta["eta_Hsto"][:, building_id],
+        #     parameter_gradients["eta_Hsto_grad"],
+        # )
+        # eta_Csto = self.optim[building_id]["eta_Csto"].update(
+        #     (t - self.adam_offset) // NUM_HOURS,
+        #     self.zeta["eta_Csto"][:, building_id],
+        #     parameter_gradients["eta_Csto_grad"],
+        # )
+        # eta_ehH = self.optim[building_id]["eta_ehH"].update(
+        #     (t - self.adam_offset) // NUM_HOURS,
+        #     self.zeta["eta_ehH"][building_id],
+        #     parameter_gradients["eta_ehH_grad"],
+        # )
+        # c_bat_end = self.optim[building_id]["c_bat_end"].update(
+        #     ((t - self.adam_offset) // NUM_HOURS),
+        #     self.zeta["c_bat_end"][building_id],
+        #     parameter_gradients["c_bat_end_grad"],
+        # )
 
         ## Update Zeta
         self.set_zeta(
             (
                 p_ele,
-                eta_bat,
-                eta_Hsto,
-                eta_Csto,
-                eta_ehH,
-                c_bat_end,
+                # eta_bat,
+                # eta_Hsto,
+                # eta_Csto,
+                # eta_ehH,
+                # c_bat_end,
             ),
             building_id,
         )

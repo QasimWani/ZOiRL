@@ -1,3 +1,4 @@
+from logger import LOG
 import numpy as np
 import json
 from tqdm import tqdm
@@ -8,7 +9,7 @@ from citylearn import CityLearn  # for RBC
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
 # > w_0 = adam.update(t,w=w_0, dw=dw)
 class Adam:
-    def __init__(self, eta=0.05, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    def __init__(self, eta=0.08, beta1=0.9, beta2=0.999, epsilon=1e-6):
         self.m_dw, self.v_dw = 0, 0
         self.beta1 = beta1
         self.beta2 = beta2
@@ -36,7 +37,7 @@ class Adam:
 
 
 BUFFER_SIZE = 7  # number of days in a meta-episode
-MINI_BATCH = 2  # number of days to sample
+MINI_BATCH = 4  # number of days to sample
 
 
 class ReplayBuffer:
@@ -103,7 +104,7 @@ class ReplayBuffer:
         try:
             return self.replay_memory[index]
         except IndexError:
-            print("Trying to access invalid index in replay buffer!")
+            LOG("Trying to access invalid index in replay buffer!")
             return None
 
     def clear(self):
@@ -118,7 +119,7 @@ class ReplayBuffer:
         try:
             self.replay_memory[index] = data
         except:
-            print(
+            LOG(
                 "Trying to set replay buffer w/ either invalid index or unable to set data!"
             )
             return None
@@ -297,6 +298,7 @@ def agent_checkpoint_cost(agents: list, env: CityLearn):
             next_state, reward, done, _ = env.step(action)
             agent.add_to_buffer(state, action, reward, next_state, done)
             state = next_state
+            print(f"Timestep: {env.time_step}", end="\r", flush=True)
         cost, _ = env.cost(env.simulation_period)
         # log costs
         for k, v in cost.items():
