@@ -2,10 +2,10 @@ from collections import defaultdict
 from copy import deepcopy
 import numpy as np
 
-from citylearn import CityLearn
 import time
 import sys, warnings
 from utils import ReplayBuffer, RBC
+from logger import LOG
 
 ## local imports
 from predictor import Predictor as DataLoader
@@ -28,7 +28,7 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 4,  # after how many days to train Actor-Critic
+        meta_episode: int = 7,  # after how many days to train Actor-Critic
         agent_checkpoint: int = float(
             "inf"
         ),  # after how many hours to checkpoint model for true cost analysis
@@ -60,7 +60,6 @@ class TD3(object):
 
         ### --- log details ---
         self._agent_checkpoint = []
-        self.logger = []
         self.optim_param_logger = []
         self._critic_alphas_parameters = defaultdict(list)
         self._actor_zetas = defaultdict(list)
@@ -133,7 +132,6 @@ class TD3(object):
             )
             # Shape: 9, 3, 24
             self.action_planned_day = np.array(self.action_planned_day)
-            self.logger.append(optim_values)  # add all variables - Optimization
 
         action_planned_day = self.action_planned_day[:, :, self.total_it % 24]
         return action_planned_day, data_est
@@ -151,7 +149,6 @@ class TD3(object):
                 for id in range(self.buildings)
             ]
         )
-        self.logger.append(optim_values)  # add all variables - Optimization
 
         return action_planned_day, data_est
 
@@ -161,9 +158,7 @@ class TD3(object):
         self._critic_alphas_parameters["1_peak"].append(
             self.critic_target[0].alpha_peak1
         )
-        self._critic_alphas_parameters["2_peak"].append(
-            self.critic_target[0].alpha_peak2
-        )
+        self._critic_alphas_parameters["elec"].append(self.critic_target[0].alpha_elec)
         self._critic_alphas_parameters["ramp"].append(self.critic_target[0].alpha_ramp)
 
         # pre-process each days information into numpy array and pass them to critic update
@@ -205,15 +200,15 @@ class TD3(object):
             self.critic_target[i].target_update(self.critic[i].get_alphas())
 
         # copy problem into critic local -- for use in actor backward
-        self.critic[0].prob = deepcopy(self.critic_target[0].prob)
-        self.critic[1].prob = deepcopy(self.critic_target[1].prob)
+        self.critic[0].prob = self.critic_target[0].prob
+        self.critic[1].prob = self.critic_target[1].prob
 
     def actor_update(self, parameters: list):
         """Master Actor update"""
         # Log actor parameters
-        for k, v in self.actor.zeta.items():
+        for k, v in deepcopy(self.actor.zeta).items():
             self._actor_zetas[k + "_local"].append(v)
-        for k, v in self.actor_target.zeta.items():
+        for k, v in deepcopy(self.actor_target.zeta).items():
             self._actor_zetas[k + "_target"].append(v)
 
         # pre-process each days information into numpy array and pass them to actor update
@@ -228,14 +223,13 @@ class TD3(object):
 
         for id in range(self.buildings):
             # local actor update
-            self.actor.backward(self.total_it, self.critic[0], day_params, id)
+            self.actor.backward(self.total_it, self.critic_target[0], day_params, id)
 
             # target actor update - moving average
             self.actor_target.target_update(self.actor.get_zeta(), id)
 
     def train(self):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
-
         # gather data from memory for critic update
         parameters_1, idx_1 = self.memory.sample()  # critic 1 - sequential
         rewards_1 = self.reward_memory.sample(
@@ -277,11 +271,12 @@ class TD3(object):
             self.total_it % (self.meta_episode * 24) == 0
             and self.total_it >= self.rbc_threshold + self.meta_episode * 24
             and not self._eval
+            and self.memory.batch_size <= len(self.memory)
         ):
             start = time.time()
             self.train()
             end = time.time()
-            print(f"Time taken for training: {end - start}")
+            LOG(f"Time taken for training: {end - start}")
 
     def reset(self):
         """Checkpoint agent by resetting buffer values and counters."""
@@ -292,7 +287,6 @@ class TD3(object):
         agent._eval = True
         agent._actor_zetas.clear()
         agent._agent_checkpoint.clear()
-        agent._
 
 
 class Agent(TD3):
@@ -302,7 +296,7 @@ class Agent(TD3):
             action_space=kwargs["action_spaces"],
             num_buildings=len(kwargs["building_ids"]),
             building_info=kwargs["building_info"],
-            rbc_threshold=336,
+            rbc_threshold=24 * 14,
             agent_checkpoint=kwargs["agent_checkpoint"],
         )
 
