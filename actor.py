@@ -17,7 +17,7 @@ class Actor:
         num_actions: list,
         num_buildings: int,
         offset: int,
-        rho: float = 0.75,
+        rho: float = 0.8,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
@@ -912,7 +912,7 @@ class Actor:
 
         for day_param in batch_parameters:
             for r in range(24):
-                LOG(f"E2E\tBuilding: {building_id}, timestep {t}, r: {r}")
+                LOG(f"E2E\tBuilding: {building_id}, r: {str(r).zfill(2)}")
                 (
                     p_ele_grad,
                     eta_bat_grad,

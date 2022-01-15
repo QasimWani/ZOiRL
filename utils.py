@@ -9,7 +9,7 @@ from citylearn import CityLearn  # for RBC
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
 # > w_0 = adam.update(t,w=w_0, dw=dw)
 class Adam:
-    def __init__(self, eta=0.08, beta1=0.9, beta2=0.999, epsilon=1e-6):
+    def __init__(self, eta=0.1, beta1=0.9, beta2=0.999, epsilon=1e-6):
         self.m_dw, self.v_dw = 0, 0
         self.beta1 = beta1
         self.beta2 = beta2
@@ -32,7 +32,7 @@ class Adam:
         v_dw_corr = self.v_dw / (1 - self.beta2 ** t)
 
         ## update weights and biases
-        w = w - self.eta * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
+        w = w + self.eta * (m_dw_corr / (np.sqrt(v_dw_corr) + self.epsilon))
         return w
 
 
