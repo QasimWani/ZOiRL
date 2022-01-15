@@ -13,8 +13,8 @@ class Critic:  # decentralized version
         self,
         num_buildings: int,
         num_actions: list,
-        lambda_: float = 0.7,
-        rho: float = 0.75,
+        lambda_: float = 0.8,
+        rho: float = 0.8,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
@@ -252,7 +252,7 @@ class Critic:  # decentralized version
             E_grid_sell
         )  # not as severe as violating constraints
 
-        ### relaxation costs - L1 norm
+        ### relaxation costs - L2 norm
         # balance eq.
         E_bal_relax_cost = cp.sum(cp.abs(E_bal_relax))
         H_bal_relax_cost = cp.sum(cp.abs(H_bal_relax))
@@ -659,7 +659,7 @@ class Critic:  # decentralized version
         return Gt_lambda
 
     def target_update(self, alphas_local: np.ndarray):
-        """Updates alphas given from L1 optimization"""
+        """Updates alphas given from L2 optimization"""
         assert (
             len(alphas_local) == 3
         ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas_local)}"
@@ -678,9 +678,9 @@ class Critic:  # decentralized version
 class Optim:
     """Performs Critic Update"""
 
-    def __init__(self, rho=0.8) -> None:
-        self.l1_scores = defaultdict(list)  # list of l1 scores over iterations
-        self.rho = rho  # regularization term used in L1 optimization
+    def __init__(self, rho=0.9) -> None:
+        self.L2_scores = defaultdict(list)  # list of L2 scores over iterations
+        self.rho = rho  # regularization term used in L2 optimization
 
     def obtain_target_Q(
         self,
@@ -709,7 +709,7 @@ class Optim:
         # TEMP
         return min(Q1, Q2)  # y_r
 
-    def log_L1_optimization_scores(self):
+    def log_L2_optimization_scores(self):
         """Records MSE from L2 optimization"""
         pass
 
@@ -738,7 +738,7 @@ class Optim:
             critic_target_2.Q_value = [None] * 24
 
             for r in range(24):
-                LOG(f"L2 Optim\tBuilding: {building_id}\tHour: {r}")
+                LOG(f"L2 Optim\tBuilding: {building_id}\tHour: {str(r).zfill(2)}")
 
                 y_r = self.obtain_target_Q(
                     critic_target_1,
@@ -828,7 +828,7 @@ class Optim:
             self.debug["peak_net_electricity_cost"].append(peak_net_electricity_cost)
             self.debug["electricity_cost"].append(E_grid[i])
 
-            # L1 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
+            # L2 norm https://docs.google.com/document/d/1QbqCQtzfkzuhwEJeHY1-pQ28disM13rKFGTsf8dY8No/edit?disco=AAAAMzPtZMU
             cost.append(
                 self.rho
                 * cp.sum(
@@ -927,7 +927,7 @@ class Optim:
 
         # extract local critic
         critic_local_1, critic_local_2 = critic_local
-        # Compute L1 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
+        # Compute L2 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
         local_1_solution = self.least_absolute_optimization(
             batch_parameters_1, zeta_target, building_id, critic_target, debug
         )
