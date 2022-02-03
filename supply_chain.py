@@ -1,7 +1,6 @@
 # solving supply chain problem using Actor Critic
 from collections import deque
 from copy import deepcopy
-from re import A
 import torch
 import cvxpy as cp
 import numpy as np
