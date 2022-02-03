@@ -1,6 +1,7 @@
 # solving supply chain problem using Actor Critic
 from collections import deque
 from copy import deepcopy
+from re import A
 import torch
 import cvxpy as cp
 import numpy as np
@@ -276,12 +277,13 @@ class ReplayBuffer:
     The goal of a replay buffer is to unserialize relationships between sequential experiences, gaining a better temporal understanding.
     """
 
-    def __init__(self, buffer_size: int, batch_size: int):
+    def __init__(self, buffer_size: int, batch_size: int, time_horizon: int):
         """
         Initializes the buffer.
         @Param:
         1. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories.
         2. batch_size: size of mini-batch to train on.
+        3. time_horizon: number of experiences per episode.
         """
         self.replay_memory = deque(
             maxlen=buffer_size
@@ -293,6 +295,7 @@ class ReplayBuffer:
 
     def add(self, data: list):
         """Adds an experience to existing memory"""
+        # TODO: add functionality to append by batches.
         self.replay_memory.append(data)
         self.total_it += 1
 
@@ -351,12 +354,21 @@ class ReplayBuffer:
 
 class Actor:
     def __init__(
-        self, policy: CvxpyLayer, init_params: list, time_horizon: int, batch_size: int
+        self,
+        policy: CvxpyLayer,
+        init_params: list,
+        time_horizon: int,
+        batch_size: int,
+        lr: float,
+        rho: float = 0.8,
     ) -> None:
         self.policy = policy
         self.params = init_params
         self.time_horizon = time_horizon
         self.batch_size = batch_size
+        self.rho = rho
+
+        self.optim = torch.optim.Adam(self.params, lr=lr)
 
     def forward(self, seed: int = 0):
         """Forward pass for actor module. returns next action"""
@@ -376,17 +388,49 @@ class Actor:
 
         return rewards, x, u, h_next
 
-    def backward(self, params):
-        """Takes in meta-episode worth of data to compute the gradients for zetas"""
-        pass
+    def backward(self, batch_parameters, critic):
+        """
+        Takes in meta-episode worth of data to compute the gradients for zetas
+        @Param:
+        1. batch_parameters: list of tuples of (rewards, x, u, h_next) per episode
+        2. critic: local Critic - 1
+        """
+        m = len(batch_parameters)  # number of episodes
+        for i in range(m):
+            cost = torch.tensor(0.0, require_grad=True)
+            episode_parameters = batch_parameters[i]
 
-    def target_update(self):
+            for j in range(self.time_horizon):
+                # unload parameters
+                P_sqrt, q = self.params
+
+                _, x, u, h_next = episode_parameters[j]
+                h, p, d = x[:n], x[n : n + k], x[n + k :]
+
+                # Cvxpy Layer
+                stage_cost = critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
+                next_stage_cost = (
+                    critic.alpha_next_stage_cost * cp.sum_squares(P_sqrt @ h_next)
+                    + q.T @ h_next
+                )
+                cost += (
+                    -stage_cost - next_stage_cost - critic.alpha_bias
+                ) / self.time_horizon
+
+            self.optim.zero_grad()
+            cost.backward()
+            self.optim.step()
+
+    def target_update(self, params: list):
         """Update target actor zeta params using zetas from local actor"""
-        pass
+        for i in range(len(self.params)):
+            self.params[i] = self.rho * self.params[i] + (1 - self.rho) * params[i]
 
 
 class Critic:
-    def __init__(self) -> None:
+    def __init__(self, rho: float = 0.8) -> None:
+        # constant
+        self.rho = rho
 
         # define coefficients to learn
         self.alpha_stage_cost = 1.0
@@ -395,19 +439,27 @@ class Critic:
 
     def get_alphas(self):
         """Returns alpha coef for critic optimization model"""
-        pass
+        return [self.alpha_stage_cost, self.alpha_next_stage_cost, self.alpha_bias]
 
-    def forward(self):
-        """Critic optimization forward pass. supply it with current action."""
-        pass
+    def set_alphas(self, sc, nsc, b):
+        self.alpha_stage_cost = sc
+        self.alpha_next_stage_cost = nsc
+        self.alpha_bias = b
 
-    def Q_function(self):
-        """Calculation of Q-function using critic alphas"""
-        pass
-
-    def target_update(self):
+    def target_update(self, alphas: list):
         """Update critic target alphas using local critic alphas"""
-        pass
+        assert (
+            len(alphas) == 3
+        ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas)}"
+
+        ### main target update -- alphas_new comes from LS optim sol.
+        sc, nsc, b = self.get_alphas()  # stage cost, next stage cost, bias
+        alpha_sc = self.rho * sc + (1 - self.rho) * alphas[0]
+        alpha_nsc = self.rho * nsc + (1 - self.rho) * alphas[1]
+        alpha_b = self.rho * b + (1 - self.rho) * alphas[2]
+
+        # update target critic alphas
+        self.set_alphas(alpha_sc, alpha_nsc, alpha_b)
 
 
 class CriticOptim:
@@ -468,9 +520,9 @@ class CriticOptim:
         is_terminal = int(timestep + 1 == self.time_horizon)
 
         if is_random:  # critic 2
-            return costs1, r2 + self.lambda_ * (1 - is_terminal) * min(Q1, Q2)  # y_r
+            return costs2, r2 + self.lambda_ * (1 - is_terminal) * min(Q1, Q2)  # y_r
 
-        return costs2, r1 + self.lambda_ * (1 - is_terminal) * min(Q1, Q2)  # y_r
+        return costs1, r1 + self.lambda_ * (1 - is_terminal) * min(Q1, Q2)  # y_r
 
     def gather_target_Q(
         self,
@@ -618,6 +670,7 @@ class CriticOptim:
 class Agent:
     def __init__(
         self,
+        policy: CvxpyLayer,
         time_horizon: int,
         batch_size: int,
         meta_episode: int,
@@ -633,7 +686,7 @@ class Agent:
         self.actor_target = deepcopy(self.actor)
 
         # define critic modules
-        self.critic_optim = CriticOptim
+        self.critic_optim = CriticOptim(policy, time_horizon)
         self.critic = [Critic, Critic]
         self.critic_target = [Critic, Critic]
 
@@ -682,11 +735,11 @@ class Agent:
 
         # local critic update
         self.critic_optim.backward(
-            critic_data1,  # critic 1 data - sequential
-            critic_data2,  # critic 2 data - shuffled
-            self.actor_target.params,  # actor params
-            self.critic,  # critic 1 model
-            self.critic_target,  # critic 2 model
+            critic_data1,
+            critic_data2,
+            self.actor_target.params,
+            self.critic,
+            self.critic_target,
         )
 
         # Target Critic update - moving average
