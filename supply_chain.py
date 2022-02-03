@@ -281,9 +281,9 @@ class ReplayBuffer:
         """
         Initializes the buffer.
         @Param:
-        1. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories.
-        2. batch_size: size of mini-batch to train on.
-        3. time_horizon: number of experiences per episode.
+        1. buffer_size: Maximum length of the buffer for extrapolating all experiences into trajectories. Max episode capacity.
+        2. batch_size: size of mini-batch to train on. Sampling episode capcity.
+        3. time_horizon: number of experiences per episode. Number of exeriences per episode.
         """
         self.replay_memory = deque(
             maxlen=buffer_size
@@ -291,15 +291,24 @@ class ReplayBuffer:
         self.batch_size = batch_size
 
         self.total_it = 0
+        self.max_episode_length = time_horizon
         self.max_it = buffer_size
+
+    def _is_empty(self):
+        """Is buffer empty"""
+        return len(self) == 0
 
     def add(self, data: list):
         """Adds an experience to existing memory"""
-        # TODO: add functionality to append by batches.
-        self.replay_memory.append(data)
+        if self.total_it % self.max_episode_length == 0:  # new episode
+            self.replay_memory.append([data])
+        else:
+            d = self.get_recent()
+            d.append(data)
+
         self.total_it += 1
 
-    def get_recent(self):
+    def get_recent(self) -> list:
         """Returns most recent data from memory"""
         return self.replay_memory[-1]
 
@@ -413,13 +422,13 @@ class Actor:
                     critic.alpha_next_stage_cost * cp.sum_squares(P_sqrt @ h_next)
                     + q.T @ h_next
                 )
-                cost += (
-                    -stage_cost - next_stage_cost - critic.alpha_bias
-                ) / self.time_horizon
-
-            self.optim.zero_grad()
-            cost.backward()
-            self.optim.step()
+                cost += (-stage_cost - next_stage_cost - critic.alpha_bias) / (
+                    self.time_horizon * m
+                )
+        # aggregate loss across episodes
+        self.optim.zero_grad()
+        cost.backward()
+        self.optim.step()
 
     def target_update(self, params: list):
         """Update target actor zeta params using zetas from local actor"""
