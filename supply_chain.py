@@ -8,6 +8,7 @@ import scipy.sparse as spa
 from cvxpylayers.torch import CvxpyLayer
 import networkx as nx
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 """ 
 Actor Critic (AC) structure
@@ -671,17 +672,18 @@ class Agent:
         self,
         policy: CvxpyLayer,
         time_horizon: int,
-        batch_size: int,
+        batch_size: int,  # internal to cost calculation
         meta_episode: int,
-        replay_buffer_size: int,
-        replay_batch_size: int,
+        replay_buffer_size: int,  # replay buffer max buffer size
+        replay_batch_size: int,  # replay buffer training sample
+        lr: float,
     ) -> None:
         """Initialization of AC model"""
 
         # define actor modules
         init_params = get_baseline_params()
 
-        self.actor = Actor(policy, init_params, time_horizon, batch_size)
+        self.actor = Actor(policy, init_params, time_horizon, batch_size, lr)
         self.actor_target = deepcopy(self.actor)
 
         # define critic modules
@@ -690,7 +692,7 @@ class Agent:
         self.critic_target = [Critic, Critic]
 
         # define replay buffer
-        self.memory = ReplayBuffer(replay_buffer_size, replay_batch_size)
+        self.memory = ReplayBuffer(replay_buffer_size, replay_batch_size, time_horizon)
 
         self.total_it = 0
         self.meta_episode = meta_episode
@@ -751,8 +753,24 @@ class Agent:
         self.actor_target.backward(data, self.actor)  # target actor update
 
 
-def train():
-    """Trains the AC model"""
-    agent = Agent()
-    for epoch in range(100):
-        agent.train()
+if __name__ == "__main__":
+    time_horizon = 10
+    epochs = 50
+    batch_size = 10
+    replay_batch_size = 5  # training sample size
+    replay_buffer_size = 100  # max memory size
+    lr = 0.05
+    meta_episode = 2  # train after every 2 episodes
+
+    agent = Agent(
+        policy,
+        time_horizon,
+        batch_size,
+        meta_episode,
+        replay_batch_size,
+        replay_buffer_size,
+        lr,
+    )
+
+    for i in tqdm(range(epochs)):
+        agent.next()
