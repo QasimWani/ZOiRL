@@ -9,6 +9,7 @@ from cvxpylayers.torch import CvxpyLayer
 import networkx as nx
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import time
 
 """ 
 Actor Critic (AC) structure
@@ -170,7 +171,7 @@ def simulate(x, u):
     return torch.bmm(A_batch, x) + torch.bmm(B_batch, u) + w_batch
 
 
-def loss(policy, params, time_horizon, batch_size=1, seed=None):
+def loss(policy, params, time_horizon, batch_size, seed=None):
     P_sqrt, q = params
     if seed is not None:
         torch.manual_seed(seed)
@@ -188,22 +189,17 @@ def loss(policy, params, time_horizon, batch_size=1, seed=None):
     x_t = x_batch
     x_hist = [x_batch]
     u_hist = []
-    h_next_hist = []
     for t in range(time_horizon):
-        u_t, h_next = policy(
+        u_t = policy(
             x_t, P_sqrt_batch, q_batch, solver_args={"acceleration_lookback": 0}
-        )
-        # detach tuple
-        u_t = u_t[0]
-        h_next = h_next[0]
+        )[0]
 
         x_t = simulate(x_t, u_t)
         cost += stage_cost(x_t, u_t).mean() / time_horizon
         x_hist.append(x_t)
         u_hist.append(u_t)
-        h_next_hist.append(h_next)
 
-    return cost, x_hist, u_hist, h_next_hist
+    return cost, x_hist, u_hist
 
 
 def loss_ac(policy, params, time_horizon, batch_size=1, seed=None):
@@ -230,12 +226,12 @@ def loss_ac(policy, params, time_horizon, batch_size=1, seed=None):
         u_t, h_next = policy(
             x_t, P_sqrt_batch, q_batch, solver_args={"acceleration_lookback": 0}
         )
-        # detach tuple
-        u_t = u_t[0]
-        h_next = h_next[0]
 
         x_t = simulate(x_t, u_t)
-        cost.append(stage_cost(x_t, u_t).mean() / time_horizon)
+
+        _c = stage_cost(x_t, u_t).mean() / time_horizon
+        cost.append(_c + torch.randn_like(_c))
+
         x_hist.append(x_t)
         u_hist.append(u_t)
         h_next_hist.append(h_next)
@@ -249,20 +245,19 @@ def monte_carlo(policy, params, time_horizon, batch_size=1, trials=10, seed=None
     results = []
     x = []
     u = []
-    h_next = []
 
     for i in range(trials):
-        cost, x_hist, u_hist, h_next_hist = loss(
+        cost, x_hist, u_hist = loss(
             policy, params, time_horizon, batch_size=batch_size, seed=seed
         )
         results.append(cost.item())
         x.append(x_hist)
         u.append(u_hist)
-        h_next.append(h_next_hist)
-    return results, x, u, h_next
+    return results, x, u
 
 
 def get_baseline_params():
+    torch.manual_seed(0)
     P_sqrt_baseline = torch.eye(n, dtype=torch.double)
     q_baseline = -h_max * torch.ones(n, 1, dtype=torch.double)
     return [P_sqrt_baseline + torch.rand(n), q_baseline + torch.rand(1)]
@@ -277,7 +272,7 @@ class ReplayBuffer:
     The goal of a replay buffer is to unserialize relationships between sequential experiences, gaining a better temporal understanding.
     """
 
-    def __init__(self, buffer_size: int, batch_size: int, time_horizon: int):
+    def __init__(self, buffer_size: int, batch_size: int):
         """
         Initializes the buffer.
         @Param:
@@ -290,9 +285,7 @@ class ReplayBuffer:
         )  # Experience replay memory object
         self.batch_size = batch_size
 
-        self.total_it = 0
-        self.max_episode_length = time_horizon
-        self.max_it = buffer_size
+        self.max_capacity = buffer_size
 
     def _is_empty(self):
         """Is buffer empty"""
@@ -300,13 +293,7 @@ class ReplayBuffer:
 
     def add(self, data: list):
         """Adds an experience to existing memory"""
-        if self.total_it % self.max_episode_length == 0:  # new episode
-            self.replay_memory.append([data])
-        else:
-            d = self.get_recent()
-            d.append(data)
-
-        self.total_it += 1
+        self.replay_memory.append(data)
 
     def get_recent(self) -> list:
         """Returns most recent data from memory"""
@@ -377,18 +364,23 @@ class Actor:
         self.batch_size = batch_size
         self.rho = rho
 
+        self.params_progression = [deepcopy(self.params)]
+
         self.optim = torch.optim.Adam(self.params, lr=lr)
+
+    def get_params(self):
+        return [p.clone().detach() for p in self.params]
 
     def forward(self, seed: int = 0):
         """Forward pass for actor module. returns next action"""
-        rewards, x, u, h_next = loss_ac(
-            self.policy,
-            self.params,
-            self.time_horizon,
-            self.batch_size,
-            trials=10,
-            seed=seed,
-        )
+        with torch.no_grad():
+            rewards, x, u, h_next = loss_ac(
+                self.policy,
+                self.params,
+                self.time_horizon,
+                self.batch_size,
+                seed=seed,
+            )
         # format data
         rewards = torch.tensor(rewards).double()
         x = torch.stack(x).squeeze(1)
@@ -405,30 +397,52 @@ class Actor:
         2. critic: local Critic - 1
         """
         m = len(batch_parameters)  # number of episodes
+        self.optim.zero_grad()
+
+        cost = torch.tensor(0.0, requires_grad=True)
         for i in range(m):
-            cost = torch.tensor(0.0, require_grad=True)
-            episode_parameters = batch_parameters[i]
+
+            _, X, U, H_NEXT = batch_parameters[i]
 
             for j in range(self.time_horizon):
                 # unload parameters
                 P_sqrt, q = self.params
 
-                _, x, u, h_next = episode_parameters[j]
+                # assert P_sqrt.requires_grad, "P_sqrt requires grad"
+                # assert q.requires_grad, "q requires grad"
+
+                P_sqrt.requires_grad = True
+                q.requires_grad = True
+
+                # unroll parameters based on timestep j
+                x = X[j]
+                u = U[j]
+                h_next = H_NEXT[j]
+
                 h, p, d = x[:n], x[n : n + k], x[n + k :]
 
                 # Cvxpy Layer
-                stage_cost = critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
+                stage_cost = (
+                    critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
+                ).value.item()
+
                 next_stage_cost = (
-                    critic.alpha_next_stage_cost * cp.sum_squares(P_sqrt @ h_next)
+                    torch.tensor(critic.alpha_next_stage_cost)
+                    * torch.sum((P_sqrt @ h_next) ** 2)
                     + q.T @ h_next
                 )
-                cost += (-stage_cost - next_stage_cost - critic.alpha_bias) / (
-                    self.time_horizon * m
-                )
+
+                # update cost
+                cost = cost + (
+                    -stage_cost - next_stage_cost - torch.tensor(critic.alpha_bias)
+                ) / (self.time_horizon * m)
+
         # aggregate loss across episodes
-        self.optim.zero_grad()
         cost.backward()
         self.optim.step()
+
+        # progression of parameters
+        self.params_progression.append(self.params)
 
     def target_update(self, params: list):
         """Update target actor zeta params using zetas from local actor"""
@@ -442,9 +456,9 @@ class Critic:
         self.rho = rho
 
         # define coefficients to learn
-        self.alpha_stage_cost = 1.0
-        self.alpha_next_stage_cost = 1.0
-        self.alpha_bias = 1.0
+        self.alpha_stage_cost = -1.0
+        self.alpha_next_stage_cost = -1.0
+        self.alpha_bias = -1.0
 
     def get_alphas(self):
         """Returns alpha coef for critic optimization model"""
@@ -488,7 +502,9 @@ class CriticOptim:
         self.rho = rho
         self.time_horizon = time_horizon
 
-    def reward_warping_layer(self, data, critic: Critic, actor_zeta):
+    def reward_warping_layer(
+        self, timestep: int, data: list, critic: Critic, actor_zeta: list
+    ):
         """
         Uses cost function from optimization to generate Q-value
         @Param:
@@ -496,17 +512,32 @@ class CriticOptim:
         """
         # unload parameters
         P_sqrt, q = actor_zeta
+
         reward, x, u, h_next = data
+
+        # unwrap `data` based on `timestep`
+        reward = reward[timestep]
+        x = x[timestep]
+        u = u[timestep]
+        h_next = h_next[timestep]
+
         h, p, d = x[:n], x[n : n + k], x[n + k :]
 
         # Cvxpy Layer
-        stage_cost = critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
+
+        stage_cost = (
+            critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
+        ).value.item()
+
         next_stage_cost = (
             critic.alpha_next_stage_cost * cp.sum_squares(P_sqrt @ h_next)
             + q.T @ h_next
-        )
+        ).value.item()
+
         Q_value = -stage_cost - next_stage_cost - critic.alpha_bias
-        return Q_value, reward, (stage_cost, next_stage_cost)
+        self.debug = stage_cost, next_stage_cost, Q_value
+
+        return Q_value, reward, stage_cost, next_stage_cost
 
     def obtain_target_Q(
         self,
@@ -519,11 +550,12 @@ class CriticOptim:
         is_random: bool,
     ):
         """Computes target Q to build up `y_r` for L2 optimization model. Seeks data per episode"""
+
         Q1, r1, *costs1 = self.reward_warping_layer(
-            batch_1_parameters[timestep], critic_1, actor_zeta
+            timestep, batch_1_parameters, critic_1, actor_zeta
         )
         Q2, r2, *costs2 = self.reward_warping_layer(
-            batch_2_parameters[timestep], critic_2, actor_zeta
+            timestep, batch_2_parameters, critic_2, actor_zeta
         )
 
         is_terminal = int(timestep + 1 == self.time_horizon)
@@ -583,12 +615,13 @@ class CriticOptim:
         self,
         batch_parameters1,
         batch_parameters2,
-        critic_1: Critic,
-        critic_2: Critic,
+        critic: "list[Critic]",
         actor_zeta,
         is_random: bool,
     ):
         """Computes L2 optimization for critic alphas"""
+        critic_1, critic_2 = critic  # unpack critics
+
         m = len(batch_parameters1)  # number of episodes
 
         # define optimization model
@@ -655,15 +688,14 @@ class CriticOptim:
         """Runs L2 optimization to get best estimates for Q-function"""
         # extract critic
         critic_local_1, critic_local_2 = critic_local
-        critic_target_1, critic_target_2 = critic_target
 
         # Compute L2 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
         local_1_solution = self.L2_optimization(
-            batch_1_parameters, batch_2_parameters, critic_target_1, zeta, False
+            batch_1_parameters, batch_2_parameters, critic_target, zeta, False
         )
 
         local_2_solution = self.L2_optimization(
-            batch_1_parameters, batch_2_parameters, critic_target_2, zeta, True
+            batch_1_parameters, batch_2_parameters, critic_target, zeta, True
         )
 
         # update alphas for local
@@ -682,7 +714,6 @@ class Agent:
         policy: CvxpyLayer,
         time_horizon: int,
         batch_size: int,  # internal to cost calculation
-        meta_episode: int,
         replay_buffer_size: int,  # replay buffer max buffer size
         replay_batch_size: int,  # replay buffer training sample
         lr: float,
@@ -697,32 +728,31 @@ class Agent:
 
         # define critic modules
         self.critic_optim = CriticOptim(policy, time_horizon)
-        self.critic = [Critic, Critic]
-        self.critic_target = [Critic, Critic]
+        self.critic = [Critic(), Critic()]
+        self.critic_target = [Critic(), Critic()]
 
         # define replay buffer
-        self.memory = ReplayBuffer(replay_buffer_size, replay_batch_size, time_horizon)
+        self.memory = ReplayBuffer(replay_buffer_size, replay_batch_size)
 
         self.total_it = 0
-        self.meta_episode = meta_episode
+        self.meta_episode = replay_batch_size
 
     def next(self):
         """Simulate next action"""
-        if self.total_it % self.meta_episode and self.total_it > 0:
-            try:
-                self.train()
-            except:
-                # not enough memory.
-                pass
-
         reward, x, u, h_next = self.actor.forward()  # gather next step data
 
         self.memory.add([reward, x, u, h_next])  # add to memory
 
         self.total_it += 1
 
+        if self.total_it > 0 and self.total_it % self.meta_episode == 0:
+            self.train()
+
     def train(self):
         """Trains actor and critic model"""
+        if len(self.memory) < self.memory.batch_size:
+            return
+
         (
             paramerers_1,
             paramerers_2,
@@ -747,7 +777,7 @@ class Agent:
         self.critic_optim.backward(
             critic_data1,
             critic_data2,
-            self.actor_target.params,
+            self.actor_target.get_params(),
             self.critic,
             self.critic_target,
         )
@@ -758,28 +788,80 @@ class Agent:
 
     def actor_update(self, data):
         """Perform actor update using meta-episode `data`"""
-        self.actor.backward(data)  # local actor update
-        self.actor_target.backward(data, self.actor)  # target actor update
+        self.actor.backward(
+            data, self.critic[0]
+        )  # local actor update -- supply local critic 1
+        self.actor_target.target_update(self.actor.get_params())  # target actor update
 
 
 if __name__ == "__main__":
+    # parameters
     time_horizon = 10
-    epochs = 50
-    batch_size = 10
-    replay_batch_size = 5  # training sample size
-    replay_buffer_size = 100  # max memory size
-    lr = 0.05
-    meta_episode = 2  # train after every 2 episodes
+    epochs = 50  # number of episodes to run for
+    cost_batch_size = 1  # batch size for cost calculation
+    replay_buffer_size = 10  # max memory size
+    replay_batch_size = 1  # training sample size -- train every `meta_episode`
+    lr = 0.05  # adam learning rate
 
     agent = Agent(
         policy,
         time_horizon,
-        batch_size,
-        meta_episode,
-        replay_batch_size,
+        cost_batch_size,
         replay_buffer_size,
+        replay_batch_size,
         lr,
     )
 
-    for i in tqdm(range(epochs)):
+    # get baseline cost
+    P_sqrt_baseline = torch.eye(n, dtype=torch.double)
+    q_baseline = -h_max * torch.ones(n, 1, dtype=torch.double)
+
+    baseline_params = [P_sqrt_baseline, q_baseline]
+
+    cost, _, _ = monte_carlo(
+        policy,
+        baseline_params,
+        time_horizon,
+        batch_size=1,
+        trials=10,
+        seed=0,
+    )
+    baseline_cost = np.mean(cost)
+    print("Baseline cost: ", round(baseline_cost, 3))
+
+    # perform training
+    print("Training...")
+
+    costs = []
+    pbar = tqdm(range(epochs))
+
+    for i in pbar:
+
+        torch.manual_seed(i)
+
         agent.next()
+        cost, _, _ = monte_carlo(
+            agent.actor.policy,
+            agent.actor.get_params(),
+            time_horizon,
+            batch_size=1,
+            trials=10,
+            seed=0,
+        )
+        costs.append(np.mean(cost))
+
+        # update progress bar
+        pbar.set_description("cost: " + str(round(costs[-1], 3)))
+
+    print("Final cost: ", round(costs[-1], 3))
+
+    improvement = 100 * np.abs(costs[-1] - baseline_cost) / np.abs(baseline_cost)
+    print("Performance improvement: ", round(improvement, 3))
+
+    # plot cost
+    plt.plot(costs, c="k", label="Loss")
+    plt.xlabel("iteration")
+    plt.ylabel("cost")
+    plt.tight_layout()
+    plt.savefig("iAC_supply_chain_training.pdf")
+    plt.show()
