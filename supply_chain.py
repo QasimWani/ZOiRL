@@ -364,9 +364,11 @@ class Actor:
         self.batch_size = batch_size
         self.rho = rho
 
-        self.params_progression = [deepcopy(self.params)]
-
         self.optim = torch.optim.Adam(self.params, lr=lr)
+
+        # logs
+        self.params_progression = [deepcopy(self.params)]
+        self.loss_progression = []
 
     def get_params(self):
         return [p.clone().detach() for p in self.params]
@@ -438,11 +440,19 @@ class Actor:
                 ) / (self.time_horizon * m)
 
         # aggregate loss across episodes
+        # sum of square of parameters
+        # _sum = sum([torch.square(p.sum()) for p in self.params])
+        # cost = cost - torch.clip(_sum, -1, 1)
         cost.backward()
+
+        # clip gradients
+        torch.nn.utils.clip_grad_norm_(self.params, 1.0)
+
         self.optim.step()
 
-        # progression of parameters
+        # progression of parameters and loss
         self.params_progression.append(self.params)
+        self.loss_progression.append(cost.item())
 
     def target_update(self, params: list):
         """Update target actor zeta params using zetas from local actor"""
@@ -456,9 +466,9 @@ class Critic:
         self.rho = rho
 
         # define coefficients to learn
-        self.alpha_stage_cost = -1.0
-        self.alpha_next_stage_cost = -1.0
-        self.alpha_bias = -1.0
+        self.alpha_stage_cost = 1.0
+        self.alpha_next_stage_cost = 1.0
+        self.alpha_bias = 1.0
 
     def get_alphas(self):
         """Returns alpha coef for critic optimization model"""
@@ -797,11 +807,11 @@ class Agent:
 if __name__ == "__main__":
     # parameters
     time_horizon = 10
-    epochs = 50  # number of episodes to run for
+    epochs = 500  # number of episodes to run for
     cost_batch_size = 1  # batch size for cost calculation
     replay_buffer_size = 10  # max memory size
     replay_batch_size = 1  # training sample size -- train every `meta_episode`
-    lr = 0.05  # adam learning rate
+    lr = 0.01  # adam learning rate
 
     agent = Agent(
         policy,
@@ -851,12 +861,19 @@ if __name__ == "__main__":
         costs.append(np.mean(cost))
 
         # update progress bar
-        pbar.set_description("cost: " + str(round(costs[-1], 3)))
+        txt = (
+            "cost: "
+            + str(round(costs[-1], 3))
+            + " | "
+            + "model cost: "
+            + str(round(agent.actor.loss_progression[-1], 3))
+        )
+        pbar.set_description(txt)
 
     print("Final cost: ", round(costs[-1], 3))
 
     improvement = 100 * np.abs(costs[-1] - baseline_cost) / np.abs(baseline_cost)
-    print("Performance improvement: ", round(improvement, 3))
+    print("Performance improvement: %.2f %% over baseline cost" % improvement)
 
     # plot cost
     plt.plot(costs, c="k", label="Loss")
@@ -864,4 +881,12 @@ if __name__ == "__main__":
     plt.ylabel("cost")
     plt.tight_layout()
     plt.savefig("iAC_supply_chain_training.pdf")
+    plt.show()
+
+    # plot E2E costs
+    plt.plot(agent.actor.loss_progression, c="k", label="Loss")
+    plt.xlabel("iteration")
+    plt.ylabel("model cost")
+    plt.tight_layout()
+    plt.savefig("iAC_supply_chain_model_costs.pdf")
     plt.show()
