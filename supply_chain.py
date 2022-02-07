@@ -424,7 +424,7 @@ class Actor:
                 h, p, d = x[:n], x[n : n + k], x[n + k :]
 
                 # Cvxpy Layer
-                stage_cost = (
+                _stage_cost = (
                     critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
                 ).value.item()
 
@@ -436,7 +436,7 @@ class Actor:
 
                 # update cost
                 cost = cost + (
-                    -stage_cost - next_stage_cost - torch.tensor(critic.alpha_bias)
+                    -_stage_cost - next_stage_cost - torch.tensor(critic.alpha_bias)
                 ) / (self.time_horizon * m)
 
         # aggregate loss across episodes
@@ -446,12 +446,12 @@ class Actor:
         cost.backward()
 
         # clip gradients
-        torch.nn.utils.clip_grad_norm_(self.params, 1.0)
+        # torch.nn.utils.clip_grad_norm_(self.params, 1.0)
 
         self.optim.step()
 
         # progression of parameters and loss
-        self.params_progression.append(self.params)
+        self.params_progression.append(deepcopy(self.params))
         self.loss_progression.append(cost.item())
 
     def target_update(self, params: list):
@@ -632,6 +632,10 @@ class CriticOptim:
         """Computes L2 optimization for critic alphas"""
         critic_1, critic_2 = critic  # unpack critics
 
+        critic_of_choice = (
+            critic_2 if is_random else critic_1
+        )  # used in L2 Optimization
+
         m = len(batch_parameters1)  # number of episodes
 
         # define optimization model
@@ -648,8 +652,10 @@ class CriticOptim:
             is_random,
         )
 
-        # define cost
+        # define cost and constraints
         costs = []
+        constraints = []
+
         for i in range(m):
             costs.append(
                 self.rho
@@ -664,18 +670,30 @@ class CriticOptim:
                     )
                     + (1 - self.rho)
                     * (
-                        cp.square(alpha_stage_cost)
-                        + cp.square(alpha_next_stage_cost)
-                        + cp.square(alpha_bias)
+                        cp.square(alpha_stage_cost - critic_of_choice.alpha_stage_cost)
+                        + cp.square(
+                            alpha_next_stage_cost
+                            - critic_of_choice.alpha_next_stage_cost
+                        )
+                        + cp.square(alpha_bias - critic_of_choice.alpha_bias)
                     )
                 )
+            )
+
+            constraints.append(
+                -(
+                    alpha_stage_cost * sc[i]
+                    + alpha_next_stage_cost * nsc[i]
+                    + alpha_bias
+                )
+                <= 0
             )
 
         # define objective
         objective = cp.Minimize(cp.sum(costs))
 
         # define problem
-        prob = cp.Problem(objective)
+        prob = cp.Problem(objective, constraints)
 
         # solve problem
         solution = prob.solve(solver=cp.SCS, verbose=False)
@@ -807,11 +825,11 @@ class Agent:
 if __name__ == "__main__":
     # parameters
     time_horizon = 10
-    epochs = 500  # number of episodes to run for
+    epochs = 50  # number of episodes to run for
     cost_batch_size = 1  # batch size for cost calculation
     replay_buffer_size = 10  # max memory size
     replay_batch_size = 1  # training sample size -- train every `meta_episode`
-    lr = 0.01  # adam learning rate
+    lr = 0.05  # adam learning rate
 
     agent = Agent(
         policy,
@@ -876,7 +894,7 @@ if __name__ == "__main__":
     print("Performance improvement: %.2f %% over baseline cost" % improvement)
 
     # plot cost
-    plt.plot(costs, c="k", label="Loss")
+    plt.plot([baseline_cost] + costs, c="k", label="Loss")
     plt.xlabel("iteration")
     plt.ylabel("cost")
     plt.tight_layout()
