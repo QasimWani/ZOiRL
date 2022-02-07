@@ -1,6 +1,7 @@
 # solving supply chain problem using Actor Critic
 from collections import deque
 from copy import deepcopy
+from operator import is_
 import torch
 import cvxpy as cp
 import numpy as np
@@ -260,7 +261,7 @@ def get_baseline_params():
     torch.manual_seed(0)
     P_sqrt_baseline = torch.eye(n, dtype=torch.double)
     q_baseline = -h_max * torch.ones(n, 1, dtype=torch.double)
-    return [P_sqrt_baseline + torch.rand(n), q_baseline + torch.rand(1)]
+    return [P_sqrt_baseline, q_baseline]
 
 
 ### utils
@@ -368,6 +369,7 @@ class Actor:
 
         # logs
         self.params_progression = [deepcopy(self.params)]
+        self.grad_progression = []
         self.loss_progression = []
 
     def get_params(self):
@@ -385,9 +387,9 @@ class Actor:
             )
         # format data
         rewards = torch.tensor(rewards).double()
-        x = torch.stack(x).squeeze(1)
-        u = torch.stack(u).squeeze(1)
-        h_next = torch.stack(h_next).squeeze(1)
+        x = torch.stack(x).double()
+        u = torch.stack(u).double()
+        h_next = torch.stack(h_next).double()
 
         return rewards, x, u, h_next
 
@@ -412,46 +414,41 @@ class Actor:
 
                 # assert P_sqrt.requires_grad, "P_sqrt requires grad"
                 # assert q.requires_grad, "q requires grad"
-
                 P_sqrt.requires_grad = True
                 q.requires_grad = True
 
                 # unroll parameters based on timestep j
-                x = X[j]
-                u = U[j]
-                h_next = H_NEXT[j]
+                x = X[j].mean(0)
+                u = U[j].mean(0)
+                h_next = H_NEXT[j].mean(0)
 
-                h, p, d = x[:n], x[n : n + k], x[n + k :]
+                # h, p, d = x[:n], x[n : n + k], x[n + k :]
 
                 # Cvxpy Layer
-                _stage_cost = (
-                    critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
-                ).value.item()
+                # _stage_cost = (cp.vstack([p, tau, -r]).T @ u).value.item()
 
-                next_stage_cost = (
-                    torch.tensor(critic.alpha_next_stage_cost)
-                    * torch.sum((P_sqrt @ h_next) ** 2)
-                    + q.T @ h_next
-                )
+                _next_stage_1_cost = torch.sum(torch.square(P_sqrt @ h_next))
+                _next_stage_2_cost = q.T @ h_next
 
                 # update cost
                 cost = cost + (
-                    -_stage_cost - next_stage_cost - torch.tensor(critic.alpha_bias)
+                    # -critic.alpha_stage_cost * _stage_cost
+                    -torch.tensor(critic.alpha_next_stage_1_cost) * _next_stage_1_cost
+                    - torch.tensor(critic.alpha_next_stage_2_cost) * _next_stage_2_cost
+                    - torch.tensor(critic.alpha_bias)
                 ) / (self.time_horizon * m)
 
         # aggregate loss across episodes
-        # sum of square of parameters
-        # _sum = sum([torch.square(p.sum()) for p in self.params])
-        # cost = cost - torch.clip(_sum, -1, 1)
         cost.backward()
 
         # clip gradients
-        # torch.nn.utils.clip_grad_norm_(self.params, 1.0)
+        # torch.nn.utils.clip_grad_norm_([P_sqrt, q], 1.0)
 
         self.optim.step()
 
-        # progression of parameters and loss
+        # log progression
         self.params_progression.append(deepcopy(self.params))
+        self.grad_progression.append([p.grad.clone().detach() for p in self.params])
         self.loss_progression.append(cost.item())
 
     def target_update(self, params: list):
@@ -466,17 +463,24 @@ class Critic:
         self.rho = rho
 
         # define coefficients to learn
-        self.alpha_stage_cost = 1.0
-        self.alpha_next_stage_cost = 1.0
-        self.alpha_bias = 1.0
+        # self.alpha_stage_cost = 1
+        self.alpha_next_stage_1_cost = 1
+        self.alpha_next_stage_2_cost = 1
+        self.alpha_bias = 1
 
     def get_alphas(self):
         """Returns alpha coef for critic optimization model"""
-        return [self.alpha_stage_cost, self.alpha_next_stage_cost, self.alpha_bias]
+        return [
+            # self.alpha_stage_cost,
+            self.alpha_next_stage_1_cost,
+            self.alpha_next_stage_2_cost,
+            self.alpha_bias,
+        ]
 
-    def set_alphas(self, sc, nsc, b):
-        self.alpha_stage_cost = sc
-        self.alpha_next_stage_cost = nsc
+    def set_alphas(self, ns1c, ns2c, b):
+        # self.alpha_stage_cost = sc
+        self.alpha_next_stage_1_cost = ns1c
+        self.alpha_next_stage_2_cost = ns2c
         self.alpha_bias = b
 
     def target_update(self, alphas: list):
@@ -486,13 +490,14 @@ class Critic:
         ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas)}"
 
         ### main target update -- alphas_new comes from LS optim sol.
-        sc, nsc, b = self.get_alphas()  # stage cost, next stage cost, bias
-        alpha_sc = self.rho * sc + (1 - self.rho) * alphas[0]
-        alpha_nsc = self.rho * nsc + (1 - self.rho) * alphas[1]
+        ns1c, ns2c, b = self.get_alphas()  # stage cost, next stage costs, bias
+        # alpha_sc = self.rho * sc + (1 - self.rho) * alphas[0]
+        alpha_ns1c = self.rho * ns1c + (1 - self.rho) * alphas[0]
+        alpha_ns2c = self.rho * ns2c + (1 - self.rho) * alphas[1]
         alpha_b = self.rho * b + (1 - self.rho) * alphas[2]
 
         # update target critic alphas
-        self.set_alphas(alpha_sc, alpha_nsc, alpha_b)
+        self.set_alphas(alpha_ns1c, alpha_ns2c, alpha_b)
 
 
 class CriticOptim:
@@ -503,7 +508,7 @@ class CriticOptim:
         policy: CvxpyLayer,
         time_horizon: int,
         lambda_: float = 0.9,
-        rho: float = 0.8,
+        rho: float = 0.5,
     ) -> None:
         self.policy = policy
 
@@ -527,27 +532,25 @@ class CriticOptim:
 
         # unwrap `data` based on `timestep`
         reward = reward[timestep]
-        x = x[timestep]
-        u = u[timestep]
-        h_next = h_next[timestep]
-
-        h, p, d = x[:n], x[n : n + k], x[n + k :]
+        x = x[timestep].mean(0)
+        u = u[timestep].mean(0)
+        h_next = h_next[timestep].mean(0)
+        # h, p, d = x[:n], x[n : n + k], x[n + k :]
 
         # Cvxpy Layer
 
-        stage_cost = (
-            critic.alpha_stage_cost * cp.vstack([p, tau, -r]).T @ u
-        ).value.item()
+        # stage_cost = (cp.vstack([p, tau, -r]).T @ u).value.item()
 
-        next_stage_cost = (
-            critic.alpha_next_stage_cost * cp.sum_squares(P_sqrt @ h_next)
-            + q.T @ h_next
-        ).value.item()
+        next_stage_1_cost = (cp.sum_squares(P_sqrt @ h_next)).value.item()
+        next_stage_2_cost = q.T @ h_next
 
-        Q_value = -stage_cost - next_stage_cost - critic.alpha_bias
-        self.debug = stage_cost, next_stage_cost, Q_value
-
-        return Q_value, reward, stage_cost, next_stage_cost
+        Q_value = (
+            # -critic.alpha_stage_cost * stage_cost
+            -critic.alpha_next_stage_1_cost * next_stage_1_cost
+            - critic.alpha_next_stage_2_cost * next_stage_2_cost
+            - critic.alpha_bias
+        )
+        return Q_value, reward, next_stage_1_cost, next_stage_2_cost
 
     def obtain_target_Q(
         self,
@@ -569,7 +572,6 @@ class CriticOptim:
         )
 
         is_terminal = int(timestep + 1 == self.time_horizon)
-
         if is_random:  # critic 2
             return costs2, r2 + self.lambda_ * (1 - is_terminal) * min(Q1, Q2)  # y_r
 
@@ -589,8 +591,9 @@ class CriticOptim:
             batch_2_parameters
         ), "Data must be same length!"
         y_values = []
-        stage_costs = []
-        next_stage_costs = []
+        # stage_costs = []
+        next_stage_1_costs = []
+        next_stage_2_costs = []
 
         m, n = (
             len(batch_1_parameters),
@@ -613,12 +616,14 @@ class CriticOptim:
 
                 # append data
                 y_values.append(y_r)
-                stage_costs.append(costs[0])
-                next_stage_costs.append(costs[1])
+                # stage_costs.append(costs[0])
+                next_stage_1_costs.append(costs[0])
+                next_stage_2_costs.append(costs[1])
         return (
             np.reshape(y_values, (m, n)),
-            np.reshape(stage_costs, (m, n)),
-            np.reshape(next_stage_costs, (m, n)),
+            # np.reshape(stage_costs, (m, n)),
+            np.reshape(next_stage_1_costs, (m, n)),
+            np.reshape(next_stage_2_costs, (m, n)),
         )
 
     def L2_optimization(
@@ -632,18 +637,15 @@ class CriticOptim:
         """Computes L2 optimization for critic alphas"""
         critic_1, critic_2 = critic  # unpack critics
 
-        critic_of_choice = (
-            critic_2 if is_random else critic_1
-        )  # used in L2 Optimization
-
         m = len(batch_parameters1)  # number of episodes
 
         # define optimization model
-        alpha_stage_cost = cp.Variable()
-        alpha_next_stage_cost = cp.Variable()
+        # alpha_stage_cost = cp.Variable()
+        alpha_next_stage_1_cost = cp.Variable()
+        alpha_next_stage_2_cost = cp.Variable()
         alpha_bias = cp.Variable()
 
-        y, sc, nsc = self.gather_target_Q(
+        y, ns1c, ns2c = self.gather_target_Q(
             batch_parameters1,
             batch_parameters2,
             critic_1,
@@ -661,33 +663,30 @@ class CriticOptim:
                 self.rho
                 * cp.sum(
                     cp.square(
-                        -(
-                            alpha_stage_cost * sc[i]
-                            + alpha_next_stage_cost * nsc[i]
-                            + alpha_bias
-                        )
+                        # -alpha_stage_cost * sc[i]
+                        -alpha_next_stage_1_cost * ns1c[i]
+                        - alpha_next_stage_2_cost * ns2c[i]
+                        - alpha_bias
                         - y[i]
                     )
                     + (1 - self.rho)
                     * (
-                        cp.square(alpha_stage_cost - critic_of_choice.alpha_stage_cost)
-                        + cp.square(
-                            alpha_next_stage_cost
-                            - critic_of_choice.alpha_next_stage_cost
-                        )
-                        + cp.square(alpha_bias - critic_of_choice.alpha_bias)
+                        # cp.square(alpha_stage_cost)
+                        cp.square(alpha_next_stage_1_cost)
+                        + cp.square(alpha_next_stage_2_cost)
+                        + cp.square(alpha_bias)
                     )
                 )
             )
 
-            constraints.append(
-                -(
-                    alpha_stage_cost * sc[i]
-                    + alpha_next_stage_cost * nsc[i]
-                    + alpha_bias
-                )
-                <= 0
-            )
+            # constraints.append(
+            #     -(
+            #         alpha_stage_cost * sc[i]
+            #         + alpha_next_stage_cost * nsc[i]
+            #         + alpha_bias
+            #     )
+            #     <= 0
+            # )
 
         # define objective
         objective = cp.Minimize(cp.sum(costs))
@@ -703,7 +702,12 @@ class CriticOptim:
         ), "Unbounded solution/primal infeasable"
 
         # return new parameters
-        return alpha_stage_cost.value, alpha_next_stage_cost.value, alpha_bias.value
+        return (
+            # alpha_stage_cost.value,
+            alpha_next_stage_1_cost.value,
+            alpha_next_stage_2_cost.value,
+            alpha_bias.value,
+        )
 
     def backward(
         self,
@@ -727,12 +731,14 @@ class CriticOptim:
         )
 
         # update alphas for local
-        critic_local_1.alpha_stage_cost = local_1_solution[0]
-        critic_local_1.alpha_next_stage_cost = local_1_solution[1]
+        # critic_local_1.alpha_stage_cost = local_1_solution[0]
+        critic_local_1.alpha_next_stage_1_cost = local_1_solution[0]
+        critic_local_1.alpha_next_stage_2_cost = local_1_solution[1]
         critic_local_1.alpha_bias = local_1_solution[2]
 
-        critic_local_2.alpha_stage_cost = local_2_solution[0]
-        critic_local_2.alpha_next_stage_cost = local_2_solution[1]
+        # critic_local_2.alpha_stage_cost = local_2_solution[0]
+        critic_local_2.alpha_next_stage_1_cost = local_2_solution[0]
+        critic_local_2.alpha_next_stage_2_cost = local_2_solution[1]
         critic_local_2.alpha_bias = local_2_solution[2]
 
 
@@ -855,7 +861,7 @@ if __name__ == "__main__":
         seed=0,
     )
     baseline_cost = np.mean(cost)
-    print("Baseline cost: ", round(baseline_cost, 3))
+    print("Baseline cost: ", round(baseline_cost, 5))
 
     # perform training
     print("Training...")
@@ -881,14 +887,14 @@ if __name__ == "__main__":
         # update progress bar
         txt = (
             "cost: "
-            + str(round(costs[-1], 3))
+            + str(round(costs[-1], 5))
             + " | "
             + "model cost: "
-            + str(round(agent.actor.loss_progression[-1], 3))
+            + str(round(agent.actor.loss_progression[-1], 5))
         )
         pbar.set_description(txt)
 
-    print("Final cost: ", round(costs[-1], 3))
+    print("Final cost: ", round(costs[-1], 5))
 
     improvement = 100 * np.abs(costs[-1] - baseline_cost) / np.abs(baseline_cost)
     print("Performance improvement: %.2f %% over baseline cost" % improvement)
