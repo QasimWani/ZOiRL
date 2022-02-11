@@ -687,27 +687,40 @@ class Optim:
         critic_target_1: Critic,
         critic_target_2: Critic,
         t: int,
-        parameters: dict,
-        rewards: dict,
+        parameters: dict,  # both batch_1 and batch_2
+        rewards: dict,  # both batch_1 and batch_2
         zeta_target: dict,
         building_id: int,
         debug: bool = False,
     ):
         """Computes min Q"""
         # shared zeta-target across both target critic
+        parameters_1, parameters_2 = parameters
+        rewards_1, rewards_2 = rewards
+
         Q1 = critic_target_1.forward(
-            t, parameters, rewards, zeta_target, building_id, debug
+            t, parameters_1, rewards_1, zeta_target, building_id, debug
         )
         Q2 = critic_target_2.forward(
-            t, parameters, rewards, zeta_target, building_id, debug
+            t, parameters_2, rewards_2, zeta_target, building_id, debug
         )
 
-        # TEMP
-        return rewards["reward"][t, building_id] + critic_target_1.lambda_ * (
-            1 - int(t == 23)
-        ) * min(Q1, Q2)
-        # TEMP
-        return min(Q1, Q2)  # y_r
+        if min(Q1, Q2) == Q1:  # sequential choice
+            return (
+                rewards_1["reward"][t, building_id]
+                + critic_target_1.lambda_ * (1 - int(t == 23)) * Q1
+            )
+
+        return (
+            rewards_2["reward"][t, building_id]
+            + critic_target_2.lambda_ * (1 - int(t == 23)) * Q2
+        )
+
+        # return rewards["reward"][t, building_id] + critic_target_1.lambda_ * (
+        #     1 - int(t == 23)
+        # ) * min(Q1, Q2)
+        # # TEMP
+        # return min(Q1, Q2)  # y_r
 
     def log_L2_optimization_scores(self):
         """Records MSE from L2 optimization"""
@@ -715,10 +728,11 @@ class Optim:
 
     def least_absolute_optimization(
         self,
-        parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates (contains params + rewards)
+        parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates (contains params + rewards) -- batch_params_1, batch_params_2
         zeta_target: dict,
         building_id: int,
         critic_target: list,
+        is_random: bool,  # true indicates shuffled data i.e. critic_target_2
         debug: bool = False,
     ):
         """Define least-absolute optimization for generating optimal values for alpha_ramp,peak1/2."""
@@ -729,9 +743,18 @@ class Optim:
         clipped_values = []  # length will be MINI_BATCH * 24. reshapes it to per day
         data = defaultdict(list)  # E_grid, E_gridpkhist, E_grid_prevhour over #days
 
-        for day_params, day_rewards in parameters:
+        parameters_1, parameters_2 = parameters
+        NUM_DAYS = len(parameters_1)  # meta-episode duration
+
+        for i in range(NUM_DAYS):
+            day_params_1, day_rewards_1 = parameters_1[i]
+            day_params_2, day_rewards_2 = parameters_2[i]
+
             # append daily data
-            data["E_grid"].append(day_params["E_grid"][:, building_id])
+            if is_random:
+                data["E_grid"].append(day_params_2["E_grid"][:, building_id])
+            else:
+                data["E_grid"].append(day_params_1["E_grid"][:, building_id])
 
             # clear Q-buffer at each day
             critic_target_1.Q_value = [None] * 24
@@ -744,25 +767,33 @@ class Optim:
                     critic_target_1,
                     critic_target_2,
                     r,
-                    day_params,
-                    day_rewards,
+                    (day_params_1, day_params_2),
+                    (day_rewards_1, day_rewards_2),
                     zeta_target,
                     building_id,
                     debug,
                 )
 
-                data["E_grid_prevhour"].append(
-                    day_params["E_grid_prevhour"][r, building_id]
-                )
+                if is_random:
+                    data["E_grid_prevhour"].append(
+                        day_params_2["E_grid_prevhour"][r, building_id]
+                    )
+                    data["E_grid_pkhist"].append(
+                        max(0, day_params_2["E_grid_prevhour"][r, building_id])
+                        if r == 0
+                        else np.max([0, *day_params_2["E_grid"][:r, building_id]])
+                    )  # pkhist at 0th hour is 0.
+                else:
+                    data["E_grid_prevhour"].append(
+                        day_params_1["E_grid_prevhour"][r, building_id]
+                    )
+                    data["E_grid_pkhist"].append(
+                        max(0, day_params_1["E_grid_prevhour"][r, building_id])
+                        if r == 0
+                        else np.max([0, *day_params_1["E_grid"][:r, building_id]])
+                    )  # pkhist at 0th hour is 0.
 
-                data["E_grid_pkhist"].append(
-                    max(0, day_params["E_grid_prevhour"][r, building_id])
-                    if r == 0
-                    else np.max([0, *day_params["E_grid"][:r, building_id]])
-                )  # pkhist at 0th hour is 0.
                 clipped_values.append(y_r)
-
-        NUM_DAYS = len(parameters)
 
         # convert to ndarray
         clipped_values = np.array(clipped_values, dtype=float).reshape(
@@ -929,11 +960,21 @@ class Optim:
         critic_local_1, critic_local_2 = critic_local
         # Compute L2 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
         local_1_solution = self.least_absolute_optimization(
-            batch_parameters_1, zeta_target, building_id, critic_target, debug
+            (batch_parameters_1, batch_parameters_2),
+            zeta_target,
+            building_id,
+            critic_target,
+            False,
+            debug,
         )
 
         local_2_solution = self.least_absolute_optimization(
-            batch_parameters_2, zeta_target, building_id, critic_target, debug
+            (batch_parameters_2, batch_parameters_1),
+            zeta_target,
+            building_id,
+            critic_target,
+            True,
+            debug,
         )
         # update alphas for local
         critic_local_1.alpha_ramp[building_id] = local_1_solution["ramp"]
