@@ -33,11 +33,11 @@ class Actor:
         zeta_keys = set(
             [
                 "p_ele",
-                # "eta_ehH",
-                # "eta_bat",
-                # "c_bat_end",
-                # "eta_Hsto",
-                # "eta_Csto",
+                "eta_ehH",
+                "eta_bat",
+                "c_bat_end",
+                "eta_Hsto",
+                "eta_Csto",
             ]
         )
 
@@ -57,10 +57,13 @@ class Actor:
         a, b, c = RBC(num_actions).load_day_actions()
         # a, b, c = np.zeros((3, self.num_buildings, 24))
         self.rbc_actions = {"action_C": a, "action_H": b, "action_bat": c}
+
         # Logger
         self._grads = [
             defaultdict(list) for _ in range(self.num_buildings)
         ]  # zeta grads over time
+
+        self._losses = defaultdict(list)  # zeta losses over time
 
     def initialize_zeta(
         self,
@@ -629,18 +632,18 @@ class Actor:
     ):
         """Sets values for zeta"""
         # get Zeta
-        # (p_ele, eta_bat, eta_Hsto, eta_Csto, eta_ehH, c_bat_end) = zeta
-        p_ele = zeta[0]
+        (p_ele, eta_bat, eta_Hsto, eta_Csto, eta_ehH, c_bat_end) = zeta
+        # p_ele = zeta[0]
 
         # dimensions: 24
         self.zeta["p_ele"][:, building_id] = p_ele
-        # self.zeta["eta_bat"][:, building_id] = eta_bat
-        # self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
-        # self.zeta["eta_Csto"][:, building_id] = eta_Csto
+        self.zeta["eta_bat"][:, building_id] = eta_bat
+        self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
+        self.zeta["eta_Csto"][:, building_id] = eta_Csto
 
-        # # dimensions: 1
-        # self.zeta["eta_ehH"][building_id] = eta_ehH
-        # self.zeta["c_bat_end"][building_id] = c_bat_end
+        # dimensions: 1
+        self.zeta["eta_ehH"][building_id] = eta_ehH
+        self.zeta["c_bat_end"][building_id] = c_bat_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
@@ -691,7 +694,6 @@ class Actor:
         self, t: int, parameters: dict, critic: Critic, building_id: int
     ):
         """Computes dQ/da, where a is the set of actions for building `building_id` at timestep `t`"""
-
         # set all params except for actions as constants (zeroes)
         # for k, v in parameters.items():
         #     if "action" in k:
@@ -820,7 +822,7 @@ class Actor:
         dq_da["eta_ehH_grad"] = eta_ehH_grad
         dq_da["c_bat_end_grad"] = c_bat_end_grad
 
-        return dq_da
+        return reward_warping_loss.item(), dq_da
 
     def gradient_zeta(self, t: int, parameters: dict, building_id: int):
         """
@@ -874,8 +876,10 @@ class Actor:
         • dQ/da -> set all params except for actions as constants.
         • da/dzeta -> actor optimization (forward pass).
         """
-        dq_da = self.gradient_actions(t, deepcopy(parameters), critic, building_id)
-        return dq_da.values()
+        loss, dq_da = self.gradient_actions(
+            t, deepcopy(parameters), critic, building_id
+        )
+        return [loss, *dq_da.values()]
 
         da_dzeta = self.gradient_zeta(t, deepcopy(parameters), building_id)
 
@@ -909,11 +913,14 @@ class Actor:
         """
 
         parameter_gradients = defaultdict(list)
+        costs = []
 
         for day_param in batch_parameters:
+            daily_cost = 0.0
             for r in range(24):
                 LOG(f"E2E\tBuilding: {building_id}, r: {str(r).zfill(2)}")
                 (
+                    loss,
                     p_ele_grad,
                     eta_bat_grad,
                     eta_Hsto_grad,
@@ -929,6 +936,9 @@ class Actor:
                 parameter_gradients["eta_Csto_grad"].append(eta_Csto_grad)
                 parameter_gradients["eta_ehH_grad"].append(eta_ehH_grad)
                 parameter_gradients["c_bat_end_grad"].append(c_bat_end_grad)
+
+                daily_cost += loss
+            costs.append(daily_cost)
 
         # –––––––––– Compute Average Gradient ––––––––––
 
@@ -965,7 +975,8 @@ class Actor:
         ### –––––––––––––––––––––––––––––– Log gradients ––––––––––––––––––––––––––––––
         for k, v in parameter_gradients.items():
             self._grads[building_id][k].append(v)
-        ### –––––––––––––––––––––––––––––– Log gradients ––––––––––––––––––––––––––––––
+        ### –––––––––––––––––––––––––––––– Log model costs ––––––––––––––––––––––––––––––
+        self._losses[building_id].append(np.mean(costs))
 
         ### Update Parameter using Adam
         NUM_HOURS = len(batch_parameters) * 24
@@ -975,41 +986,41 @@ class Actor:
             self.zeta["p_ele"][:, building_id],
             parameter_gradients["p_ele_grad"],
         )
-        # eta_bat = self.optim[building_id]["eta_bat"].update(
-        #     (t - self.adam_offset) // NUM_HOURS,
-        #     self.zeta["eta_bat"][:, building_id],
-        #     parameter_gradients["eta_bat_grad"],
-        # )
-        # eta_Hsto = self.optim[building_id]["eta_Hsto"].update(
-        #     (t - self.adam_offset) // NUM_HOURS,
-        #     self.zeta["eta_Hsto"][:, building_id],
-        #     parameter_gradients["eta_Hsto_grad"],
-        # )
-        # eta_Csto = self.optim[building_id]["eta_Csto"].update(
-        #     (t - self.adam_offset) // NUM_HOURS,
-        #     self.zeta["eta_Csto"][:, building_id],
-        #     parameter_gradients["eta_Csto_grad"],
-        # )
-        # eta_ehH = self.optim[building_id]["eta_ehH"].update(
-        #     (t - self.adam_offset) // NUM_HOURS,
-        #     self.zeta["eta_ehH"][building_id],
-        #     parameter_gradients["eta_ehH_grad"],
-        # )
-        # c_bat_end = self.optim[building_id]["c_bat_end"].update(
-        #     ((t - self.adam_offset) // NUM_HOURS),
-        #     self.zeta["c_bat_end"][building_id],
-        #     parameter_gradients["c_bat_end_grad"],
-        # )
+        eta_bat = self.optim[building_id]["eta_bat"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_bat"][:, building_id],
+            parameter_gradients["eta_bat_grad"],
+        )
+        eta_Hsto = self.optim[building_id]["eta_Hsto"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_Hsto"][:, building_id],
+            parameter_gradients["eta_Hsto_grad"],
+        )
+        eta_Csto = self.optim[building_id]["eta_Csto"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_Csto"][:, building_id],
+            parameter_gradients["eta_Csto_grad"],
+        )
+        eta_ehH = self.optim[building_id]["eta_ehH"].update(
+            (t - self.adam_offset) // NUM_HOURS,
+            self.zeta["eta_ehH"][building_id],
+            parameter_gradients["eta_ehH_grad"],
+        )
+        c_bat_end = self.optim[building_id]["c_bat_end"].update(
+            ((t - self.adam_offset) // NUM_HOURS),
+            self.zeta["c_bat_end"][building_id],
+            parameter_gradients["c_bat_end_grad"],
+        )
 
         ## Update Zeta
         self.set_zeta(
             (
                 p_ele,
-                # eta_bat,
-                # eta_Hsto,
-                # eta_Csto,
-                # eta_ehH,
-                # c_bat_end,
+                eta_bat,
+                eta_Hsto,
+                eta_Csto,
+                eta_ehH,
+                c_bat_end,
             ),
             building_id,
         )

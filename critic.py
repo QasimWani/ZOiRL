@@ -13,7 +13,7 @@ class Critic:  # decentralized version
         self,
         num_buildings: int,
         num_actions: list,
-        lambda_: float = 0.8,
+        lambda_: float = 0.9,
         rho: float = 0.8,
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
@@ -37,6 +37,11 @@ class Critic:  # decentralized version
         # note that we don't need to creat 9 `Q_value` because we're clearing the data out
         # per building in `least_absolute_optimization` which is called from `Optim.backward()`
         self.Q_value = [None] * 24
+
+        ### RBC deviation
+        a, b, c = RBC(num_actions).load_day_actions()
+        # a, b, c = np.zeros((3, num_buildings, 24))
+        self.rbc_actions = {"action_C": a, "action_H": b, "action_bat": c}
 
     def create_problem(
         self, t: int, parameters: dict, zeta_target: dict, building_id: int
@@ -187,13 +192,21 @@ class Critic:  # decentralized version
 
         ### current actions
         current_action_bat = cp.Parameter(
-            name="current_action_bat", value=parameters["action_bat"][t, building_id]
+            name="current_action_bat",
+            value=parameters["action_bat"][t, building_id]
+            - self.rbc_actions["action_bat"][building_id, t],
         )  # electric battery
         current_action_H = cp.Parameter(
-            name="current_action_H", value=parameters["action_H"][t, building_id]
+            name="current_action_H",
+            value=parameters["action_H"][t, building_id]
+            - self.rbc_actions["action_H"][building_id, t],
         )  # heat storage
         current_action_C = cp.Parameter(
-            name="current_action_C", value=parameters["action_C"][t, building_id]
+            name="current_action_C",
+            value=parameters["action_C"][
+                t, building_id
+            ]  # includes deviation -- hence, subtract rbc_actions
+            - self.rbc_actions["action_C"][building_id, t],
         )  # cooling storage
         ### --- Variables ---
 
@@ -309,14 +322,24 @@ class Critic:  # decentralized version
         # energy balance constraints
         self.constraints.append(
             E_pv + E_grid + E_grid_sell + E_bal_relax
-            == E_ns + E_hpC + E_ehH + action_bat * C_p_bat
+            == E_ns
+            + E_hpC
+            + E_ehH
+            + (action_bat + self.rbc_actions["action_bat"][building_id, T - window :])
+            * C_p_bat
         )  # electricity balance
         self.constraints.append(
-            E_ehH * eta_ehH + H_bal_relax == action_H * C_p_Hsto + H_bd
+            E_ehH * eta_ehH + H_bal_relax
+            == (action_H + self.rbc_actions["action_H"][building_id, T - window :])
+            * C_p_Hsto
+            + H_bd
         )  # heat balance
 
         self.constraints.append(
-            E_hpC * COP_C + C_bal_relax == action_C * C_p_Csto + C_bd
+            E_hpC * COP_C + C_bal_relax
+            == (action_C + self.rbc_actions["action_C"][building_id, T - window :])
+            * C_p_Csto
+            + C_bd
         )  # cooling balance
 
         # heat pump constraints
@@ -329,14 +352,21 @@ class Critic:  # decentralized version
         # electric battery constraints
         self.constraints.append(
             SOC_bat[0]
-            == (1 - C_f_bat) * soc_bat_init + action_bat[0] * eta_bat[0] + SOC_Brelax[0]
+            == (1 - C_f_bat) * soc_bat_init
+            + (action_bat[0] + self.rbc_actions["action_bat"][building_id, T - window])
+            * eta_bat[0]
+            + SOC_Brelax[0]
         )  # initial SOC
         # soc updates
         for i in range(1, window):
             self.constraints.append(
                 SOC_bat[i]
                 == (1 - C_f_bat) * SOC_bat[i - 1]
-                + action_bat[i] * eta_bat[i]
+                + (
+                    action_bat[i]
+                    + self.rbc_actions["action_bat"][building_id, T - window + i]
+                )
+                * eta_bat[i]
                 + SOC_Brelax[i]
             )
         self.constraints.append(
@@ -349,7 +379,8 @@ class Critic:  # decentralized version
         self.constraints.append(
             SOC_H[0]
             == (1 - C_f_Hsto) * soc_Hsto_init
-            + action_H[0] * eta_Hsto[0]
+            + (action_H[0] + self.rbc_actions["action_H"][building_id, T - window])
+            * eta_Hsto[0]
             + SOC_Hrelax[0]
         )  # initial SOC
         # soc updates
@@ -357,7 +388,11 @@ class Critic:  # decentralized version
             self.constraints.append(
                 SOC_H[i]
                 == (1 - C_f_Hsto) * SOC_H[i - 1]
-                + action_H[i] * eta_Hsto[i]
+                + (
+                    action_H[i]
+                    + self.rbc_actions["action_H"][building_id, T - window + i]
+                )
+                * eta_Hsto[i]
                 + SOC_Hrelax[i]
             )
         self.constraints.append(SOC_H >= 0)  # battery SOC bounds
@@ -367,7 +402,8 @@ class Critic:  # decentralized version
         self.constraints.append(
             SOC_C[0]
             == (1 - C_f_Csto) * soc_Csto_init
-            + action_C[0] * eta_Csto[0]
+            + (action_C[0] + self.rbc_actions["action_C"][building_id, T - window])
+            * eta_Csto[0]
             + SOC_Crelax[0]
         )  # initial SOC
         # soc updates
@@ -375,7 +411,11 @@ class Critic:  # decentralized version
             self.constraints.append(
                 SOC_C[i]
                 == (1 - C_f_Csto) * SOC_C[i - 1]
-                + action_C[i] * eta_Csto[i]
+                + (
+                    action_C[i]
+                    + self.rbc_actions["action_C"][building_id, T - window + i]
+                )
+                * eta_Csto[i]
                 + SOC_Crelax[i]
             )
         self.constraints.append(SOC_C >= 0)  # battery SOC bounds
@@ -396,16 +436,36 @@ class Critic:  # decentralized version
 
             # heating action
             if key == "action_C":
-                self.constraints.append(action_C <= h)
-                self.constraints.append(action_C >= l)
+                self.constraints.append(
+                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_C + self.rbc_actions["action_C"][building_id, T - window :]
+                    >= l
+                )
             # cooling action
             elif key == "action_H":
-                self.constraints.append(action_H <= h)
-                self.constraints.append(action_H >= l)
+                self.constraints.append(
+                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_H + self.rbc_actions["action_H"][building_id, T - window :]
+                    >= l
+                )
             # Battery action
             elif key == "action_bat":
-                self.constraints.append(action_bat <= h)
-                self.constraints.append(action_bat >= l)
+                self.constraints.append(
+                    action_bat
+                    + self.rbc_actions["action_bat"][building_id, T - window :]
+                    <= h
+                )
+                self.constraints.append(
+                    action_bat
+                    + self.rbc_actions["action_bat"][building_id, T - window :]
+                    >= l
+                )
 
     def get_problem(
         self,
@@ -501,19 +561,22 @@ class Critic:  # decentralized version
         ### current actions
 
         # electric battery
-        problem_parameters["current_action_bat"].value = parameters["action_bat"][
-            t, building_id
-        ]
+        problem_parameters["current_action_bat"].value = (
+            parameters["action_bat"][t, building_id]
+            - self.rbc_actions["action_bat"][building_id, t]
+        )
 
         # heat storage
-        problem_parameters["current_action_H"].value = parameters["action_H"][
-            t, building_id
-        ]
+        problem_parameters["current_action_H"].value = (
+            parameters["action_H"][t, building_id]
+            - self.rbc_actions["action_H"][building_id, t]
+        )
 
         # cooling storage
-        problem_parameters["current_action_C"].value = parameters["action_C"][
-            t, building_id
-        ]
+        problem_parameters["current_action_C"].value = (
+            parameters["action_C"][t, building_id]
+            - self.rbc_actions["action_C"][building_id, t]
+        )
 
         ## Update Parameters
         prob = self.prob[t % 24]
@@ -678,7 +741,7 @@ class Critic:  # decentralized version
 class Optim:
     """Performs Critic Update"""
 
-    def __init__(self, rho=0.9) -> None:
+    def __init__(self, rho=0.5) -> None:
         self.L2_scores = defaultdict(list)  # list of L2 scores over iterations
         self.rho = rho  # regularization term used in L2 optimization
 
@@ -907,6 +970,7 @@ class Optim:
         # # alpha-peak –– OBSERVATION: usually takes the highest variance
         # constraints.append(alpha_peak1 <= high)
         # constraints.append(alpha_peak1 >= low)
+        constraints.append(alpha_elec >= 0)
 
         # Form objective.
         obj = cp.Minimize(cp.sum(cost))

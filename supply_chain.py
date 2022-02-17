@@ -1,16 +1,22 @@
+import warnings
+
+warnings.filterwarnings("ignore")
+
+
 # solving supply chain problem using Actor Critic
 from collections import deque
 from copy import deepcopy
-from operator import is_
 import torch
 import cvxpy as cp
 import numpy as np
+import pandas as pd
 import scipy.sparse as spa
 from cvxpylayers.torch import CvxpyLayer
 import networkx as nx
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import time
+import argparse
 
 """ 
 Actor Critic (AC) structure
@@ -32,8 +38,19 @@ while not done:
 ### utils
 
 # set seeds
-np.random.seed(0)
-torch.manual_seed(0)
+
+# Create the parser
+parser = argparse.ArgumentParser()
+parser.add_argument("--seed", type=int, default=0, help="random seed")
+parser.add_argument("--meta_episode", type=int, default=1, help="meta episode duration")
+parser.add_argument(
+    "--mismatch", type=float, default=0.0, help="parameter mismatch percent"
+)
+args = parser.parse_args()
+
+SEED = args.seed
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 # set seeds
 
 
@@ -207,6 +224,7 @@ def loss(policy, params, time_horizon, batch_size, seed=None):
 def loss_ac(policy, params, time_horizon, batch_size=1, seed=None):
     """Actor Critic loss"""
     P_sqrt, q = params
+
     if seed is not None:
         torch.manual_seed(seed)
 
@@ -259,7 +277,6 @@ def monte_carlo(policy, params, time_horizon, batch_size=1, trials=10, seed=None
 
 
 def get_baseline_params():
-    torch.manual_seed(0)
     P_sqrt_baseline = torch.eye(n, dtype=torch.double)
     q_baseline = -h_max * torch.ones(n, 1, dtype=torch.double)
     return [P_sqrt_baseline, q_baseline]
@@ -376,7 +393,7 @@ class Actor:
     def get_params(self):
         return [p.clone().detach() for p in self.params]
 
-    def forward(self, seed: int = 0):
+    def forward(self, seed: int = SEED):
         """Forward pass for actor module. returns next action"""
         with torch.no_grad():
             rewards, x, u, h_next = loss_ac(
@@ -401,6 +418,10 @@ class Actor:
         1. batch_parameters: list of tuples of (rewards, x, u, h_next) per episode
         2. critic: local Critic - 1
         """
+        noise = lambda input_tensor: input_tensor + args.mismatch * torch.randn_like(
+            input_tensor
+        )
+
         m = len(batch_parameters)  # number of episodes
         self.optim.zero_grad()
 
@@ -411,7 +432,11 @@ class Actor:
 
             for j in range(self.time_horizon):
                 # unload parameters
+
                 P_sqrt, q = self.params
+
+                P_sqrt.data = noise(P_sqrt.data)
+                q.data = noise(q.data)
 
                 # assert P_sqrt.requires_grad, "P_sqrt requires grad"
                 # assert q.requires_grad, "q requires grad"
@@ -446,6 +471,9 @@ class Actor:
         # torch.nn.utils.clip_grad_norm_([P_sqrt, q], 1.0)
 
         self.optim.step()
+
+        self.params[0].data = torch.clamp(self.params[0].data, -5, 5)
+        self.params[1].data = torch.clamp(self.params[1].data, -2, 2)
 
         # log progression
         self.params_progression.append(deepcopy(self.params))
@@ -833,11 +861,13 @@ class Agent:
 if __name__ == "__main__":
     # parameters
     time_horizon = 10
-    epochs = 500  # number of episodes to run for
+    epochs = 200  # number of episodes to run for
     cost_batch_size = 1  # batch size for cost calculation
     replay_buffer_size = 10  # max memory size
-    replay_batch_size = 1  # training sample size -- train every `meta_episode`
-    lr = 0.05  # adam learning rate
+    replay_batch_size = (
+        args.meta_episode
+    )  # training sample size -- train every `meta_episode`
+    lr = 0.01  # adam learning rate
 
     agent = Agent(
         policy,
@@ -860,7 +890,7 @@ if __name__ == "__main__":
         time_horizon,
         batch_size=1,
         trials=10,
-        seed=0,
+        seed=SEED,
     )
     baseline_cost = np.mean(cost)
     print("Baseline cost: ", round(baseline_cost, 5))
@@ -882,37 +912,50 @@ if __name__ == "__main__":
             time_horizon,
             batch_size=1,
             trials=10,
-            seed=0,
+            seed=SEED,
         )
         costs.append(np.mean(cost))
 
         # update progress bar
-        txt = (
-            "cost: "
-            + str(round(costs[-1], 5))
-            + " | "
-            + "model cost: "
-            + str(round(agent.actor.loss_progression[-1], 5))
-        )
-        pbar.set_description(txt)
+        if i >= replay_batch_size:
+            txt = (
+                "cost: "
+                + str(round(costs[-1], 5))
+                + " | "
+                + "model cost: "
+                + str(round(agent.actor.loss_progression[-1], 5))
+            )
+            pbar.set_description(txt)
 
     print("Final cost: ", round(costs[-1], 5))
 
     improvement = 100 * np.abs(costs[-1] - baseline_cost) / np.abs(baseline_cost)
     print("Performance improvement: %.2f %% over baseline cost" % improvement)
 
-    # plot cost
-    plt.plot([baseline_cost] + costs, c="k", label="Loss")
-    plt.xlabel("iteration")
-    plt.ylabel("cost")
-    plt.tight_layout()
-    plt.savefig("iAC_supply_chain_training.pdf")
-    plt.show()
+    # # plot cost
+    # plt.plot([baseline_cost] + costs, c="k", label="Loss")
+    # plt.xlabel("iteration")
+    # plt.ylabel("cost")
+    # plt.tight_layout()
+    # plt.savefig("iAC_supply_chain_training.pdf")
+    # plt.show()
 
-    # plot E2E costs
-    plt.plot(agent.actor.loss_progression, c="k", label="Loss")
-    plt.xlabel("iteration")
-    plt.ylabel("model cost")
-    plt.tight_layout()
-    plt.savefig("iAC_supply_chain_model_costs.pdf")
-    plt.show()
+    # # plot E2E costs
+    # plt.plot(agent.actor.loss_progression, c="k", label="Loss")
+    # plt.xlabel("iteration")
+    # plt.ylabel("model cost")
+    # plt.tight_layout()
+    # plt.savefig("iAC_supply_chain_model_costs.pdf")
+    # plt.show()
+
+    # upload data to csv
+    path = f"experiments/iAC_mismatch_{args.mismatch}.csv"
+
+    try:
+        df = pd.read_csv(path)
+        df.insert(SEED, SEED, [baseline_cost] + costs)
+    except:
+        df = pd.DataFrame([baseline_cost] + costs)
+
+    df.to_csv(path, index=False)
+    print("Next seed number: ", SEED + 1)
