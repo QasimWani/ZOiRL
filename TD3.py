@@ -221,7 +221,7 @@ class TD3(object):
             # add processed day info
             day_params.append(params)
 
-        for id in range(self.buildings):
+        for id in range(self.buildings):  # self.buildings
             # local actor update
             self.actor.backward(self.total_it, self.critic_target[0], day_params, id)
 
@@ -269,14 +269,17 @@ class TD3(object):
 
         if (
             self.total_it % (self.meta_episode * 24) == 0
-            and self.total_it >= self.rbc_threshold + self.meta_episode * 24
+            # and self.total_it >= self.rbc_threshold + self.meta_episode * 24
             and not self._eval
             and self.memory.batch_size <= len(self.memory)
         ):
             start = time.time()
             self.train()
             end = time.time()
-            LOG(f"Time taken for training: {end - start}")
+            LOG(f"Time taken for training: {round(end - start, 2)}")
+            LOG("\nMODEL COSTS:")
+            for bid in range(self.buildings):
+                LOG(f"Building {bid}: {round(self.actor._losses[bid][-1], 3)}")
 
     def reset(self):
         """Checkpoint agent by resetting buffer values and counters."""
@@ -287,6 +290,15 @@ class TD3(object):
         agent._eval = True
         agent._actor_zetas.clear()
         agent._agent_checkpoint.clear()
+
+    def did_i_just_finish_training(self):
+        """Returns true if the previous index was a training index. False otherwise"""
+        return (
+            (self.total_it - 1) % (self.meta_episode * 24) == 0
+            # and (self.total_it - 1) >= self.rbc_threshold + self.meta_episode * 24
+            and not self._eval
+            and self.memory.batch_size <= len(self.memory)
+        )
 
 
 class Agent(TD3):
@@ -299,6 +311,17 @@ class Agent(TD3):
             rbc_threshold=24 * 14,
             agent_checkpoint=kwargs["agent_checkpoint"],
         )
+
+
+class WorkdayAgent:
+    def __init__(self, **kwargs) -> None:
+        self.agents = [Agent(**kwargs), Agent(**kwargs)]
+
+    def get_agent(self, day_type: int) -> Agent:
+        # if day_type is between 2 and 6, return the first agent, else return the second
+        if day_type in range(2, 7):
+            return self.agents[0]
+        return self.agents[1]
 
 
 class PurifiedAgent(TD3):
