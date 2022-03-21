@@ -79,8 +79,10 @@ class reward_function_ma:
 
                 return list(reward_)
 
+            alpha = 5.0
             if self.elec.counter % 24 == 0:  # EOD
                 self.elec.eod_update(electricity_demand)
+                alpha = 0.0
             else:
                 self.elec.daily_update(electricity_demand)
 
@@ -89,9 +91,14 @@ class reward_function_ma:
                 -np.abs(
                     np.array(self.elec.E_grid_prevhour) - np.array(electricity_demand)
                 )
-                - 5 * np.max(self.elec.max_E_grid, axis=0)
+                - alpha * np.square(self.elec.max_E_grid)
             )
+
             return reward_
+
+
+# normalize w.r.t RBC reward
+# generative model on season profile. <-- train iAC on this
 
 
 # Do not use or delete
