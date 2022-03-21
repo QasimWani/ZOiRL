@@ -15,6 +15,8 @@ from critic import Critic, Optim
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
+TEMP_VAR = 9
+
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
 
@@ -28,7 +30,7 @@ class TD3(object):
         num_buildings: int,
         building_info: dict,
         rbc_threshold: int,
-        meta_episode: int = 7,  # after how many days to train Actor-Critic
+        meta_episode: int = 4,  # after how many days to train Actor-Critic
         agent_checkpoint: int = float(
             "inf"
         ),  # after how many hours to checkpoint model for true cost analysis
@@ -155,9 +157,9 @@ class TD3(object):
     def critic_update(self, params_1: list, params_2: list):
         """Master Critic update"""
         # Log critic parameters
-        self._critic_alphas_parameters["1_peak"].append(
-            self.critic_target[0].alpha_peak1
-        )
+        # self._critic_alphas_parameters["1_peak"].append(
+        #     self.critic_target[0].alpha_peak1
+        # )
         self._critic_alphas_parameters["elec"].append(self.critic_target[0].alpha_elec)
         self._critic_alphas_parameters["ramp"].append(self.critic_target[0].alpha_ramp)
 
@@ -184,7 +186,7 @@ class TD3(object):
             day_params_2.append([params_2, r2])
 
         # Local Critic Update
-        for id in range(self.buildings):
+        for id in range(min(self.buildings, TEMP_VAR)):
             # local critic backward pass
             self.critic_optim.backward(
                 day_params_1,
@@ -221,9 +223,9 @@ class TD3(object):
             # add processed day info
             day_params.append(params)
 
-        for id in range(self.buildings):  # self.buildings
+        for id in range(min(self.buildings, TEMP_VAR)):  # self.buildings
             # local actor update
-            self.actor.backward(self.total_it, self.critic_target[0], day_params, id)
+            self.actor.backward(self.total_it, self.critic[0], day_params, id)
 
             # target actor update - moving average
             self.actor_target.target_update(self.actor.get_zeta(), id)
@@ -249,6 +251,8 @@ class TD3(object):
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""
+        assert max(reward) <= 0, f"Reward must be less than 0\n{np.array(reward)}"
+
         # Add checkpoint for cost analysis
         if (
             self.total_it % self.agent_checkpoint == 0
@@ -278,7 +282,7 @@ class TD3(object):
             end = time.time()
             LOG(f"Time taken for training: {round(end - start, 2)}")
             LOG("\nMODEL COSTS:")
-            for bid in range(self.buildings):
+            for bid in range(min(self.buildings, TEMP_VAR)):
                 LOG(f"Building {bid}: {round(self.actor._losses[bid][-1], 3)}")
 
     def reset(self):

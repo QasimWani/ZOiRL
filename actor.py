@@ -17,7 +17,7 @@ class Actor:
         num_actions: list,
         num_buildings: int,
         offset: int,
-        rho: float = 0.8,
+        rho: float = 0.75,  # the higher the value, the more weight is given to the previous state
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.num_actions = num_actions
@@ -565,8 +565,7 @@ class Actor:
 
         except:  # try another solver
             status = self.prob[t].solve(
-                solver="SCS",
-                verbose=debug,  # max_iters=100_000
+                solver="SCS", verbose=debug  # max_iters=1_000_000
             )  # Returns the optimal value.
             self.scs_cnt[building_id] += 1
 
@@ -747,13 +746,14 @@ class Actor:
                     # "verbose": True,
                     "max_iters": 10_000_000,
                     "solve_method": "SCS",
+                    # "eps": 5e-2,
                 },
             )
 
         # Reward Warping function, Critic forward pass - Step 2
         r, p, e = critic.get_alphas()
         alpha_ramp = torch.from_numpy(r).float()
-        alpha_peak1 = torch.from_numpy(p).float()
+        # alpha_peak1 = torch.from_numpy(p).float()
         alpha_elec = torch.from_numpy(e).float()
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour)
@@ -769,9 +769,13 @@ class Actor:
 
         reward_warping_loss = (
             -alpha_ramp[building_id] * ramping_cost
-            - alpha_peak1[building_id] * peak_net_electricity_cost
+            # - alpha_peak1[building_id] * peak_net_electricity_cost
             - torch.sum(alpha_elec[building_id][t:] * E_grid)
         )
+        # make sure that the reward is negative
+        assert (
+            reward_warping_loss.item() <= 1
+        ), f"Loss must be negative, got: {reward_warping_loss.item()}"
         # add virtual electricity cost
 
         # Gradient w.r.t parameters (math: \zeta) - Step 3
