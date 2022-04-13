@@ -15,7 +15,7 @@ from critic import Critic, Optim
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
-TEMP_VAR = 9
+TEMP_VAR = [0, 8]  # 0-based indexing
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
@@ -160,8 +160,8 @@ class TD3(object):
         # self._critic_alphas_parameters["1_peak"].append(
         #     self.critic_target[0].alpha_peak1
         # )
-        self._critic_alphas_parameters["elec"].append(self.critic_target[0].alpha_elec)
-        self._critic_alphas_parameters["ramp"].append(self.critic_target[0].alpha_ramp)
+        # self._critic_alphas_parameters["elec"].append(self.critic_target[0].alpha_elec)
+        # self._critic_alphas_parameters["ramp"].append(self.critic_target[0].alpha_ramp)
 
         # pre-process each days information into numpy array and pass them to critic update
         parameters_1, rewards_1 = params_1
@@ -186,7 +186,7 @@ class TD3(object):
             day_params_2.append([params_2, r2])
 
         # Local Critic Update
-        for id in range(min(self.buildings, TEMP_VAR)):
+        for id in TEMP_VAR:
             # local critic backward pass
             self.critic_optim.backward(
                 day_params_1,
@@ -223,7 +223,7 @@ class TD3(object):
             # add processed day info
             day_params.append(params)
 
-        for id in range(min(self.buildings, TEMP_VAR)):  # self.buildings
+        for id in TEMP_VAR:  # self.buildings
             # local actor update
             self.actor.backward(self.total_it, self.critic[0], day_params, id)
 
@@ -282,7 +282,7 @@ class TD3(object):
             end = time.time()
             LOG(f"Time taken for training: {round(end - start, 2)}")
             LOG("\nMODEL COSTS:")
-            for bid in range(min(self.buildings, TEMP_VAR)):
+            for bid in TEMP_VAR:
                 LOG(f"Building {bid}: {round(self.actor._losses[bid][-1], 3)}")
 
     def reset(self):
