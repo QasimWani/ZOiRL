@@ -3,7 +3,7 @@ from copy import Error, deepcopy
 from critic import Critic
 from logger import LOG
 
-from utils import Adam, RBC
+from utils import Adam, RBC, normalize
 import numpy as np
 import torch
 
@@ -636,13 +636,13 @@ class Actor:
 
         # dimensions: 24
         self.zeta["p_ele"][:, building_id] = p_ele
-        self.zeta["eta_bat"][:, building_id] = eta_bat
-        self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
-        self.zeta["eta_Csto"][:, building_id] = eta_Csto
+        # self.zeta["eta_bat"][:, building_id] = eta_bat
+        # self.zeta["eta_Hsto"][:, building_id] = eta_Hsto
+        # self.zeta["eta_Csto"][:, building_id] = eta_Csto
 
-        # dimensions: 1
-        self.zeta["eta_ehH"][building_id] = eta_ehH
-        self.zeta["c_bat_end"][building_id] = c_bat_end
+        # # dimensions: 1
+        # self.zeta["eta_ehH"][building_id] = eta_ehH
+        # self.zeta["c_bat_end"][building_id] = c_bat_end
 
     def target_update(self, zeta_local: dict, building_id: int):
         """Update rule for Target Actor: zeta_target <-- rho * zeta_target + (1 - rho) * zeta_local"""
@@ -746,15 +746,15 @@ class Actor:
                     # "verbose": True,
                     "max_iters": 10_000_000,
                     "solve_method": "SCS",
-                    # "eps": 5e-2,
+                    "eps": 5e-2,
                 },
             )
 
         # Reward Warping function, Critic forward pass - Step 2
         r, p, e = critic.get_alphas()
         alpha_ramp = torch.from_numpy(r).float()
-        # alpha_peak1 = torch.from_numpy(p).float()
-        alpha_elec = torch.from_numpy(e).float()
+        alpha_peak1 = torch.from_numpy(p).float()
+        # alpha_elec = torch.from_numpy(e).float()
 
         ramping_cost = torch.abs(E_grid[0] - E_grid_prevhour)
         if len(E_grid) > 1:  # not at eod
@@ -769,8 +769,8 @@ class Actor:
 
         reward_warping_loss = (
             -alpha_ramp[building_id] * ramping_cost
-            # - alpha_peak1[building_id] * peak_net_electricity_cost
-            - torch.sum(alpha_elec[building_id][t:] * E_grid)
+            - alpha_peak1[building_id] * peak_net_electricity_cost
+            # - torch.sum(alpha_elec[building_id][t:] * E_grid)
         )
         # make sure that the reward is negative
         assert (

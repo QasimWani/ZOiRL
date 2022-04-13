@@ -1,6 +1,7 @@
 from logger import LOG
 import numpy as np
 import json
+import torch
 from tqdm import tqdm
 
 from collections import defaultdict, deque
@@ -9,7 +10,7 @@ from citylearn import CityLearn  # for RBC
 # source: https://gist.github.com/enochkan/56af870bd19884f189639a0cb3381ff4#file-adam_optim-py
 # > w_0 = adam.update(t,w=w_0, dw=dw)
 class Adam:
-    def __init__(self, eta=0.025, beta1=0.9, beta2=0.999, epsilon=1e-6):
+    def __init__(self, eta=0.05, beta1=0.9, beta2=0.999, epsilon=1e-6):
         self.m_dw, self.v_dw = 0, 0
         self.beta1 = beta1
         self.beta2 = beta2
@@ -36,8 +37,8 @@ class Adam:
         return w
 
 
-BUFFER_SIZE = 4  # number of days in a meta-episode
-MINI_BATCH = 2  # number of days to sample
+BUFFER_SIZE = 7  # number of days in a meta-episode
+MINI_BATCH = 3  # number of days to sample
 
 
 class ReplayBuffer:
@@ -304,3 +305,18 @@ def agent_checkpoint_cost(agents: list, env: CityLearn):
         for k, v in cost.items():
             costs[k].append(v)
     return costs
+
+
+def normalize(input, low=1, high=10):
+    """Normalizes input array between low and high"""
+    # if input is a tensor, convert to numpy array
+    return np.clip(input, low, high)
+    # if isinstance(input, torch.Tensor):
+    #     input = input.detach().numpy()
+    # # min max normalization
+    # new_value = (
+    #     (high - low)
+    #     * (input - np.min(input, 0))
+    #     / (np.max(input, 0) - np.min(input, 0))
+    # )
+    # return new_value + low

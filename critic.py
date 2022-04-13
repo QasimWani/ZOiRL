@@ -13,8 +13,8 @@ class Critic:  # decentralized version
         self,
         num_buildings: int,
         num_actions: list,
-        lambda_: float = 0.9,
-        rho: float = 0.25,  # higher value puts more weight on the previous values
+        lambda_: float = 0.9,  # make it lower for Gt_tn
+        rho: float = 0.75,  # higher value puts more weight on the previous values
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
@@ -26,10 +26,10 @@ class Critic:  # decentralized version
 
         self.is_updated_params = False
         self.alpha_ramp = [1] * num_buildings
-        # self.alpha_peak1 = [1] * num_buildings
-        self.alpha_elec = [
-            [1] * 24 for _ in range(num_buildings)
-        ]  # virtual electricity cost
+        self.alpha_peak1 = [1] * num_buildings
+        # self.alpha_elec = [
+        #     [1] * 24 for _ in range(num_buildings)
+        # ]  # virtual electricity cost
 
         # define problem - forward pass
         self.prob = [None] * 24  # template for each hour
@@ -592,15 +592,15 @@ class Critic:  # decentralized version
     def set_alphas(self, ramp, pk1, elec):
         """Setter target alphas"""
         self.alpha_ramp = ramp
-        # self.alpha_peak1 = pk1
+        self.alpha_peak1 = pk1
         self.alpha_elec = elec
 
     def get_alphas(self):
         """Getter target alphas"""
         return (
             np.array(self.alpha_ramp),
-            None,  # np.array(self.alpha_peak1),
-            np.array(self.alpha_elec),
+            np.array(self.alpha_peak1),
+            None,  # np.array(self.alpha_elec),
         )
 
     def get(self, index):
@@ -632,7 +632,7 @@ class Critic:  # decentralized version
                 f"\nSolving critic using MAX_ITERS at t = {t} for building {building_id}"
             )
             status = self.prob[t].solve(
-                solver="SCS", verbose=debug, max_iters=10_000_000
+                solver="SCS", verbose=debug, max_iters=10_000_000, eps=1e-2
             )  # Returns the optimal value.
 
         if float("-inf") < status < float("inf"):
@@ -659,15 +659,17 @@ class Critic:  # decentralized version
 
         peak_hist_cost = np.max([*E_grid, E_grid_pkhist])
         ramping_cost = np.abs(E_grid[0] - E_grid_prevhour)
-        electricity_cost = np.sum(self.alpha_elec[building_id][timestep:] * E_grid)
+        electricity_cost = (
+            None  # np.sum(self.alpha_elec[building_id][timestep:] * E_grid)
+        )
 
         if len(E_grid) > 1:  # not at eod
             ramping_cost += np.sum(np.abs(E_grid[1:] - E_grid[:-1]))
 
         Q_value = (
             -self.alpha_ramp[building_id] * ramping_cost
-            # - self.alpha_peak1[building_id] * peak_hist_cost
-            - electricity_cost  # add virtual elec cost
+            - self.alpha_peak1[building_id] * peak_hist_cost
+            # - electricity_cost  # add virtual elec cost
         )
 
         # called only if no Q value exists for current timestep
@@ -751,8 +753,8 @@ class Critic:  # decentralized version
         r, p, e = self.get_alphas()  # ramp, peak, elec
 
         alpha_ramp = rho * r + (1 - rho) * alphas_local[0]
-        alpha_peak1 = None  # rho * p + (1 - rho) * alphas_local[1]
-        alpha_elec = rho * e + (1 - rho) * alphas_local[2]
+        alpha_peak1 = rho * p + (1 - rho) * alphas_local[1]
+        alpha_elec = None  # rho * e + (1 - rho) * alphas_local[2]
 
         # if not self.is_updated_params:  # should execute just once
         #     self.is_updated_params = True
@@ -767,6 +769,7 @@ class Optim:
 
     def __init__(self, rho=0.9) -> None:
         self.rho = rho  # regularization term used in L2 optimization
+        self.fail_cnt = [0] * 9  # number of buildings
 
     def obtain_target_Q(
         self,
@@ -787,9 +790,10 @@ class Optim:
         Q1 = critic_target_1.forward(
             t, parameters_1, rewards_1, zeta_target, building_id, debug
         )
-        Q2 = critic_target_2.forward(
-            t, parameters_2, rewards_2, zeta_target, building_id, debug
-        )
+        Q2 = float("inf")
+        # critic_target_2.forward(
+        #     t, parameters_2, rewards_2, zeta_target, building_id, debug
+        # )
 
         if min(Q1, Q2) == Q1:  # sequential choice
             return (
@@ -902,8 +906,10 @@ class Optim:
 
         ### variables
         alpha_ramp = cp.Variable(name="ramp")
-        alpha_peak1 = 1  # cp.Variable(name="peak1")
-        alpha_elec = cp.Variable(name="elec", shape=(24,))  # virtual electricity cost
+        alpha_peak1 = cp.Variable(name="peak1")
+        alpha_elec = (
+            None  # cp.Variable(name="elec", shape=(24,))  # virtual electricity cost
+        )
 
         ### parameters
         E_grid = cp.Parameter(
@@ -926,6 +932,14 @@ class Optim:
             value=clipped_values,
         )
 
+        # y = - x - z^2
+        # rwl = -a2x - b2z^2
+        # x = 2, z = 1
+        # y = -2 -1 = -3
+        # rwl = -2a -b
+
+        ### REDUCE TOLERANCE for L2 optim.
+
         #### cost & constraints
         cost = []
         constraints = []
@@ -940,7 +954,7 @@ class Optim:
                 E_grid[i], E_grid_pkhist[i]
             )  # element-wise max(E_grid, E_gridpkhist)
 
-            electricity_cost = cp.sum(alpha_elec * E_grid[i])
+            # electricity_cost = cp.sum(alpha_elec * E_grid[i])
 
             # append ramping and peak net electricity cost to debug
             self.debug["ramping_cost"].append(ramping_cost)
@@ -953,16 +967,16 @@ class Optim:
                 * cp.sum(
                     cp.square(
                         -alpha_ramp * ramping_cost
-                        # - alpha_peak1 * peak_net_electricity_cost
-                        - electricity_cost  #  add virtual elec cost
+                        - alpha_peak1 * peak_net_electricity_cost
+                        # - electricity_cost  #  add virtual elec cost
                         - y_t[i]
                     )
                 )
                 + (1 - self.rho)
                 * (
-                    # cp.square(alpha_peak1)
-                    cp.square(alpha_ramp)
-                    + cp.sum(cp.square(alpha_elec))
+                    cp.square(alpha_peak1)
+                    + cp.square(alpha_ramp)
+                    # + cp.sum(cp.square(alpha_elec))
                     # + cp.sum(
                     #     cp.square(
                     #         E_grid[i]
@@ -985,8 +999,8 @@ class Optim:
             for j in range(24):
                 rwl = (
                     -alpha_ramp * ramping_cost[j]
-                    # - alpha_peak1 * peak_net_electricity_cost[j]
-                    - alpha_elec[j] * E_grid[i][j]
+                    - alpha_peak1 * peak_net_electricity_cost[j]
+                    # - alpha_elec[j] * E_grid[i][j]
                 )
                 constraints.append(cp.constraints.NonPos(rwl))
 
@@ -1004,10 +1018,10 @@ class Optim:
 
         # # # # alpha-peak –– OBSERVATION: usually takes the highest variance
         # constraints.append(alpha_peak1 <= high)
-        # constraints.append(alpha_peak1 >= low)
+        constraints.append(alpha_peak1 >= low)
 
-        constraints.append(alpha_elec <= high)
-        constraints.append(alpha_elec >= low)
+        # constraints.append(alpha_elec <= high)
+        # constraints.append(alpha_elec >= low)
 
         # Form objective.
         obj = cp.Minimize(cp.sum(cost))
@@ -1019,12 +1033,15 @@ class Optim:
         try:
             optim_solution = prob.solve(
                 verbose=debug,  # max_iters=1_000_000
+                # eps=1e-2,  # tolerance
             )  # Returns the optimal value.
             assert (
                 float("-inf") < optim_solution < float("inf")
             ), "Optimization failed! Trying SCS..."
 
         except:  # try another solver
+
+            self.fail_cnt[building_id] += 1
 
             LOG(
                 f"\nSolving L2 optimization using SCS solver for building {building_id}"
@@ -1035,9 +1052,9 @@ class Optim:
                 verbose=debug,  # max_iters=1_000_000
             )  # Returns the optimal value.
 
-        assert (
-            float("-inf") < optim_solution < float("inf")
-        ), "Unbounded solution/primal infeasable"
+            assert (
+                float("-inf") < optim_solution < float("inf")
+            ), "Unbounded solution/primal infeasable"
 
         # Make sure resultant Q-value is negative for all hours
         for i in range(len(prob.constraints)):
@@ -1077,19 +1094,19 @@ class Optim:
             debug,
         )
 
-        local_2_solution = self.least_absolute_optimization(
-            (batch_parameters_2, batch_parameters_1),
-            zeta_target,
-            building_id,
-            critic_target,
-            True,
-            debug,
-        )
+        # local_2_solution = self.least_absolute_optimization(
+        #     (batch_parameters_2, batch_parameters_1),
+        #     zeta_target,
+        #     building_id,
+        #     critic_target,
+        #     True,
+        #     debug,
+        # )
         # update alphas for local
         critic_local_1.alpha_ramp[building_id] = local_1_solution["ramp"]
-        # critic_local_1.alpha_peak1[building_id] = local_1_solution["peak1"]
-        critic_local_1.alpha_elec[building_id] = local_1_solution["elec"]
+        critic_local_1.alpha_peak1[building_id] = local_1_solution["peak1"]
+        # critic_local_1.alpha_elec[building_id] = local_1_solution["elec"]
 
-        critic_local_2.alpha_ramp[building_id] = local_2_solution["ramp"]
-        # critic_local_2.alpha_peak1[building_id] = local_2_solution["peak1"]
-        critic_local_2.alpha_elec[building_id] = local_2_solution["elec"]
+        # critic_local_2.alpha_ramp[building_id] = local_2_solution["ramp"]
+        # # critic_local_2.alpha_peak1[building_id] = local_2_solution["peak1"]
+        # critic_local_2.alpha_elec[building_id] = local_2_solution["elec"]
