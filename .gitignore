@@ -1,8 +1,12 @@
 # images folder
 images/
 
+# logs
+log.txt
+
 # all .npy files
 *.npy
+
 models/
 
 # Byte-compiled / optimized / DLL files
