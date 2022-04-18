@@ -1,6 +1,9 @@
 # images folder
 images/
 
+# all .npy files
+*.npy
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
