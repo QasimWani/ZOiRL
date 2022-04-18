@@ -1089,11 +1089,11 @@ class Optim:
         low = 0
         high = 100
         # # # alpha-ramp
-        constraints.append(alpha_ramp <= high)
+        # constraints.append(alpha_ramp <= high)
         constraints.append(alpha_ramp >= low)
 
         # # # # alpha-peak –– OBSERVATION: usually takes the highest variance
-        constraints.append(alpha_peak1 <= high)
+        # constraints.append(alpha_peak1 <= high)
         constraints.append(alpha_peak1 >= low)
 
         # constraints.append(alpha_elec <= high)
