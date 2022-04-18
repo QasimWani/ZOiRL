@@ -15,7 +15,7 @@ from critic import Critic, Optim
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
-TEMP_VAR = [0, 8]  # 0-based indexing
+TEMP_VAR = [0]  # 0-based indexing
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
@@ -154,7 +154,7 @@ class TD3(object):
 
         return action_planned_day, data_est
 
-    def critic_update(self, params_1: list, params_2: list):
+    def critic_update(self, params_1: list, params_2: list, buffer_params: list):
         """Master Critic update"""
         # Log critic parameters
         # self._critic_alphas_parameters["1_peak"].append(
@@ -185,12 +185,20 @@ class TD3(object):
             day_params_1.append([params_1, r1])
             day_params_2.append([params_2, r2])
 
+        # parse buffer params
+        biff = []
+        for params in buffer_params:
+            params_1 = deepcopy(params)
+            self.data_loader.convert_to_numpy(params_1)
+            biff.append(params_1)
+
         # Local Critic Update
         for id in TEMP_VAR:
             # local critic backward pass
             self.critic_optim.backward(
                 day_params_1,
                 day_params_2,
+                biff,  # full buffer
                 self.actor_target.zeta,
                 id,
                 self.critic,
@@ -205,7 +213,7 @@ class TD3(object):
         self.critic[0].prob = self.critic_target[0].prob
         self.critic[1].prob = self.critic_target[1].prob
 
-    def actor_update(self, parameters: list):
+    def actor_update(self, parameters: list, buffer_params: list):
         """Master Actor update"""
         # Log actor parameters
         for k, v in deepcopy(self.actor.zeta).items():
@@ -223,9 +231,16 @@ class TD3(object):
             # add processed day info
             day_params.append(params)
 
+        # parse buffer params
+        biff = []
+        for params in buffer_params:
+            params_1 = deepcopy(params)
+            self.data_loader.convert_to_numpy(params_1)
+            biff.append(params_1)
+
         for id in TEMP_VAR:  # self.buildings
             # local actor update
-            self.actor.backward(self.total_it, self.critic[0], day_params, id)
+            self.actor.backward(self.total_it, self.critic[0], day_params, biff, id)
 
             # target actor update - moving average
             self.actor_target.target_update(self.actor.get_zeta(), id)
@@ -234,6 +249,9 @@ class TD3(object):
         """Update actor and critic every meta-episode. This should be called end of each meta-episode"""
         # gather data from memory for critic update
         parameters_1, idx_1 = self.memory.sample()  # critic 1 - sequential
+
+        full_buffer_params = self.memory.sample_entire_buffer()
+
         rewards_1 = self.reward_memory.sample(
             sample_by_indices=idx_1
         )  # critic 1 - rewards part
@@ -244,10 +262,12 @@ class TD3(object):
         )  # critic 2 - rewards part
 
         # local + target critic update
-        self.critic_update((parameters_1, rewards_1), (parameters_2, rewards_2))
+        self.critic_update(
+            (parameters_1, rewards_1), (parameters_2, rewards_2), full_buffer_params
+        )
 
         # local + target actor update
-        self.actor_update(parameters_1)
+        self.actor_update(parameters_1, full_buffer_params)
 
     def add_to_buffer(self, state, action, reward, next_state, done):
         """Add to replay buffer"""

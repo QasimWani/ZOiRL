@@ -3,7 +3,7 @@ from copy import Error, deepcopy
 from critic import Critic
 from logger import LOG
 
-from utils import Adam, RBC, normalize
+from utils import Adam, RBC
 import numpy as np
 import torch
 
@@ -689,8 +689,54 @@ class Actor:
 
         return params_dict
 
+    def normalize_E_grid_across_mini_batch(
+        self, list_params: list, critic: Critic, t: int, building_id: int
+    ) -> list:
+        """Calculates the objective function for a batch of parameters"""
+        list_obj = []
+        for params in list_params:
+            prob = critic.get_problem(
+                t, params, self.zeta, building_id, return_prob=True
+            )  # mu(s_t, a_t, zeta)
+
+            zeta_plus_params, variables_actor = (prob.param_dict, prob.var_dict)
+
+            zeta_plus_params_tensor_dict = self.convert_to_torch_tensor(
+                zeta_plus_params
+            )
+
+            # critic forward pass to get E_grid. And then use E_grid to get Q. Then get dQ/da
+            mu = CvxpyLayer(
+                prob,
+                parameters=list(zeta_plus_params.values()),
+                variables=list(variables_actor.values()),
+            )
+
+            try:
+                E_grid, *_ = mu(*zeta_plus_params_tensor_dict.values())
+            except:
+                LOG(f"dQ/da Solver error! Building: {building_id}, Timestep: {t}")
+
+                E_grid, *_ = mu(
+                    *zeta_plus_params_tensor_dict.values(),
+                    solver_args={
+                        # "verbose": True,
+                        "max_iters": 10_000_000,
+                        "solve_method": "SCS",
+                        "eps": 5e-2,
+                    },
+                )
+            list_obj.append(E_grid.detach().numpy())
+
+        return list_obj
+
     def gradient_actions(
-        self, t: int, parameters: dict, critic: Critic, building_id: int
+        self,
+        t: int,
+        parameters: dict,
+        critic: Critic,
+        building_id: int,
+        replay_buffer: "list[dict]" = None,
     ):
         """Computes dQ/da, where a is the set of actions for building `building_id` at timestep `t`"""
         # set all params except for actions as constants (zeroes)
@@ -702,12 +748,47 @@ class Actor:
         # zeta = self.initialize_zeta(*[0] * len(self.zeta))
 
         # fetch params in loss calculation
-        E_grid_prevhour = parameters["E_grid_prevhour"][t, building_id]
+
+        if replay_buffer is not None:
+            _E_grid, _E_grid_prevhour = critic.gather_E_grid_from_buffer(
+                replay_buffer, building_id
+            )
+
+            E_grid_true = critic.normalize(
+                parameters["E_grid"][:, building_id], _E_grid
+            )
+            E_grid_prevhour = critic.normalize(
+                parameters["E_grid_prevhour"][:, building_id], _E_grid_prevhour
+            )
+
+        # if replay_buffer is None:
+        #     E_grid_prevhour = parameters["E_grid_prevhour"][t, building_id]
+        #     E_grid_pkhist = (
+        #         max(0, parameters["E_grid_prevhour"][t, building_id])
+        #         if t == 0
+        #         else np.max([0, *parameters["E_grid"][: (t + 1), building_id]])
+        #     )
+        E_grid_prevhour = E_grid_prevhour[t]
         E_grid_pkhist = (
-            max(0, parameters["E_grid_prevhour"][t, building_id])
-            if t == 0
-            else np.max([0, *parameters["E_grid"][: (t + 1), building_id]])
+            np.max([0, *E_grid_true[:t]]) if t > 0 else max(E_grid_prevhour, 0)
         )
+        # else:
+        #     phour = []
+        #     eg = []
+        #     for d in mini_batch:
+        #         phour.append(d["E_grid_prevhour"][t, building_id])
+        #         eg.append(d["E_grid"][: (t + 1), building_id])
+
+        #     eg = critic.normalize(parameters["E_grid"][: (t + 1), building_id], eg)
+
+        #     E_grid_prevhour = critic.normalize(
+        #         parameters["E_grid_prevhour"][t, building_id], phour
+        #     )
+        #     E_grid_pkhist = max(0, eg[t]) if t == 0 else np.max([0, *eg[: (t + 1)]])
+
+        #     _E_grid = self.normalize_E_grid_across_mini_batch(
+        #         mini_batch, critic, t, building_id
+        #     )
 
         # problem formulation using Critic optimizaiton
         prob = critic.get_problem(
@@ -750,6 +831,13 @@ class Actor:
                 },
             )
 
+        # normalize E_grid
+        E_grid.data = torch.tensor(
+            critic.normalize(E_grid.detach().numpy(), _E_grid[:, t:])
+        )
+
+        self.temp = [E_grid, _E_grid, E_grid_pkhist, E_grid_prevhour]  # TEMP
+
         # Reward Warping function, Critic forward pass - Step 2
         r, p, e = critic.get_alphas()
         alpha_ramp = torch.from_numpy(r).float()
@@ -769,7 +857,7 @@ class Actor:
 
         reward_warping_loss = (
             -alpha_ramp[building_id] * ramping_cost
-            - alpha_peak1[building_id] * peak_net_electricity_cost
+            - alpha_peak1[building_id] * torch.square(peak_net_electricity_cost)
             # - torch.sum(alpha_elec[building_id][t:] * E_grid)
         )
         # make sure that the reward is negative
@@ -873,7 +961,12 @@ class Actor:
         return da_dzeta
 
     def E2E_grad(
-        self, t: int, parameters: dict, critic: Critic, building_id: int
+        self,
+        t: int,
+        parameters: dict,
+        critic: Critic,
+        building_id: int,
+        replay_buffer: "list[dict]" = None,
     ) -> dict:
         """
         Computes chain rule for: dQ/dzeta = dQ/da * da/dzeta
@@ -881,7 +974,7 @@ class Actor:
         • da/dzeta -> actor optimization (forward pass).
         """
         loss, dq_da = self.gradient_actions(
-            t, deepcopy(parameters), critic, building_id
+            t, deepcopy(parameters), critic, building_id, replay_buffer
         )
         return [loss, *dq_da.values()]
 
@@ -899,11 +992,21 @@ class Actor:
 
         return e2e.values()
 
+    def get_mini_batch(self, data: list, day: int, batch_size: int) -> list:
+        """Given `data`, gather all data except from `day`"""
+        offset = len(data) - batch_size
+        batch = []
+        for i in range(len(data)):
+            if i != (day + offset):
+                batch.append(data[i])
+        return batch
+
     def backward(
         self,
         t: int,
         critic: Critic,  # Critic local-1
         batch_parameters: list,
+        buffer_parameters: list,  # entire replay buffer
         building_id: int,
     ):
         """
@@ -919,8 +1022,12 @@ class Actor:
         parameter_gradients = defaultdict(list)
         costs = []
 
-        for day_param in batch_parameters:
+        NUM_DAYS = len(batch_parameters)
+        for i, day_param in enumerate(batch_parameters):
             daily_cost = 0.0
+
+            buffer = self.get_mini_batch(buffer_parameters, i, NUM_DAYS)
+
             for r in range(24):
                 LOG(f"E2E\tBuilding: {building_id}, r: {str(r).zfill(2)}")
                 (
@@ -931,7 +1038,7 @@ class Actor:
                     eta_Csto_grad,
                     eta_ehH_grad,
                     c_bat_end_grad,
-                ) = self.E2E_grad(r, day_param, critic, building_id)
+                ) = self.E2E_grad(r, day_param, critic, building_id, buffer)
 
                 # store gradients
                 parameter_gradients["p_ele_grad"].append(p_ele_grad)

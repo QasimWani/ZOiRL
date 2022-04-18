@@ -37,8 +37,8 @@ class Adam:
         return w
 
 
-BUFFER_SIZE = 7  # number of days in a meta-episode
-MINI_BATCH = 3  # number of days to sample
+BUFFER_SIZE = 14  # number of days in a meta-episode
+MINI_BATCH = 4  # number of days to sample
 
 
 class ReplayBuffer:
@@ -79,6 +79,10 @@ class ReplayBuffer:
         return (
             self.replay_memory[-1] if len(self) > 0 and self.total_it % 24 != 0 else {}
         )
+
+    def sample_entire_buffer(self):
+        """Samples all days in the replay buffer"""
+        return [self.get(index) for index in range(len(self))]
 
     def sample(self, is_random: bool = False, sample_by_indices: list = []):
         """Picks all samples within the replay_buffer"""

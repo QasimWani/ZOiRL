@@ -7,6 +7,12 @@ from collections import defaultdict
 
 from utils import *
 
+# 1. Square pkhist -- square both (w/ norm)
+# 2. make Reward linear -- linear both (w/ norm)
+# 3. (1) and (2) together -- (w/o norm)
+# 4. copying -- noise profile generation (w & w/o norm)
+# 5. train on another cz.
+
 
 class Critic:  # decentralized version
     def __init__(
@@ -14,7 +20,7 @@ class Critic:  # decentralized version
         num_buildings: int,
         num_actions: list,
         lambda_: float = 0.9,  # make it lower for Gt_tn
-        rho: float = 0.75,  # higher value puts more weight on the previous values
+        rho: float = 0.8,  # higher value puts more weight on the previous values
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
         self.lambda_ = lambda_
@@ -644,15 +650,49 @@ class Critic:  # decentralized version
 
         raise ValueError(f"Unbounded solution with status - {status}")
 
+    def gather_E_grid_from_buffer(self, buffer_data: "list[dict]", building_id: int):
+        """Given a collection of days (BUFFER_SIZE) of optimization parameters, collect only E_grid and E_grid_prevhour data and return it."""
+        E_grid = []
+        E_grid_prevhour = []
+        for day in buffer_data:
+            E_grid.append(day["E_grid"][:, building_id])
+            E_grid_prevhour.append(day["E_grid_prevhour"][:, building_id])
+        return np.array(E_grid), np.array(E_grid_prevhour)
+
     def reward_warping_layer(
-        self, timestep: int, parameters_E_grid: dict, building_id: int
+        self,
+        timestep: int,
+        parameters_E_grid: dict,
+        building_id: int,
+        buffer_data: "list[dict]" = None,  # if not none, using normalization format
     ):
         """Calculates Q-value"""
         E_grid, E_grid_true, E_grid_prevhour = parameters_E_grid
 
-        E_grid_prevhour = E_grid_prevhour[timestep, building_id]
+        # normalize E_grid, E_grid_true, and E_grid_prevhour
+        if buffer_data is not None:
+            _E_grid, _E_grid_prevhour = self.gather_E_grid_from_buffer(
+                buffer_data, building_id
+            )
+            self.temp = [
+                E_grid,
+                E_grid_true,
+                E_grid_prevhour,
+                _E_grid,
+                _E_grid_prevhour,
+            ]
+
+            E_grid = self.normalize(E_grid, _E_grid[:, timestep:])
+            E_grid_true = self.normalize(E_grid_true[:, building_id], _E_grid)
+            E_grid_prevhour = self.normalize(
+                E_grid_prevhour[:, building_id], _E_grid_prevhour
+            )
+
+            self.temp = [E_grid, E_grid_true, E_grid_prevhour]
+
+        E_grid_prevhour = E_grid_prevhour[timestep]
         E_grid_pkhist = (
-            np.max([0, *E_grid_true[:timestep, building_id]])
+            np.max([0, *E_grid_true[:timestep]])
             if timestep > 0
             else max(E_grid_prevhour, 0)
         )
@@ -668,7 +708,7 @@ class Critic:  # decentralized version
 
         Q_value = (
             -self.alpha_ramp[building_id] * ramping_cost
-            - self.alpha_peak1[building_id] * peak_hist_cost
+            - self.alpha_peak1[building_id] * peak_hist_cost ** 2
             # - electricity_cost  # add virtual elec cost
         )
 
@@ -689,7 +729,13 @@ class Critic:  # decentralized version
             Q_value <= 1
         ), f"Q-value must be negative, or approximately close to zero. Got {Q_value}"
 
-        return Q_value
+        return Q_value, (E_grid, E_grid_prevhour, E_grid_pkhist)
+
+    def normalize(self, X, data):
+        """Normalizes X given `data`"""
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+        return (X - data.min(0)) / (data.max(0) - data.min(0))
 
     def forward(
         self,
@@ -698,16 +744,20 @@ class Critic:  # decentralized version
         rewards: dict,
         zeta_target: dict,
         building_id: int,
+        buffer_data: "list[dict]",  # batch normalization data from other days in the meta-episode -- same format as `parameters`
         debug=False,
     ):
         """Uses result of RWL to compute for clipped Q values"""
 
         # TEMP
         Q_value = self.get(t)
+        nvalues = None
         if Q_value is None:
             solution = self.solve(t, parameters, zeta_target, building_id, debug)
-            Q_value = self.reward_warping_layer(t, solution, building_id)
-        return Q_value
+            Q_value, nvalues = self.reward_warping_layer(
+                t, solution, building_id, buffer_data
+            )
+        return Q_value, nvalues
         # TEMP
 
         Gt_tn = 0.0
@@ -780,15 +830,17 @@ class Optim:
         rewards: dict,  # both batch_1 and batch_2
         zeta_target: dict,
         building_id: int,
+        buffer_params: "list[dict]",  # data from other days in the meta-episode (both mini-batches)
         debug: bool = False,
     ):
         """Computes min Q"""
         # shared zeta-target across both target critic
         parameters_1, parameters_2 = parameters
+
         rewards_1, rewards_2 = rewards
 
-        Q1 = critic_target_1.forward(
-            t, parameters_1, rewards_1, zeta_target, building_id, debug
+        Q1, additional_values = critic_target_1.forward(
+            t, parameters_1, rewards_1, zeta_target, building_id, buffer_params, debug
         )
         Q2 = float("inf")
         # critic_target_2.forward(
@@ -798,7 +850,8 @@ class Optim:
         if min(Q1, Q2) == Q1:  # sequential choice
             return (
                 rewards_1["reward"][t, building_id]
-                + critic_target_1.lambda_ * (1 - int(t == 23)) * Q1
+                + critic_target_1.lambda_ * (1 - int(t == 23)) * Q1,
+                additional_values,  # (E_grid, E_grid_prevhour, E_grid_pkhist)
             )
 
         return (
@@ -816,14 +869,25 @@ class Optim:
         """Records MSE from L2 optimization"""
         pass
 
+    def get_mini_batch(self, data: list, day: int, mini_batch_size: int):
+        """Given `data`, gather all data except from `day`"""
+        offset = len(data) - mini_batch_size
+        batch = []
+        for i in range(len(data)):
+            if i != (day + offset):
+                batch.append(data[i])
+        return batch
+
     def least_absolute_optimization(
         self,
         parameters: list,  # data collected within actor forward pass for MINI_BATCH (utils.py) number of updates (contains params + rewards) -- batch_params_1, batch_params_2
+        buffer_params: list,  # full buffer optimization model parameters
         zeta_target: dict,
         building_id: int,
         critic_target: list,
         is_random: bool,  # true indicates shuffled data i.e. critic_target_2
         debug: bool = False,
+        get_mini_batch: bool = True,
     ):
         """Define least-absolute optimization for generating optimal values for alpha_ramp,peak1/2."""
         # extract target Critic
@@ -836,15 +900,22 @@ class Optim:
         parameters_1, parameters_2 = parameters
         NUM_DAYS = len(parameters_1)  # meta-episode duration
 
+        mini_batch = None
+
         for i in range(NUM_DAYS):
             day_params_1, day_rewards_1 = parameters_1[i]
             day_params_2, day_rewards_2 = parameters_2[i]
 
+            # mini-batch normalization, if applicable
+            if get_mini_batch:
+                mini_batch = self.get_mini_batch(buffer_params, i, NUM_DAYS)
+
             # append daily data
             if is_random:
+                raise NotImplementedError("Random data not implemented yet")
                 data["E_grid"].append(day_params_2["E_grid"][:, building_id])
-            else:
-                data["E_grid"].append(day_params_1["E_grid"][:, building_id])
+            # else:
+            #     data["E_grid"].append(day_params_1["E_grid"][:, building_id])
 
             # clear Q-buffer at each day
             critic_target_1.Q_value = [None] * 24
@@ -853,7 +924,7 @@ class Optim:
             for r in range(24):
                 LOG(f"L2 Optim\tBuilding: {building_id}\tHour: {str(r).zfill(2)}")
 
-                y_r = self.obtain_target_Q(
+                y_r, additional_values = self.obtain_target_Q(
                     critic_target_1,
                     critic_target_2,
                     r,
@@ -861,12 +932,20 @@ class Optim:
                     (day_rewards_1, day_rewards_2),
                     zeta_target,
                     building_id,
+                    mini_batch,  # data from all other days in the replay buffer -- no reward information
                     debug,
                 )
+
+                if additional_values is not None:
+                    E_grid, E_grid_prevhour, E_grid_pkhist = additional_values
 
                 assert y_r <= 1, f"y_r should be approximately less than 0. found {y_r}"
 
                 if is_random:
+                    raise NotImplementedError(
+                        "Q2 not implemented yet. Use additional_values_2 generated through RWL"
+                    )
+
                     data["E_grid_prevhour"].append(
                         day_params_2["E_grid_prevhour"][r, building_id]
                     )
@@ -876,14 +955,9 @@ class Optim:
                         else np.max([0, *day_params_2["E_grid"][:r, building_id]])
                     )  # pkhist at 0th hour is 0.
                 else:
-                    data["E_grid_prevhour"].append(
-                        day_params_1["E_grid_prevhour"][r, building_id]
-                    )
-                    data["E_grid_pkhist"].append(
-                        max(0, day_params_1["E_grid_prevhour"][r, building_id])
-                        if r == 0
-                        else np.max([0, *day_params_1["E_grid"][:r, building_id]])
-                    )  # pkhist at 0th hour is 0.
+                    data["E_grid"].append(E_grid[0])
+                    data["E_grid_prevhour"].append(E_grid_prevhour)
+                    data["E_grid_pkhist"].append(E_grid_pkhist)
 
                 clipped_values.append(y_r)
 
@@ -903,6 +977,8 @@ class Optim:
         data["E_grid_pkhist"] = np.array(data["E_grid_pkhist"], dtype=float).reshape(
             clipped_values.shape
         )
+
+        self.test = data
 
         ### variables
         alpha_ramp = cp.Variable(name="ramp")
@@ -967,7 +1043,7 @@ class Optim:
                 * cp.sum(
                     cp.square(
                         -alpha_ramp * ramping_cost
-                        - alpha_peak1 * peak_net_electricity_cost
+                        - alpha_peak1 * cp.square(peak_net_electricity_cost)
                         # - electricity_cost  #  add virtual elec cost
                         - y_t[i]
                     )
@@ -1013,11 +1089,11 @@ class Optim:
         low = 0
         high = 100
         # # # alpha-ramp
-        # constraints.append(alpha_ramp <= high)
-        # constraints.append(alpha_ramp >= low)
+        constraints.append(alpha_ramp <= high)
+        constraints.append(alpha_ramp >= low)
 
         # # # # alpha-peak –– OBSERVATION: usually takes the highest variance
-        # constraints.append(alpha_peak1 <= high)
+        constraints.append(alpha_peak1 <= high)
         constraints.append(alpha_peak1 >= low)
 
         # constraints.append(alpha_elec <= high)
@@ -1075,6 +1151,7 @@ class Optim:
         self,
         batch_parameters_1: list,  # data collected within actor forward pass - Critic 1 (sequential)
         batch_parameters_2: list,  # data collected within actor forward pass - Critic 2 (random)
+        buffer_parameters: list,  # all days of data collected in the buffer
         zeta_target: dict,
         building_id: int,
         critic_local: list,
@@ -1087,6 +1164,7 @@ class Optim:
         # Compute L2 Optimization for Critic Local 1 (using sequential data) and Critic Local 2 (using random data) using Critic Target 1 and 2
         local_1_solution = self.least_absolute_optimization(
             (batch_parameters_1, batch_parameters_2),
+            buffer_parameters,
             zeta_target,
             building_id,
             critic_target,
