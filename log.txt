@@ -1132,3 +1132,635 @@ E2E	Building: 0, r: 04
 E2E	Building: 0, r: 05
 E2E	Building: 0, r: 06
 E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+Time taken for training: 114.65
+
+MODEL COSTS:
+Building 0: -52764.762
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+Time taken for training: 114.81
+
+MODEL COSTS:
+Building 0: -51220.478
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+Time taken for training: 116.47
+
+MODEL COSTS:
+Building 0: -12026.812
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+L2 Optim	Building: 0	Hour: 00
+L2 Optim	Building: 0	Hour: 01
+L2 Optim	Building: 0	Hour: 02
+L2 Optim	Building: 0	Hour: 03
+L2 Optim	Building: 0	Hour: 04
+L2 Optim	Building: 0	Hour: 05
+L2 Optim	Building: 0	Hour: 06
+L2 Optim	Building: 0	Hour: 07
+L2 Optim	Building: 0	Hour: 08
+L2 Optim	Building: 0	Hour: 09
+L2 Optim	Building: 0	Hour: 10
+L2 Optim	Building: 0	Hour: 11
+L2 Optim	Building: 0	Hour: 12
+L2 Optim	Building: 0	Hour: 13
+L2 Optim	Building: 0	Hour: 14
+L2 Optim	Building: 0	Hour: 15
+L2 Optim	Building: 0	Hour: 16
+L2 Optim	Building: 0	Hour: 17
+L2 Optim	Building: 0	Hour: 18
+L2 Optim	Building: 0	Hour: 19
+L2 Optim	Building: 0	Hour: 20
+L2 Optim	Building: 0	Hour: 21
+L2 Optim	Building: 0	Hour: 22
+L2 Optim	Building: 0	Hour: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+E2E	Building: 0, r: 00
+E2E	Building: 0, r: 01
+E2E	Building: 0, r: 02
+E2E	Building: 0, r: 03
+E2E	Building: 0, r: 04
+E2E	Building: 0, r: 05
+E2E	Building: 0, r: 06
+E2E	Building: 0, r: 07
+E2E	Building: 0, r: 08
+E2E	Building: 0, r: 09
+E2E	Building: 0, r: 10
+E2E	Building: 0, r: 11
+E2E	Building: 0, r: 12
+E2E	Building: 0, r: 13
+E2E	Building: 0, r: 14
+E2E	Building: 0, r: 15
+E2E	Building: 0, r: 16
+E2E	Building: 0, r: 17
+E2E	Building: 0, r: 18
+E2E	Building: 0, r: 19
+E2E	Building: 0, r: 20
+E2E	Building: 0, r: 21
+E2E	Building: 0, r: 22
+E2E	Building: 0, r: 23
+Time taken for training: 108.68
+
+MODEL COSTS:
+Building 0: -102769.044
