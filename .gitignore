@@ -3,6 +3,7 @@ images/
 
 # all .npy files
 *.npy
+models/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
