@@ -13,7 +13,7 @@ class Critic:  # decentralized version
         self,
         num_buildings: int,
         num_actions: list,
-        lambda_: float = 0.9,  # make it lower for Gt_tn
+        lambda_: float = 0.95,  # make it lower for Gt_tn
         rho: float = 0.75,  # higher value puts more weight on the previous values
     ):
         """One-time initialization. Need to call `create_problem` to initialize optimization model with params."""
@@ -27,6 +27,8 @@ class Critic:  # decentralized version
         self.is_updated_params = False
         self.alpha_ramp = [1] * num_buildings
         self.alpha_peak1 = [1] * num_buildings
+        self.alpha_bias = [1] * num_buildings
+
         # self.alpha_elec = [
         #     [1] * 24 for _ in range(num_buildings)
         # ]  # virtual electricity cost
@@ -589,10 +591,11 @@ class Critic:  # decentralized version
         """Returns constraints for problem"""
         return self.constraints
 
-    def set_alphas(self, ramp, pk1, elec):
+    def set_alphas(self, ramp, pk1, bias, elec):
         """Setter target alphas"""
         self.alpha_ramp = ramp
         self.alpha_peak1 = pk1
+        self.alpha_bias = bias
         self.alpha_elec = elec
 
     def get_alphas(self):
@@ -600,6 +603,7 @@ class Critic:  # decentralized version
         return (
             np.array(self.alpha_ramp),
             np.array(self.alpha_peak1),
+            np.array(self.alpha_bias),
             None,  # np.array(self.alpha_elec),
         )
 
@@ -669,6 +673,7 @@ class Critic:  # decentralized version
         Q_value = (
             -self.alpha_ramp[building_id] * ramping_cost
             - self.alpha_peak1[building_id] * peak_hist_cost
+            - self.alpha_bias[building_id]
             # - electricity_cost  # add virtual elec cost
         )
 
@@ -741,7 +746,7 @@ class Critic:  # decentralized version
     def target_update(self, alphas_local: np.ndarray):
         """Updates alphas given from L2 optimization"""
         assert (
-            len(alphas_local) == 3
+            len(alphas_local) == 4
         ), f"Incorrect dimension passed. Alpha tuple should be of size 3. found {len(alphas_local)}"
 
         ### main target update -- alphas_new comes from LS optim sol.
@@ -750,24 +755,25 @@ class Critic:  # decentralized version
         # )  # ensure first update is the same as local update
         rho = self.rho
 
-        r, p, e = self.get_alphas()  # ramp, peak, elec
+        r, p, b, e = self.get_alphas()  # ramp, peak, elec
 
         alpha_ramp = rho * r + (1 - rho) * alphas_local[0]
         alpha_peak1 = rho * p + (1 - rho) * alphas_local[1]
+        alpha_bias = rho * b + (1 - rho) * alphas_local[2]
         alpha_elec = None  # rho * e + (1 - rho) * alphas_local[2]
 
         # if not self.is_updated_params:  # should execute just once
         #     self.is_updated_params = True
 
         self.set_alphas(
-            alpha_ramp, alpha_peak1, alpha_elec
+            alpha_ramp, alpha_peak1, alpha_bias, alpha_elec
         )  # updated alphas! -- end of critic update
 
 
 class Optim:
     """Performs Critic Update"""
 
-    def __init__(self, rho=0.9) -> None:
+    def __init__(self, rho=0.8) -> None:
         self.rho = rho  # regularization term used in L2 optimization
         self.fail_cnt = [0] * 9  # number of buildings
 
@@ -907,6 +913,7 @@ class Optim:
         ### variables
         alpha_ramp = cp.Variable(name="ramp")
         alpha_peak1 = cp.Variable(name="peak1")
+        alpha_bias = cp.Variable(name="bias")
         alpha_elec = (
             None  # cp.Variable(name="elec", shape=(24,))  # virtual electricity cost
         )
@@ -968,6 +975,7 @@ class Optim:
                     cp.square(
                         -alpha_ramp * ramping_cost
                         - alpha_peak1 * peak_net_electricity_cost
+                        - alpha_bias
                         # - electricity_cost  #  add virtual elec cost
                         - y_t[i]
                     )
@@ -976,6 +984,7 @@ class Optim:
                 * (
                     cp.square(alpha_peak1)
                     + cp.square(alpha_ramp)
+                    + cp.square(alpha_bias)
                     # + cp.sum(cp.square(alpha_elec))
                     # + cp.sum(
                     #     cp.square(
@@ -1000,6 +1009,7 @@ class Optim:
                 rwl = (
                     -alpha_ramp * ramping_cost[j]
                     - alpha_peak1 * peak_net_electricity_cost[j]
+                    - alpha_bias
                     # - alpha_elec[j] * E_grid[i][j]
                 )
                 constraints.append(cp.constraints.NonPos(rwl))
@@ -1010,8 +1020,8 @@ class Optim:
             self.E_grid = list(E_grid[i].value)
             self.y = y_t[i].value
 
-        low = 0
-        high = 100
+        low = -5
+        # high = 5
         # # # alpha-ramp
         # constraints.append(alpha_ramp <= high)
         # constraints.append(alpha_ramp >= low)
@@ -1022,6 +1032,9 @@ class Optim:
 
         # constraints.append(alpha_elec <= high)
         # constraints.append(alpha_elec >= low)
+
+        # constraints.append(alpha_bias <= high)
+        constraints.append(alpha_bias >= low)
 
         # Form objective.
         obj = cp.Minimize(cp.sum(cost))
@@ -1105,6 +1118,7 @@ class Optim:
         # update alphas for local
         critic_local_1.alpha_ramp[building_id] = local_1_solution["ramp"]
         critic_local_1.alpha_peak1[building_id] = local_1_solution["peak1"]
+        critic_local_1.alpha_bias[building_id] = local_1_solution["bias"]
         # critic_local_1.alpha_elec[building_id] = local_1_solution["elec"]
 
         # critic_local_2.alpha_ramp[building_id] = local_2_solution["ramp"]

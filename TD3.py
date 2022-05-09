@@ -15,7 +15,7 @@ from critic import Critic, Optim
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 # Paper: https://arxiv.org/abs/1802.09477
 
-TEMP_VAR = [0, 8]  # 0-based indexing
+TEMP_VAR = range(9)  # 0-based indexing
 
 if not sys.warnoptions:
     warnings.simplefilter("ignore")
