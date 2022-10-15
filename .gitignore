@@ -1,5 +1,5 @@
 # remove .ipynb lang stats
-*.ipynb linguist-vendored
+*.ipynb linguist-detectable=false
 
 # images folder
 images/
