@@ -1,5 +1,6 @@
-# remove .ipynb lang stats
-*.ipynb linguist-detectable=false
+# only keep .py stats
+* linguist-vendored
+*.py linguist-detectable=false
 
 # images folder
 images/
