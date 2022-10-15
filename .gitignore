@@ -1,6 +1,6 @@
 # only keep .py stats
 * linguist-vendored
-*.py linguist-detectable=false
+*.py linguist-vendored=false
 
 # images folder
 images/
