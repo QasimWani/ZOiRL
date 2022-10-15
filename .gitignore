@@ -1,3 +1,6 @@
+# remove .ipynb lang stats
+*.ipynb linguist-vendored
+
 # images folder
 images/
 
